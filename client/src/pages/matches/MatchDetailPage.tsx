@@ -1,0 +1,534 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Heart, Send, Shield, Sparkles, XCircle } from 'lucide-react';
+import { useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { matchesApi } from '@/services/api/matches';
+import { internalCandidatesApi, externalCandidatesApi } from '@/services/api/candidates';
+import { channelsApi } from '@/services/api/channels';
+import { aiApi } from '@/services/api/ai';
+import { toast } from '@/components/ui/Toast';
+import type { InternalCandidate, ExternalCandidate } from '@/types/domain';
+import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, Textarea } from '@/components/ui/primitives';
+import { ErrorState, LoadingSkeleton } from '@/components/states/states';
+import { BlockedBanner } from '@/components/domain/banners';
+import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
+import { AskAIPanel } from '@/features/ai/AskAIPanel';
+import { label } from '@/utils/labels';
+import type { SendPreview } from '@/types/domain';
+
+export function MatchDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const qc = useQueryClient();
+  const match = useQuery({
+    queryKey: ['match', id],
+    queryFn: () => matchesApi.get(id!),
+    enabled: !!id,
+  });
+  const sendPreview = useQuery({
+    queryKey: ['match', id, 'send-preview'],
+    queryFn: () => matchesApi.sendPreview(id!),
+    enabled: !!id,
+  });
+
+  const internalId = match.data?.data.internalCandidateId;
+  const externalId = match.data?.data.externalCandidateId;
+
+  const internal = useQuery({
+    queryKey: ['internal', internalId],
+    queryFn: () => internalCandidatesApi.get(internalId!),
+    enabled: !!internalId,
+  });
+  const external = useQuery({
+    queryKey: ['external', externalId],
+    queryFn: () => externalCandidatesApi.get(externalId!),
+    enabled: !!externalId,
+  });
+
+  const approve = useMutation({
+    mutationFn: () => matchesApi.approve(id!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['match', id] });
+      toast.success('ההצעה אושרה');
+    },
+    onError: (err) => toast.error('האישור נכשל', (err as Error).message),
+  });
+  const explain = useMutation({
+    mutationFn: async () => {
+      const m = match.data!.data;
+      const i = internal.data!.data;
+      const e = external.data!.data;
+      return aiApi.explainMatch({
+        internal: briefInternal(i),
+        external: briefExternal(e),
+        matchScore: m.matchScore,
+        confidenceScore: m.confidenceScore,
+        matchType: m.matchType,
+        riskLevel: m.riskLevel,
+        strengths: m.strengths,
+        attentionPoints: m.attentionPoints,
+        scoreBreakdown: m.scoreBreakdown,
+      });
+    },
+    onSuccess: (r) => {
+      const d = r.data as { summary?: string; nuance?: string; recommendedApproach?: string };
+      toast.info('הסבר AI', [d.summary, d.nuance, d.recommendedApproach].filter(Boolean).join('\n\n'));
+    },
+    onError: (err) => toast.error('ההסבר נכשל', (err as Error).message),
+  });
+
+  // Advisory only: AI suggests the next operational step the
+  // Shadchan might take. Does NOT take any action.
+  const suggestStep = useMutation({
+    mutationFn: async () => {
+      const m = match.data!.data;
+      return aiApi.suggestNextStep({
+        matchStatus: m.status,
+        matchType: m.matchType,
+        recommendedAction: m.recommendedAction,
+        sideAResponse: m.sideAResponse?.status,
+        sideBResponse: m.sideBResponse?.status,
+      });
+    },
+    onSuccess: (r) => {
+      const d = r.data as { action?: string; reason?: string; urgency?: string; alternatives?: string[] };
+      toast.info(
+        `המלצה: ${d.action ?? '—'}`,
+        [d.reason, d.alternatives && d.alternatives.length > 0 ? `אלטרנטיבות: ${d.alternatives.join(' · ')}` : undefined]
+          .filter(Boolean).join('\n'),
+      );
+    },
+    onError: (err) => toast.error('הצעה נכשלה', (err as Error).message),
+  });
+
+  // Advisory only: AI drafts a message the Shadchan will review
+  // BEFORE any send. The UI surfaces the text; no send happens here.
+  const draftMessage = useMutation({
+    mutationFn: async () => {
+      const i = internal.data!.data;
+      const e = external.data!.data;
+      return aiApi.generateMessage({
+        purpose: 'intro',
+        tone: 'warm',
+        language: 'he',
+        recipient: briefInternal(i),
+        aboutCandidate: briefExternal(e),
+      });
+    },
+    onSuccess: (r) => {
+      const d = r.data as { message?: string; reviewFlags?: string[] };
+      toast.info(
+        'טיוטת הודעה',
+        [d.message, d.reviewFlags?.length ? `דורש בדיקה: ${d.reviewFlags.join(' · ')}` : undefined]
+          .filter(Boolean).join('\n\n'),
+      );
+    },
+    onError: (err) => toast.error('הכנת טיוטה נכשלה', (err as Error).message),
+  });
+
+  const defer = useMutation({
+    mutationFn: (reason: string) => matchesApi.defer(id!, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['match', id] }),
+  });
+  const close = useMutation({
+    mutationFn: (reason: string) => matchesApi.close(id!, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['match', id] }),
+  });
+
+  const [confirm, setConfirm] = useState<null | { type: 'approve' | 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendSide, setSendSide] = useState<'a' | 'b'>('a');
+  const [sendChannelId, setSendChannelId] = useState('');
+  const [sendBody, setSendBody] = useState('');
+
+  // Fetch only match_sending channels — the backend rejects the rest,
+  // but the UI should never even offer them.
+  const sendingChannels = useQuery({
+    queryKey: ['channels', 'role', 'match_sending'],
+    queryFn: () => channelsApi.list({ role: 'match_sending', limit: 50 }),
+  });
+
+  const sendProposal = useMutation({
+    mutationFn: () => matchesApi.sendProposal(id!, {
+      side: sendSide,
+      channelId: sendChannelId,
+      body: sendBody.trim(),
+    }),
+    onSuccess: (r) => {
+      toast.success('ההצעה נשלחה', `מצב הצעה: ${label('matchStatus', r.data.matchStatus)}`);
+      setSendOpen(false);
+      setSendBody('');
+      qc.invalidateQueries({ queryKey: ['match', id] });
+      qc.invalidateQueries({ queryKey: ['match', id, 'send-preview'] });
+    },
+    onError: (err) => toast.error('השליחה נכשלה', (err as Error).message),
+  });
+
+  if (match.isLoading) return <div className="p-6"><LoadingSkeleton rows={8} /></div>;
+  if (match.isError) return <ErrorState description={(match.error as Error).message} onRetry={() => match.refetch()} />;
+  if (!match.data) return null;
+
+  const m = match.data.data;
+  const preview = sendPreview.data?.data;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <Card>
+        <CardBody className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <MatchTypeBadge type={m.matchType} />
+            {m.isDeferred && <Badge tone="warning">מושהה</Badge>}
+            {m.riskLevel !== 'none' && <Badge tone={m.riskLevel === 'high' ? 'danger' : 'warning'}>סיכון {label('riskLevel', m.riskLevel)}</Badge>}
+            {m.flexibilityOverrideApplied && <Badge tone="purple">גמישות הופעלה</Badge>}
+          </div>
+          <div className="ms-auto flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={<Sparkles className="h-4 w-4" />}
+              loading={explain.isPending}
+              disabled={!internal.data || !external.data}
+              onClick={() => explain.mutate()}
+            >
+              הסבר AI
+            </Button>
+            <Button
+              variant="secondary"
+              loading={suggestStep.isPending}
+              onClick={() => suggestStep.mutate()}
+              title="AI מייעץ בלבד — לא מבצע פעולה"
+            >
+              הצע צעד הבא
+            </Button>
+            <Button
+              variant="secondary"
+              loading={draftMessage.isPending}
+              disabled={!internal.data || !external.data}
+              onClick={() => draftMessage.mutate()}
+              title="טיוטה לבדיקה — לא נשלח אוטומטית"
+            >
+              טיוטת הודעה
+            </Button>
+            <Button
+              variant="subtle"
+              leftIcon={<Sparkles className="h-4 w-4" />}
+              onClick={() => setAskOpen(true)}
+              title="Ask AI מייעץ בלבד"
+            >
+              שאל על ההצעה
+            </Button>
+            <Button
+              variant="secondary"
+              leftIcon={<Clock className="h-4 w-4" />}
+              onClick={() => setConfirm({ type: 'defer', title: 'השהה הצעה', desc: 'ההצעה תעבור לתור ההצעות המושהות. ניתן לפתוח בעתיד.' })}
+            >
+              השהה
+            </Button>
+            <Button
+              variant="secondary"
+              leftIcon={<CheckCircle2 className="h-4 w-4" />}
+              onClick={() => setConfirm({ type: 'approve', title: 'אשר הצעה' })}
+              loading={approve.isPending}
+            >
+              אשר
+            </Button>
+            <Button
+              variant="danger"
+              leftIcon={<XCircle className="h-4 w-4" />}
+              onClick={() => setConfirm({ type: 'close', title: 'סגור הצעה' })}
+            >
+              סגור
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
+
+      {preview && !preview.canSend && <BlockedBanner blockers={preview.blockers} />}
+
+      {/* Two-column summaries + central analysis */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Internal summary */}
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">מועמד פנימי</h3></CardHeader>
+          <CardBody>
+            {internal.isLoading ? <LoadingSkeleton rows={4} /> : internal.data ? (
+              <SummaryBlock
+                name={`${internal.data.data.firstName} ${internal.data.data.lastName}`}
+                photo={internal.data.data.photoApproved ? internal.data.data.photoUrl : undefined}
+                lines={[
+                  internal.data.data.city,
+                  label('sectorGroup', internal.data.data.sectorGroup),
+                  label('studyWorkDirection', internal.data.data.studyWorkDirection),
+                  label('personalStatus', internal.data.data.personalStatus),
+                ]}
+              />
+            ) : <div className="text-sm text-ink-muted">לא נמצא</div>}
+          </CardBody>
+        </Card>
+
+        {/* Central analysis */}
+        <Card className="xl:col-span-1">
+          <CardHeader><h3 className="text-sm font-semibold">ניתוח מנוע ההתאמות</h3></CardHeader>
+          <CardBody>
+            <ScoreTriad matchScore={m.matchScore} confidenceScore={m.confidenceScore} riskLevel={m.riskLevel} />
+            <Divider className="my-4" />
+            <div className="space-y-2">
+              {m.scoreBreakdown.map((d) => (
+                <div key={d.dimension} className="flex items-center gap-2">
+                  <div className="w-36 text-xs text-ink-muted">{label('scoringDimension', d.dimension)}</div>
+                  <div className="flex-1 h-1.5 bg-bg-subtle rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-brand" style={{ width: `${d.score}%` }} />
+                  </div>
+                  <div className="w-8 text-xs num text-end">{d.score}</div>
+                </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* External summary */}
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">מועמד חיצוני</h3></CardHeader>
+          <CardBody>
+            {external.isLoading ? <LoadingSkeleton rows={4} /> : external.data ? (
+              <SummaryBlock
+                name={`${external.data.data.firstName ?? ''} ${external.data.data.lastName ?? ''}`.trim() || 'ללא שם'}
+                photo={external.data.data.sharePhoto ? external.data.data.photoUrl : undefined}
+                lines={[
+                  external.data.data.city,
+                  label('sectorGroup', external.data.data.sectorGroup),
+                  label('studyWorkDirection', external.data.data.studyWorkDirection),
+                  label('personalStatus', external.data.data.personalStatus),
+                ]}
+              />
+            ) : <div className="text-sm text-ink-muted">לא נמצא</div>}
+          </CardBody>
+        </Card>
+
+        {/* Strengths / Attention / Hard blockers — full width */}
+        <Card className="xl:col-span-2">
+          <CardHeader><h3 className="text-sm font-semibold">נקודות חוזק ונקודות לב</h3></CardHeader>
+          <CardBody className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="text-xs font-medium text-success uppercase tracking-wide mb-2">חוזקות</div>
+              {m.strengths.length === 0 ? <div className="text-xs text-ink-muted">—</div> :
+                <ul className="text-sm space-y-1 list-disc ps-4">{m.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>}
+            </div>
+            <div>
+              <div className="text-xs font-medium text-warning uppercase tracking-wide mb-2">נקודות לב</div>
+              {m.attentionPoints.length === 0 ? <div className="text-xs text-ink-muted">—</div> :
+                <ul className="text-sm space-y-1 list-disc ps-4">{m.attentionPoints.map((s, i) => <li key={i}>{s}</li>)}</ul>}
+            </div>
+            {m.overrideReasons.length > 0 && (
+              <div className="md:col-span-2">
+                <div className="text-xs font-medium text-purple-700 uppercase tracking-wide mb-2">עקיפות שהוחלו</div>
+                <ul className="text-sm space-y-1 list-disc ps-4">{m.overrideReasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+
+        {/* Send preview + action bar */}
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">מצב שליחה</h3></CardHeader>
+          <CardBody>
+            {sendPreview.isLoading ? <LoadingSkeleton rows={4} /> : preview ? (
+              <SendPreviewBlock preview={preview} onSend={() => setSendOpen(true)} />
+            ) : null}
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* Timeline (stub) */}
+      <Card>
+        <CardHeader><h3 className="text-sm font-semibold">ציר זמן</h3></CardHeader>
+        <CardBody>
+          <div className="text-sm text-ink-muted">
+            נוצר {new Date(m.createdAt).toLocaleDateString('he-IL')}
+            {m.isDeferred && m.deferredAt && <> · הושהה {new Date(m.deferredAt).toLocaleDateString('he-IL')}</>}
+            {m.datingStartedAt && <> · יצא להיכרות {new Date(m.datingStartedAt).toLocaleDateString('he-IL')}</>}
+            {m.closedAt && <> · נסגר {new Date(m.closedAt).toLocaleDateString('he-IL')}</>}
+          </div>
+        </CardBody>
+      </Card>
+
+      <ConfirmActionModal
+        open={confirm !== null}
+        onClose={() => setConfirm(null)}
+        title={confirm?.title ?? ''}
+        description={confirm?.desc}
+        onConfirm={() => {
+          if (!confirm) return;
+          if (confirm.type === 'approve') approve.mutate();
+          if (confirm.type === 'defer') defer.mutate('הוחלט להשהות');
+          if (confirm.type === 'close') close.mutate('החלטת שדכן');
+          setConfirm(null);
+        }}
+      />
+
+      <AskAIPanel
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+        initialQuery={`הצעת שידוך ${id ?? ''} — איזה צעדים שווה לשקול? מה נקודות הלב העיקריות?`}
+      />
+
+      <Dialog
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        title="שליחת הצעת שידוך"
+        description="כל שליחה מתבצעת מערוץ match_sending בלבד, נרשמת ביומן הביקורת, ודורשת אישור שלך."
+        primaryAction={{
+          label: 'שלח',
+          onClick: () => sendProposal.mutate(),
+          loading: sendProposal.isPending,
+        }}
+        secondaryAction={{ label: 'ביטול', onClick: () => setSendOpen(false) }}
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium mb-1">צד</label>
+            <Select value={sendSide} onChange={(e) => setSendSide(e.target.value as 'a' | 'b')}>
+              <option value="a">צד א (מועמד פנימי)</option>
+              <option value="b">צד ב (מועמד חיצוני)</option>
+            </Select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">ערוץ שליחה</label>
+            <Select
+              value={sendChannelId}
+              onChange={(e) => setSendChannelId(e.target.value)}
+              disabled={sendingChannels.isLoading}
+            >
+              <option value="">בחר ערוץ</option>
+              {(sendingChannels.data?.data ?? [])
+                .filter((c) => c.status === 'active')
+                .map((c) => (
+                  <option key={c.channelId} value={c.channelId}>
+                    {c.accountDisplayName}
+                    {c.connectionHealth !== 'healthy' ? ` · ${label('connectionHealth', c.connectionHealth)}` : ''}
+                  </option>
+                ))
+              }
+            </Select>
+            {sendingChannels.data && sendingChannels.data.data.length === 0 && (
+              <div className="text-xs text-warning mt-1">אין ערוצי match_sending מוגדרים.</div>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">תוכן ההודעה</label>
+            <Textarea
+              rows={5}
+              value={sendBody}
+              onChange={(e) => setSendBody(e.target.value)}
+              placeholder="טקסט ההודעה לשליחה — יישלח בדיוק כפי שנכתב כאן"
+            />
+            <div className="text-[11px] text-ink-faint mt-1">
+              {sendBody.trim().length} תווים · ⓘ AI לא שולח בעצמו. השליחה נשלחת רק לאחר לחיצה על "שלח".
+            </div>
+          </div>
+        </div>
+      </Dialog>
+    </div>
+  );
+}
+
+function MatchTypeBadge({ type }: { type: string }) {
+  const map: Record<string, { tone: 'success' | 'brand' | 'warning' | 'danger'; icon: React.ReactNode; label: string }> = {
+    safe: { tone: 'success', icon: <Shield className="h-3.5 w-3.5" />, label: 'בטוח' },
+    balanced: { tone: 'brand', icon: <Heart className="h-3.5 w-3.5" />, label: 'מאוזן' },
+    creative: { tone: 'warning', icon: <Sparkles className="h-3.5 w-3.5" />, label: 'יצירתי' },
+    risky: { tone: 'danger', icon: <AlertTriangle className="h-3.5 w-3.5" />, label: 'מסוכן' },
+  };
+  const m = map[type] ?? map['balanced']!;
+  return <Badge tone={m.tone} icon={m.icon}>{m.label}</Badge>;
+}
+
+function ScoreTriad({ matchScore, confidenceScore, riskLevel }: { matchScore: number; confidenceScore: number; riskLevel: string }) {
+  return (
+    <div className="grid grid-cols-3 gap-3 text-center">
+      <div>
+        <div className="text-xs text-ink-muted uppercase tracking-wide">ציון</div>
+        <div className="text-3xl font-semibold num text-brand-700">{matchScore}</div>
+      </div>
+      <div>
+        <div className="text-xs text-ink-muted uppercase tracking-wide">ביטחון</div>
+        <div className="text-3xl font-semibold num text-ink">{confidenceScore}</div>
+      </div>
+      <div>
+        <div className="text-xs text-ink-muted uppercase tracking-wide">סיכון</div>
+        <div className="text-xl font-semibold">{riskLevel}</div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryBlock({ name, photo, lines }: { name: string; photo?: string; lines: Array<string | undefined> }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar name={name} size={48} src={photo} />
+      <div>
+        <div className="font-semibold">{name}</div>
+        <div className="text-xs text-ink-muted mt-1 space-y-0.5">
+          {lines.filter(Boolean).map((l, i) => <div key={i}>{l}</div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SendPreviewBlock({
+  preview,
+  onSend,
+}: {
+  preview: SendPreview;
+  onSend: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className={`text-sm font-medium ${preview.canSend ? 'text-success' : 'text-warning'}`}>
+        {preview.canSend ? '✓ מוכן לשליחה' : '⚠ חסמים לפני שליחה'}
+      </div>
+      {preview.blockers.length > 0 && (
+        <ul className="text-xs text-ink-muted list-disc ps-4 space-y-0.5">
+          {preview.blockers.map((b, i) => <li key={i}>{b}</li>)}
+        </ul>
+      )}
+      <Divider />
+      <div className="text-xs text-ink-muted">
+        פעולה מומלצת: <span className="text-ink font-medium">{label('recommendedAction', preview.engineRecommendedAction)}</span>
+      </div>
+      <Button
+        disabled={!preview.canSend}
+        leftIcon={<Send className="h-4 w-4" />}
+        onClick={onSend}
+      >
+        התחל שליחה {!preview.canSend && '(חסום)'}
+      </Button>
+      <div className="text-[11px] text-ink-faint">
+        כל שליחה דורשת אישור אנושי ונכתבת ביומן הביקורת.
+      </div>
+    </div>
+  );
+}
+
+// ── AI brief builders ────────────────────────────────────
+// Keep payloads compact so AI requests stay under the
+// backend's prompt length cap.
+function briefInternal(c: InternalCandidate) {
+  return {
+    id: c._id, firstName: c.firstName, lastName: c.lastName, gender: c.gender,
+    city: c.city, sectorGroup: c.sectorGroup, subSector: c.subSector,
+    lifestyleTone: c.lifestyleTone, personalStatus: c.personalStatus,
+    lifeStage: c.lifeStage, studyWorkDirection: c.studyWorkDirection,
+    about: c.about, whatSeeking: c.whatSeeking,
+  };
+}
+function briefExternal(c: ExternalCandidate) {
+  return {
+    id: c._id, firstName: c.firstName, lastName: c.lastName, gender: c.gender,
+    age: c.age, city: c.city, sectorGroup: c.sectorGroup, subSector: c.subSector,
+    lifestyleTone: c.lifestyleTone, personalStatus: c.personalStatus,
+    lifeStage: c.lifeStage, studyWorkDirection: c.studyWorkDirection,
+    about: c.about, whatSeeking: c.whatSeeking,
+  };
+}
