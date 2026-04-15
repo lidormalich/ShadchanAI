@@ -1,0 +1,152 @@
+// ═══════════════════════════════════════════════════════════
+// ShadchanAI — Match Suggestion Controller
+// ═══════════════════════════════════════════════════════════
+
+import type { Request, Response, NextFunction } from 'express';
+import * as svc from './match.service.js';
+import { getValidatedQuery, getValidatedParams } from '../../middleware/validate.middleware.js';
+import { ok, created } from '../../utils/response.js';
+import { ensureUser, canApproveMatches } from '../../middleware/permissions.js';
+import type { ListMatchesQuery } from './match.validator.js';
+import type { SourceMode } from '@shadchanai/shared';
+
+export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const q = getValidatedQuery<ListMatchesQuery>(req);
+    const { items, meta } = await svc.listMatches(q);
+    ok(res, items, meta);
+  } catch (e) { next(e); }
+}
+
+export async function getHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.getMatchById(id));
+  } catch (e) { next(e); }
+}
+
+export async function evaluateHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { internalCandidateId, externalCandidateId, mode } = req.body as {
+      internalCandidateId: string;
+      externalCandidateId: string;
+      mode: SourceMode;
+    };
+    const result = await svc.evaluatePair(internalCandidateId, externalCandidateId, mode);
+    ok(res, result);
+  } catch (e) { next(e); }
+}
+
+export async function findForInternalHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const mode = ((req.query['mode'] as SourceMode | undefined) ?? 'strict') as SourceMode;
+    const limit = req.query['limit'] ? Number(req.query['limit']) : 20;
+    const items = await svc.findMatchesForInternal(id, mode, limit);
+    ok(res, items);
+  } catch (e) { next(e); }
+}
+
+export async function createManualHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { internalCandidateId, externalCandidateId, mode } = req.body as {
+      internalCandidateId: string;
+      externalCandidateId: string;
+      mode: SourceMode;
+    };
+    const doc = await svc.createManualSuggestion(internalCandidateId, externalCandidateId, mode, user.id);
+    created(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function approveHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.approveSuggestion(id, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function declineHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { side, reason, notes } = req.body as { side: 'a' | 'b'; reason?: string; notes?: string };
+    ok(res, await svc.declineSuggestion(id, side, reason, notes, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function deferHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { reason } = req.body as { reason: string };
+    ok(res, await svc.deferSuggestion(id, reason, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function reopenDeferredHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.reopenFromDeferred(id, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function markDatingHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.markMatchDating(id, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function closeHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { reason } = req.body as { reason: string };
+    ok(res, await svc.closeSuggestion(id, reason, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function explanationHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.getExplanationPayload(id));
+  } catch (e) { next(e); }
+}
+
+export async function sendPreviewHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.previewSendReadiness(id));
+  } catch (e) { next(e); }
+}
+
+export async function sendProposalHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { side, channelId, body } = req.body as { side: 'a' | 'b'; channelId: string; body: string };
+    const result = await svc.sendProposal(id, {
+      side, channelId, body, performedBy: user.id,
+    });
+    ok(res, result);
+  } catch (e) { next(e); }
+}

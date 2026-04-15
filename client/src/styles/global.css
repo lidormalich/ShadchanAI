@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ────────────────────────────────────────────────────
+   RTL-safe base styles. All component styles should use
+   logical properties (ms-*, me-*, ps-*, pe-*) and avoid
+   left/right where possible so Hebrew + English both work.
+   ──────────────────────────────────────────────────── */
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-ink antialiased;
+  font-family: 'Assistant', 'Inter', system-ui, sans-serif;
+}
+
+/* Numerals stay LTR even in RTL context */
+.num {
+  direction: ltr;
+  unicode-bidi: embed;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbar polish */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid theme('colors.brand.500');
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Button/select resets */
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f1f1f3 25%, #e4e4e7 37%, #f1f1f3 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
