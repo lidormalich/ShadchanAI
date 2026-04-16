@@ -1,6 +1,24 @@
 import { api } from './client';
 import type { BaileysChannelStatus, Channel } from '@/types/domain';
 
+export interface DiscoveredChat {
+  chatJid: string;
+  chatType: 'group' | 'private';
+  name: string;
+  participantCount?: number;
+  role?: 'profiles_source' | 'match_sending' | 'ignore';
+  lastMessageAt?: string;
+  hasConversation: boolean;
+  conversationId?: string;
+}
+
+export interface ChatDiscoveryResult {
+  channelId: string;
+  liveSessionAvailable: boolean;
+  groupsFetched: number;
+  chats: DiscoveredChat[];
+}
+
 export const channelsApi = {
   list: (query: Record<string, unknown> = {}) =>
     api.get<Channel[]>('/channels', query),
@@ -34,4 +52,17 @@ export const channelsApi = {
     api.post<BaileysChannelStatus>(`/channels/${channelId}/session/stop`),
   sessionLogout: (channelId: string) =>
     api.post<BaileysChannelStatus>(`/channels/${channelId}/session/logout`),
+  // ── Pre-pilot discovery + mapping + safe delete ────────
+  listChats: (channelId: string) =>
+    api.get<ChatDiscoveryResult>(`/channels/${channelId}/chats`),
+  assignChatRole: (channelId: string, body: {
+    chatJid: string;
+    chatType: 'group' | 'private';
+    role: 'profiles_source' | 'match_sending' | 'ignore' | null;
+    chatName?: string;
+  }) => api.patch<{ channelId: string; chatJid: string; role: string | null }>(
+    `/channels/${channelId}/chats/role`, body,
+  ),
+  deleteChannel: (channelId: string) =>
+    api.post<void>(`/channels/${channelId}/delete`, { confirmChannelId: channelId }),
 };

@@ -28,3 +28,18 @@ export const DisconnectChannelSchema = z.object({
 export const ChannelIdParamSchema = z.object({
   channelId: z.string().regex(/^ch_[a-f0-9]+$/i),
 });
+
+// Role assignment for a specific chat jid on this channel.
+// null clears the mapping (back to "unmapped").
+export const AssignChatRoleSchema = z.object({
+  chatJid: z.string().trim().min(3).max(200),
+  chatName: z.string().trim().max(200).optional(),
+  chatType: z.enum(['group', 'private']),
+  role: z.enum(['profiles_source', 'match_sending', 'ignore']).nullable(),
+});
+
+export const DeleteChannelSchema = z.object({
+  // Guard: the operator must confirm the channelId in the body so a
+  // bad URL-param typo can't wipe the wrong channel.
+  confirmChannelId: z.string().regex(/^ch_[a-f0-9]+$/i),
+});

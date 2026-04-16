@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftRight, Inbox, MessageSquare, RefreshCw, Send, UserCheck, UserPlus } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Textarea } from '@/components/ui/primitives';
 import { EmptyState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { conversationsApi } from '@/services/api/conversations';
 import { channelsApi } from '@/services/api/channels';
 import { extractionApi } from '@/services/api/extraction';
+import { useRealtimeEvents } from '@/features/realtime/useRealtimeEvents';
+import { useSafeMode } from '@/features/safe-mode/useSafeMode';
 import { label } from '@/utils/labels';
 import type { Conversation, Message } from '@/types/domain';
 
@@ -15,7 +17,19 @@ type RoleFilter = 'all' | 'profiles_source' | 'match_sending';
 
 export function ChatsPage() {
   const [role, setRole] = useState<RoleFilter>('all');
-  const [selected, setSelected] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const urlConversation = searchParams.get('conversation');
+  const [selected, setSelected] = useState<string | null>(urlConversation);
+
+  // Deep-link: open the conversation whose id is in ?conversation=
+  useEffect(() => {
+    if (urlConversation) setSelected(urlConversation);
+  }, [urlConversation]);
+
+  // Subscribe to server-side realtime events (SSE). New inbound
+  // messages and review-queue arrivals invalidate the right caches
+  // instantly instead of waiting on the 30s staleTime poll.
+  useRealtimeEvents(true);
 
   const list = useQuery({
     queryKey: ['conversations', role],
@@ -128,7 +142,13 @@ export function ChatsPage() {
               {activeConv.matchSuggestionId && (
                 <div>
                   <div className="text-xs text-ink-muted">הצעת שידוך</div>
-                  <div className="font-mono text-xs">{activeConv.matchSuggestionId.slice(-8)}</div>
+                  <Link
+                    to={`/matches/${activeConv.matchSuggestionId}`}
+                    className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
+                  >
+                    פתח הצעה
+                    <span className="font-mono text-ink-faint">#{activeConv.matchSuggestionId.slice(-6)}</span>
+                  </Link>
                 </div>
               )}
               {activeConv.supersedesConversationId && (
@@ -178,12 +198,23 @@ function ConversationListItem({ conv, active, onClick }: { conv: Conversation; a
 
 function ThreadHeader({ conv, chainLength }: { conv: Conversation; chainLength: number }) {
   return (
-    <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+    <div className="px-5 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
       <div>
         <div className="font-semibold">{conv.participantName ?? 'ללא שם'}</div>
         <div className="text-xs text-ink-muted">{conv.accountDisplayName} · {label('channelRole', conv.channelRole)}</div>
       </div>
-      {chainLength > 1 && <Badge tone="info">שרשרת {chainLength}</Badge>}
+      <div className="flex items-center gap-2">
+        {conv.matchSuggestionId && (
+          <Link
+            to={`/matches/${conv.matchSuggestionId}`}
+            className="inline-flex items-center gap-1 text-xs rounded-full bg-brand-50 text-brand-700 px-2 py-0.5 hover:bg-brand-100"
+          >
+            <MessageSquare className="h-3 w-3" />
+            פתח הצעת שידוך
+          </Link>
+        )}
+        {chainLength > 1 && <Badge tone="info">שרשרת {chainLength}</Badge>}
+      </div>
     </div>
   );
 }
@@ -341,6 +372,16 @@ function Compose({ conv }: { conv: Conversation }) {
     },
     onError: (err) => toast.error('השליחה נכשלה', (err as Error).message),
   });
+
+  // ── Gate 0: pre-pilot safe mode (kill-switch) ─────────
+  const safeMode = useSafeMode();
+  if (!safeMode.outboundEnabled) {
+    return (
+      <ComposeBlocked
+        reason={`מצב בטיחות פעיל — שליחת הודעות מושבתת.${safeMode.reason ? ` (${safeMode.reason})` : ''}`}
+      />
+    );
+  }
 
   // ── Gate 1: role must be match_sending ────────────────
   if (conv.channelRole !== 'match_sending') {

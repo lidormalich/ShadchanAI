@@ -3,6 +3,7 @@ import {
   Activity, LogOut, Plug, PlugZap, QrCode, RefreshCcw, Replace, Shield, Unplug, PlayCircle, Link2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { channelsApi } from '@/services/api/channels';
 import {
@@ -11,6 +12,7 @@ import {
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
+import { useRealtimeEvents } from '@/features/realtime/useRealtimeEvents';
 import { label } from '@/utils/labels';
 import type { BaileysChannelStatus, Channel } from '@/types/domain';
 
@@ -66,6 +68,10 @@ function formatDate(s?: string): string {
 // ─────────────────────────────────────────────────────────────
 
 export function ChannelsPage() {
+  // Push channel state changes into the cache so operators see
+  // disconnects / reconnects without clicking refresh.
+  useRealtimeEvents(true);
+
   const list = useQuery({ queryKey: ['channels'], queryFn: () => channelsApi.list({ limit: 100 }) });
   const health = useQuery({ queryKey: ['channels', 'health'], queryFn: () => channelsApi.health() });
   const [connectOpen, setConnectOpen] = useState(false);
@@ -77,7 +83,12 @@ export function ChannelsPage() {
           <h2 className="text-lg font-semibold">ערוצים</h2>
           <p className="text-sm text-ink-muted">ערוצי WhatsApp מחולקים לפי תפקיד: מקור פרופילים ושליחת הצעות.</p>
         </div>
-        <Button leftIcon={<Plug className="h-4 w-4" />} onClick={() => setConnectOpen(true)}>חבר ערוץ חדש</Button>
+        <div className="flex items-center gap-2">
+          <Link to="/channels/mappings" className="text-sm text-brand-700 hover:underline">
+            מיפוי שיחות לתפקיד →
+          </Link>
+          <Button leftIcon={<Plug className="h-4 w-4" />} onClick={() => setConnectOpen(true)}>חבר ערוץ חדש</Button>
+        </div>
       </div>
 
       {/* Health summary */}
@@ -133,7 +144,7 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
   const qc = useQueryClient();
   const [session, setSession] = useState<BaileysChannelStatus | null>(null);
   const [activeAction, setActiveAction] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<null | 'disconnect' | 'logout' | 'replace'>(null);
+  const [confirm, setConfirm] = useState<null | 'disconnect' | 'logout' | 'replace' | 'delete'>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [chainOpen, setChainOpen] = useState(false);
 
@@ -163,6 +174,17 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
     refreshStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.channelId]);
+
+  // Phase 7: while pairing, QR rotates on the Baileys side every
+  // ~20s. Auto-poll status so the UI picks up the fresh QR before
+  // the operator scans an expired one. Stops as soon as the state
+  // transitions away from pending_pairing.
+  useEffect(() => {
+    if (session?.state !== 'pending_pairing') return;
+    const interval = window.setInterval(() => { void refreshStatus(); }, 10_000);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.state, channel.channelId]);
 
   const startMut = useMutation({
     mutationFn: () => channelsApi.sessionStart(channel.channelId),
@@ -205,9 +227,15 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
     onError: (e: Error) => toast.error('ההחלפה נכשלה', e.message),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: () => channelsApi.deleteChannel(channel.channelId),
+    onSuccess: () => { toast.success('הערוץ נמחק'); invalidate(); },
+    onError: (e: Error) => toast.error('המחיקה נכשלה', e.message),
+  });
+
   const pending =
     startMut.isPending || reconnectMut.isPending || disconnectMut.isPending ||
-    logoutMut.isPending || replaceMut.isPending || activeAction !== null;
+    logoutMut.isPending || replaceMut.isPending || deleteMut.isPending || activeAction !== null;
 
   const state: BaileysChannelStatus['state'] = session?.state ?? 'idle';
   const status = channel.status;
@@ -218,6 +246,8 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
   const showDisconnect = status === 'active' || state === 'connected';
   const showLogout = showDisconnect;
   const showReplace = status !== 'replaced';
+  // Delete allowed only when the channel is already inert. Server re-checks.
+  const showDelete = ['disconnected', 'suspended', 'replaced'].includes(status);
 
   const reasonHe = channel.statusReason ? (STATUS_REASON_MAP[channel.statusReason] ?? channel.statusReason) : null;
 
@@ -332,6 +362,11 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
                 צפייה בשרשרת
               </Button>
             )}
+            {showDelete && (
+              <Button size="sm" variant="danger" onClick={() => setConfirm('delete')} disabled={pending}>
+                מחק ערוץ
+              </Button>
+            )}
           </div>
         </CardBody>
       </Card>
@@ -366,6 +401,16 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
         confirmLabel="סמן כהוחלף"
         loading={replaceMut.isPending}
         onConfirm={() => { replaceMut.mutate(); setConfirm(null); }}
+      />
+      <ConfirmActionModal
+        open={confirm === 'delete'}
+        onClose={() => setConfirm(null)}
+        title="מחיקת ערוץ"
+        description="הערוץ יוסר מהרשימה. ההרשאות של Baileys מנוקות בצעד יציאה־מחשבון נפרד, לפני המחיקה. היסטוריית שיחות נשמרת ואינה נמחקת. מיפויי תפקידים (ChatMapping) של הערוץ יימחקו."
+        variant="danger"
+        confirmLabel="מחק לצמיתות"
+        loading={deleteMut.isPending}
+        onConfirm={() => { deleteMut.mutate(); setConfirm(null); }}
       />
 
       <QRPairingModal
