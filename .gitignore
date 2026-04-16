@@ -35,3 +35,6 @@ temp/
 .context-brain.db
 .fastembed_cache/
 .claude/settings.local.json
+
+# Runtime data
+server/data/
