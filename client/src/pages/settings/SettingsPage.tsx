@@ -1,9 +1,12 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { ChevronLeft, FileText, Plug, ScrollText, Shield, Sliders, Users } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ChevronLeft, Gauge, Plug, Shield, Sliders } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
-import { Badge, Card, CardBody, CardHeader } from '@/components/ui/primitives';
-import { EmptyState } from '@/components/states/states';
+import { Badge, Button, Card, CardBody, CardHeader, Input } from '@/components/ui/primitives';
+import { LoadingSkeleton } from '@/components/states/states';
+import { toast } from '@/components/ui/Toast';
+import { settingsApi, type SettingRow } from '@/services/api/settings';
 
 interface Section {
   id: string;
@@ -14,11 +17,9 @@ interface Section {
 
 function SectionsList(): Section[] {
   return [
-    { id: 'matching',   label: 'כללי התאמה',  icon: <Sliders className="h-4 w-4" />,    content: <MatchingRulesSection /> },
-    { id: 'templates',  label: 'תבניות',      icon: <FileText className="h-4 w-4" />,   content: <TemplatesSection /> },
-    { id: 'channels',   label: 'ערוצים',      icon: <Plug className="h-4 w-4" />,       content: <ChannelsSettingsSection /> },
-    { id: 'team',       label: 'צוות והרשאות', icon: <Users className="h-4 w-4" />,     content: <TeamSection /> },
-    { id: 'audit',      label: 'יומן ביקורת', icon: <ScrollText className="h-4 w-4" />, content: <AuditSection /> },
+    { id: 'operational', label: 'ספי תפעול',   icon: <Gauge className="h-4 w-4" />,   content: <OperationalSettingsSection /> },
+    { id: 'matching',    label: 'כללי התאמה',  icon: <Sliders className="h-4 w-4" />, content: <MatchingRulesSection /> },
+    { id: 'channels',    label: 'ערוצים',      icon: <Plug className="h-4 w-4" />,    content: <ChannelsSettingsSection /> },
   ];
 }
 
@@ -58,6 +59,94 @@ export function SettingsPage() {
 
       <section className="col-span-9 xl:col-span-10">{active.content}</section>
     </div>
+  );
+}
+
+function OperationalSettingsSection() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => settingsApi.list(),
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader><h3 className="text-base font-semibold">ספי תור הדשבורד</h3></CardHeader>
+        <CardBody>
+          <div className="text-xs text-ink-muted mb-3">
+            ערכים אלו שולטים במתי פריטים מופיעים בתור הפעולות בדשבורד. שינוי נכנס לתוקף מיד בשאילתה הבאה.
+          </div>
+          {list.isLoading ? (
+            <LoadingSkeleton rows={3} />
+          ) : list.isError ? (
+            <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
+          ) : (
+            <ul className="space-y-3">
+              {(list.data?.data ?? []).map((row) => (
+                <SettingRowEditor
+                  key={row.key}
+                  row={row}
+                  onSaved={(v) => {
+                    qc.setQueryData<{ data: SettingRow[]; meta?: unknown } | undefined>(
+                      ['settings'],
+                      (prev) => prev
+                        ? { ...prev, data: prev.data.map((r) => r.key === row.key ? { ...r, value: v } : r) }
+                        : prev,
+                    );
+                    qc.invalidateQueries({ queryKey: ['dashboard', 'queue'] });
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function SettingRowEditor({ row, onSaved }: { row: SettingRow; onSaved: (value: number) => void }) {
+  const [value, setValue] = useState<number>(row.value);
+  useEffect(() => { setValue(row.value); }, [row.value]);
+
+  const save = useMutation({
+    mutationFn: () => settingsApi.update(row.key, value),
+    onSuccess: (res) => {
+      toast.success('נשמר');
+      onSaved(res.data.value);
+    },
+    onError: (err) => toast.error('השמירה נכשלה', (err as Error).message),
+  });
+
+  const dirty = value !== row.value;
+  const invalid = !Number.isFinite(value) || value < row.min || value > row.max;
+
+  return (
+    <li className="rounded-md border border-border p-3">
+      <div className="text-sm font-medium">{row.description}</div>
+      <div className="text-[11px] text-ink-faint mt-0.5 font-mono">{row.key}</div>
+      <div className="mt-2 flex items-center gap-2">
+        <Input
+          type="number"
+          min={row.min}
+          max={row.max}
+          value={Number.isFinite(value) ? value : ''}
+          onChange={(e) => setValue(Number(e.target.value))}
+          className="w-32 num"
+        />
+        <span className="text-[11px] text-ink-muted">ברירת מחדל: {row.default} · טווח: {row.min}–{row.max}</span>
+        <Button
+          size="sm"
+          loading={save.isPending}
+          disabled={!dirty || invalid}
+          onClick={() => save.mutate()}
+          className="ms-auto"
+        >
+          שמור
+        </Button>
+      </div>
+    </li>
   );
 }
 
@@ -117,20 +206,6 @@ function ThresholdTile({ label, score, conf }: { label: string; score: number; c
   );
 }
 
-function TemplatesSection() {
-  return (
-    <Card>
-      <CardHeader><h3 className="text-base font-semibold">תבניות הודעות</h3></CardHeader>
-      <CardBody>
-        <EmptyState
-          title="ניהול תבניות יתווסף בעתיד"
-          description="תבניות הודעות פתיחה, מעקב וסירוב יטופלו במסך ייעודי כאשר זרימת שליחת ההצעות תופעל."
-        />
-      </CardBody>
-    </Card>
-  );
-}
-
 function ChannelsSettingsSection() {
   return (
     <Card>
@@ -151,30 +226,3 @@ function ChannelsSettingsSection() {
   );
 }
 
-function TeamSection() {
-  return (
-    <Card>
-      <CardHeader><h3 className="text-base font-semibold">צוות והרשאות</h3></CardHeader>
-      <CardBody>
-        <EmptyState
-          title="ניהול משתמשים יתווסף בעתיד"
-          description="משתמשים, תפקידים (admin · shadchan · viewer) והרשאות יוגדרו כאן לאחר הוספת מודל משתמשים בשרת."
-        />
-      </CardBody>
-    </Card>
-  );
-}
-
-function AuditSection() {
-  return (
-    <Card>
-      <CardHeader><h3 className="text-base font-semibold">יומן ביקורת</h3></CardHeader>
-      <CardBody>
-        <EmptyState
-          title="יומן פעולות"
-          description="כל פעולה משמעותית במערכת נרשמת ביומן ביקורת בלתי ניתן לשינוי. תצוגה בממשק תתווסף בשלב הבא."
-        />
-      </CardBody>
-    </Card>
-  );
-}

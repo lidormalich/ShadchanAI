@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button, Input, Select, Textarea } from '@/components/ui/primitives';
 import { toast } from '@/components/ui/Toast';
 import { tasksApi } from '@/services/api/tasks';
+import { useUsers } from '@/features/users/useUsers';
 import { label } from '@/utils/labels';
 import type { Task } from '@/types/domain';
 
@@ -16,16 +17,40 @@ const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
 
 type Values = Partial<Task>;
 
+export type TaskRelatedEntity =
+  | { type: 'internal_candidate'; id: string }
+  | { type: 'external_candidate'; id: string }
+  | { type: 'match_suggestion'; id: string }
+  | { type: 'conversation'; id: string };
+
+function applyRelatedEntity(values: Values, related?: TaskRelatedEntity): Values {
+  if (!related) return values;
+  const next: Values = { ...values };
+  if (related.type === 'internal_candidate') next.internalCandidateId = related.id;
+  if (related.type === 'external_candidate') next.externalCandidateId = related.id;
+  if (related.type === 'match_suggestion') next.matchSuggestionId = related.id;
+  if (related.type === 'conversation') next.conversationId = related.id;
+  return next;
+}
+
 export function TaskForm({
-  open, onClose, initial,
+  open, onClose, initial, relatedEntity,
 }: {
   open: boolean;
   onClose: () => void;
   initial?: Task;
+  // When creating from an entity page, prefill the related link so the
+  // new task is attached to the candidate / match / conversation it was
+  // opened from. Ignored in edit mode.
+  relatedEntity?: TaskRelatedEntity;
 }) {
   const qc = useQueryClient();
+  const users = useUsers();
   const [v, setV] = useState<Values>({});
-  useEffect(() => { setV(initial ?? { type: 'general', priority: 'medium' }); }, [initial]);
+  useEffect(() => {
+    const base: Values = initial ?? { type: 'general', priority: 'medium' };
+    setV(initial ? base : applyRelatedEntity(base, relatedEntity));
+  }, [initial, relatedEntity]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -75,13 +100,28 @@ export function TaskForm({
             </Select>
           </div>
         </div>
-        <div>
-          <label className="block text-xs font-medium mb-1">תאריך יעד</label>
-          <Input
-            type="date"
-            value={v.dueAt?.slice(0, 10) ?? ''}
-            onChange={(e) => set('dueAt', e.target.value)}
-          />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1">תאריך יעד</label>
+            <Input
+              type="date"
+              value={v.dueAt?.slice(0, 10) ?? ''}
+              onChange={(e) => set('dueAt', e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">שויך ל</label>
+            <Select
+              value={v.assignedTo ?? ''}
+              onChange={(e) => set('assignedTo', e.target.value || undefined)}
+              disabled={users.isLoading}
+            >
+              <option value="">— לא שויך —</option>
+              {(users.data?.data ?? []).map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </Select>
+          </div>
         </div>
         <div>
           <label className="block text-xs font-medium mb-1">תיאור</label>

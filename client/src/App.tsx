@@ -10,9 +10,11 @@ import { MatchesPipelinePage } from './pages/matches/MatchesPipelinePage';
 import { MatchDetailPage } from './pages/matches/MatchDetailPage';
 import { ChatsPage } from './pages/chats/ChatsPage';
 import { ChannelsPage } from './pages/channels/ChannelsPage';
+import { ChannelMappingsPage } from './pages/channels/ChannelMappingsPage';
 import { ReviewQueuePage } from './pages/review/ReviewQueuePage';
 import { TasksPage } from './pages/tasks/TasksPage';
 import { InsightsPage } from './pages/insights/InsightsPage';
+import { MonitoringPage } from './pages/monitoring/MonitoringPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { LoginPage } from './features/auth/LoginPage';
@@ -58,9 +60,11 @@ const router = createBrowserRouter([
       { path: 'matches/:id', element: <MatchDetailPage /> },
       { path: 'chats', element: <ChatsPage /> },
       { path: 'channels', element: <ChannelsPage /> },
+      { path: 'channels/mappings', element: <ChannelMappingsPage /> },
       { path: 'review', element: <ReviewQueuePage /> },
       { path: 'tasks', element: <TasksPage /> },
       { path: 'insights', element: <InsightsPage /> },
+      { path: 'monitoring', element: <MonitoringPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'settings/:section', element: <SettingsPage /> },
       { path: '*', element: <NotFoundPage /> },

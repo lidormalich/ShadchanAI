@@ -30,10 +30,12 @@ import {
 } from '@shadchanai/shared';
 import { Message, ExternalCandidate, type IMessage } from '../../models/index.js';
 import { processMessageExtraction } from '../../services/extraction/orchestrator.js';
-import { extractProfileFromText } from '../../services/extraction/regex.extractor.js';
+import { extractProfileFromText, type ExtractedProfile } from '../../services/extraction/regex.extractor.js';
 import { ensureUser, canManageChannels } from '../../middleware/permissions.js';
 import { ok } from '../../utils/response.js';
-import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { NotFoundError, ValidationError, ConflictError } from '../../utils/errors.js';
+import { normalizePhone } from '../../utils/phone.js';
+import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 
 // ── Synchronous manual (re-)run ──────────────────────────
 
@@ -105,22 +107,47 @@ export async function approveHandler(req: Request, res: Response, next: NextFunc
       throw new ValidationError(`Message is not in needs_review (current: ${message.extraction?.status ?? 'none'})`);
     }
 
-    // Re-run regex to pull the current best-effort field set. The
-    // operator can edit on the UI side before approving — for this
-    // first version we take whatever the pipeline extracted.
-    const regex = extractProfileFromText(message.body ?? '');
-    const profile = regex.profile;
+    // If the operator edited the fields in the review UI they're sent
+    // on the request body as `profile`. We take those verbatim and skip
+    // re-running the regex so their corrections aren't overwritten.
+    // When no override is supplied we fall back to the regex output.
+    const bodyProfile = (req.body as { profile?: Record<string, unknown> } | undefined)?.profile;
+    const profile = bodyProfile
+      ? sanitizeProfileOverride(bodyProfile)
+      : extractProfileFromText(message.body ?? '').profile;
+
     if (!profile.firstName && !profile.contactPhones?.length) {
       throw new ValidationError('No name or phone extracted — cannot create candidate. Reject instead.');
     }
 
     const primaryPhone = profile.contactPhones?.[0];
+    const normalizedPhone = normalizePhone(primaryPhone);
+
+    // Duplicate guard at approve-time: if another active external
+    // already holds this canonical phone, refuse with a structured
+    // 409 so the operator can open the existing candidate instead
+    // of silently creating a twin.
+    if (normalizedPhone) {
+      const existing = await ExternalCandidate.findOne({
+        contactPhoneNormalized: normalizedPhone,
+        archivedAt: { $exists: false },
+      }).select('_id firstName lastName').lean().exec();
+      if (existing) {
+        recordDuplicatePhone({ source: 'extraction_approve', existingCandidateId: String(existing._id), messageId });
+        throw new ConflictError(
+          'An external candidate with this phone already exists',
+          { code: 'duplicate_phone', existingCandidateId: String(existing._id) },
+        );
+      }
+    }
+
     const created = await ExternalCandidate.create({
       sourceType: ExternalSourceType.WHATSAPP_GROUP,
       sourceChannelId: message.channelId,
       sourceImportedAt: message.createdAt,
       lastSourceUpdateAt: message.createdAt,
       contactPhone: primaryPhone,
+      contactPhoneNormalized: normalizedPhone ?? undefined,
       sourceMessageIds: [message._id],
       firstName: profile.firstName,
       lastName: profile.lastName,
@@ -137,6 +164,8 @@ export async function approveHandler(req: Request, res: Response, next: NextFunc
         : undefined,
       status: ExternalCandidateStatus.ACTIVE,
       importedBy: new Types.ObjectId(user.id),
+      // The operator who approved the extraction becomes the owner.
+      ownerUserId: new Types.ObjectId(user.id),
     });
 
     await updateMessageExtraction(message, {
@@ -171,6 +200,43 @@ export async function rejectHandler(req: Request, res: Response, next: NextFunct
 }
 
 // ── Helpers ──────────────────────────────────────────────
+
+// Whitelist & coerce the fields we accept from the operator review UI.
+// Anything outside this shape is dropped — avoids accidental persistence
+// of fields the ExternalCandidate schema doesn't know about.
+function sanitizeProfileOverride(raw: Record<string, unknown>): ExtractedProfile {
+  const str = (v: unknown): string | undefined => {
+    if (typeof v !== 'string') return undefined;
+    const t = v.trim();
+    return t.length > 0 ? t : undefined;
+  };
+  const num = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v);
+    return undefined;
+  };
+  const phones = Array.isArray(raw['contactPhones'])
+    ? (raw['contactPhones'] as unknown[]).map((p) => (typeof p === 'string' ? p.trim() : '')).filter((p) => p.length > 0)
+    : undefined;
+
+  return {
+    firstName: str(raw['firstName']),
+    lastName: str(raw['lastName']),
+    gender: str(raw['gender']) as ExtractedProfile['gender'],
+    age: num(raw['age']),
+    height: num(raw['height']),
+    city: str(raw['city']),
+    edah: str(raw['edah']),
+    sectorGroup: str(raw['sectorGroup']) as ExtractedProfile['sectorGroup'],
+    personalStatus: str(raw['personalStatus']) as ExtractedProfile['personalStatus'],
+    occupation: str(raw['occupation']),
+    about: str(raw['about']),
+    whatSeeking: str(raw['whatSeeking']),
+    seekingAgeMin: num(raw['seekingAgeMin']),
+    seekingAgeMax: num(raw['seekingAgeMax']),
+    contactPhones: phones && phones.length > 0 ? phones : undefined,
+  };
+}
 
 async function updateMessageExtraction(
   message: IMessage,

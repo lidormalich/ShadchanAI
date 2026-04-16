@@ -130,6 +130,7 @@ export const ListInternalCandidatesQuerySchema = PaginationQuerySchema.extend({
   sectorGroup: z.nativeEnum(SectorGroup).optional(),
   city: z.string().optional(),
   search: z.string().max(200).optional(),
+  ownership: z.enum(['mine', 'team', 'all']).optional(),
 });
 
 export type ListInternalCandidatesQuery = z.infer<typeof ListInternalCandidatesQuerySchema>;

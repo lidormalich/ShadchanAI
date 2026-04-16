@@ -83,10 +83,12 @@ export interface IExternalCandidate extends Document {
   sourceChannelId?: string;
   sourceImportedAt: Date;
   lastSourceUpdateAt?: Date;
-  // Contact phone (normalized Israeli format, no separators). Populated
-  // by the extraction pipeline from the profile card text. Used as the
-  // primary lookup key when deciding "is this the same candidate?".
+  // Contact phone as originally extracted from the profile card text
+  // (may still carry dashes/spaces/country prefix variance).
   contactPhone?: string;
+  // Canonical E.164-shape phone ("+972501234567") derived at write time.
+  // This is the authoritative lookup key for duplicate detection.
+  contactPhoneNormalized?: string;
   // Every Message._id that contributed to this candidate (first import
   // + re-posts). Enables the "view source messages" action on a candidate.
   sourceMessageIds?: Types.ObjectId[];
@@ -201,6 +203,8 @@ export interface IExternalCandidate extends Document {
 
   // audit
   importedBy?: Types.ObjectId;
+  // ownership — the shadchan currently responsible for this external candidate
+  ownerUserId?: Types.ObjectId;
   archivedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -223,6 +227,7 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     sourceImportedAt: { type: Date, required: true, default: Date.now },
     lastSourceUpdateAt: { type: Date },
     contactPhone: { type: String, trim: true },
+    contactPhoneNormalized: { type: String, trim: true, index: true, sparse: true },
     sourceMessageIds: [{ type: Schema.Types.ObjectId, ref: 'Message' }],
 
     // ── Profile data (may be partial) ─────────────────────
@@ -331,6 +336,8 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
 
     // ── Audit ─────────────────────────────────────────────
     importedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    // ── Ownership ─────────────────────────────────────────
+    ownerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     archivedAt: { type: Date },
   },
   {

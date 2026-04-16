@@ -13,9 +13,17 @@ export const ListConversationsQuerySchema = PaginationQuerySchema.extend({
   internalCandidateId: ObjectIdString.optional(),
   externalCandidateId: ObjectIdString.optional(),
   matchSuggestionId: ObjectIdString.optional(),
+  // 'unassigned' surfaces conversations with no explicit role yet —
+  // the mapping UI uses this filter to find new chats to map.
+  assignedRole: z.enum(['profiles_source', 'match_sending', 'ignore', 'unassigned']).optional(),
 });
 
 export type ListConversationsQuery = z.infer<typeof ListConversationsQuerySchema>;
+
+export const AssignRoleSchema = z.object({
+  // null clears the assignment (back to "unassigned").
+  role: z.enum(['profiles_source', 'match_sending', 'ignore']).nullable(),
+});
 
 export const ListMessagesQuerySchema = PaginationQuerySchema.extend({
   before: z.coerce.date().optional(),

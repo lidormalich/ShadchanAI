@@ -6,6 +6,10 @@ import { LoadingSkeleton } from '@/components/states/states';
 import { externalCandidatesApi } from '@/services/api/candidates';
 import { StaleBanner } from '@/components/domain/banners';
 import { label } from '@/utils/labels';
+import { NotesRail } from '@/features/notes/NotesRail';
+import { TasksRail } from '@/features/tasks/TasksRail';
+import { EntityTimeline } from '@/features/history/EntityTimeline';
+import { OwnerChip } from '@/features/users/OwnerChip';
 import type { ExternalCandidate } from '@/types/domain';
 
 export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
@@ -67,6 +71,7 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
                 {c.city && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{c.city}</span>}
                 {c.age && <span className="inline-flex items-center gap-1 num"><Calendar className="h-3.5 w-3.5" />{c.age}</span>}
                 {c.ageReliability?.ageConfidence && <span className="text-xs">דיוק גיל: {label('ageConfidence', c.ageReliability.ageConfidence)}</span>}
+                <OwnerChip userId={c.ownerUserId} />
               </div>
             </div>
           </div>
@@ -78,7 +83,9 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
               { id: 'profile', label: 'פרופיל מלא', content: <FullProfile c={c} /> },
               { id: 'match', label: 'ניתוח התאמה', badge: <Badge tone="brand">{matching.data?.data.length ?? 0}</Badge>, content: <MatchingInternals items={matching.data?.data ?? []} loading={matching.isLoading} /> },
               { id: 'share', label: 'תצוגה מקדימה לשיתוף', content: <ShareCardPreview c={c} /> },
-              { id: 'history', label: 'היסטוריה', content: <div className="text-sm text-ink-muted py-4">בקרוב — היסטוריית פרופיל חיצוני.</div> },
+              { id: 'history', label: 'היסטוריה', content: <EntityTimeline entityType="external_candidate" entityId={c._id} title="יומן פעילות" asCard={false} /> },
+              { id: 'tasks', label: 'משימות', content: <TasksRail related={{ type: 'external_candidate', id: c._id }} /> },
+              { id: 'notes', label: 'הערות', content: <NotesRail entityType="external_candidate" entityId={c._id} /> },
             ]}
           />
         </div>

@@ -163,6 +163,36 @@ export class BaileysClient {
     return messageId;
   }
 
+  /**
+   * Request the raw chat list from Baileys. Only groups are
+   * available without a long-running chat-store; private chats
+   * become visible via conversations we've already received.
+   * The channel-service merges both sources.
+   */
+  async listGroupChats(): Promise<Array<{ jid: string; name: string; participantCount?: number }>> {
+    if (this.state !== 'connected' || !this.sock) return [];
+    try {
+      const groups = await this.sock.groupFetchAllParticipating();
+      const out: Array<{ jid: string; name: string; participantCount?: number }> = [];
+      for (const [jid, meta] of Object.entries(groups)) {
+        out.push({
+          jid,
+          name: (meta as { subject?: string }).subject ?? jid,
+          participantCount: (meta as { participants?: unknown[] }).participants?.length,
+        });
+      }
+      return out;
+    } catch (err) {
+      logWhatsApp({
+        event: 'error',
+        channelId: this.channel.channelId,
+        channelRole: this.channel.role,
+        errorMessage: `groupFetchAllParticipating: ${(err as Error).message}`,
+      });
+      return [];
+    }
+  }
+
   // ── Internals ─────────────────────────────────────────
 
   private async openSocket(): Promise<void> {

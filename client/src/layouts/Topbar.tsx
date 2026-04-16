@@ -1,9 +1,11 @@
-import { Bell, ChevronLeft, LogOut, Plus, Search, Sparkles } from 'lucide-react';
+import { ChevronLeft, LogOut, Plus, Sparkles } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Avatar, Button, IconButton, Input } from '../components/ui/primitives';
+import { Avatar, Button } from '../components/ui/primitives';
 import { AskAIPanel } from '../features/ai/AskAIPanel';
 import { useAuth } from '../features/auth/AuthContext';
+import { TopbarSearch } from '../features/search/TopbarSearch';
+import { NotificationsBell } from '../features/notifications/NotificationsBell';
 
 // ── Route → breadcrumb map ────────────────────────────────
 
@@ -55,10 +57,7 @@ export function Topbar({ actions }: { actions?: ReactNode }) {
         <h1 className="text-xl font-semibold text-ink truncate">{pageTitle}</h1>
       </div>
 
-      <div className="w-80 relative hidden lg:block">
-        <Search className="absolute top-1/2 -translate-y-1/2 start-3 h-4 w-4 text-ink-faint" />
-        <Input placeholder="חיפוש מועמדים, הצעות, שיחות…" className="ps-9" />
-      </div>
+      <TopbarSearch />
 
       <Button
         variant="subtle"
@@ -92,9 +91,7 @@ export function Topbar({ actions }: { actions?: ReactNode }) {
 
       {actions}
 
-      <IconButton aria-label="notifications">
-        <Bell className="h-4 w-4" />
-      </IconButton>
+      <NotificationsBell />
 
       <UserMenu />
 

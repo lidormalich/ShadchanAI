@@ -123,3 +123,42 @@ export async function sessionLogoutHandler(req: Request, res: Response, next: Ne
     res.status(204).end();
   } catch (e) { next(e); }
 }
+
+export async function listChatsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    ok(res, await svc.listDiscoveredChats(channelId));
+  } catch (e) { next(e); }
+}
+
+export async function assignChatRoleHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    const { chatJid, chatName, chatType, role } = req.body as {
+      chatJid: string;
+      chatName?: string;
+      chatType: 'group' | 'private';
+      role: 'profiles_source' | 'match_sending' | 'ignore' | null;
+    };
+    ok(res, await svc.assignChatRole(channelId, chatJid, chatType, role, user.id, chatName));
+  } catch (e) { next(e); }
+}
+
+export async function deleteChannelHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    const { confirmChannelId } = req.body as { confirmChannelId: string };
+    if (confirmChannelId !== channelId) {
+      throw new (await import('../../utils/errors.js')).ValidationError(
+        'confirmChannelId must match the URL param',
+      );
+    }
+    await svc.deleteChannelSafely(channelId, user.id);
+    res.status(204).end();
+  } catch (e) { next(e); }
+}

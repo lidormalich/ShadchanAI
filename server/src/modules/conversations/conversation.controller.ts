@@ -49,6 +49,16 @@ export async function linkHandler(req: Request, res: Response, next: NextFunctio
   } catch (e) { next(e); }
 }
 
+export async function assignRoleHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user); // any operator can map; admin not strictly required
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { role } = req.body as { role: 'profiles_source' | 'match_sending' | 'ignore' | null };
+    ok(res, await svc.assignConversationRole(id, role, user.id));
+  } catch (e) { next(e); }
+}
+
 export async function chainHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     ensureUser(req.user);

@@ -116,6 +116,7 @@ export const messages = {
 
 import { BusinessRuleError } from '../../utils/errors.js';
 import { getChannelClient } from './providers/baileys/baileys.client.js';
+import { assertOutboundAllowed } from '../safe-mode/safe-mode.service.js';
 
 export interface SendTextRequest {
   channelId: string;
@@ -124,6 +125,12 @@ export interface SendTextRequest {
 }
 
 export async function sendTextFromChannel(req: SendTextRequest): Promise<string> {
+  // ── PRE-PILOT SAFE MODE GATE (final authority) ───────
+  // Defensive belt-and-braces check at the lowest send helper.
+  // sendProposal already gates earlier, but ANY future caller of
+  // this helper inherits the same kill-switch automatically.
+  await assertOutboundAllowed();
+
   const channel = await findChannelById(req.channelId);
   if (!channel) throw new BusinessRuleError('Channel not found', { code: 'channel_not_found' });
 

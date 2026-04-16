@@ -86,6 +86,22 @@ const envSchema = z.object({
   // ── WhatsApp reconnect circuit ───────────────────────
   WA_RECONNECT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(10),
 
+  // ── PRE-PILOT SAFE MODE ──────────────────────────────
+  // Master kill-switch for ANY real WhatsApp outbound.
+  //   false (default) → every send is rejected before the socket is touched.
+  //   true            → sends are still gated by per-conversation mapping
+  //                     and the runtime "outbound.enabled" setting.
+  // The default is false on purpose: an operator who hasn't explicitly
+  // enabled outbound MUST not be able to send a real proposal.
+  ENABLE_OUTBOUND_MESSAGES: z.coerce.boolean().default(false),
+
+  // When true, ingestion accepts a message ONLY if the conversation it
+  // belongs to has an explicit assignedRole='profiles_source'. Random
+  // family/private/random groups on a profiles_source channel are NOT
+  // ingested. Default true (safer); flip to false only after every
+  // active conversation has been explicitly mapped.
+  REQUIRE_EXPLICIT_SOURCE_MAPPING: z.coerce.boolean().default(true),
+
   // ── WhatsApp session encryption (offline backup only) ──
   WA_SESSION_ENCRYPTION_KEY: z.string().optional(),
 }).superRefine((cfg, ctx) => {

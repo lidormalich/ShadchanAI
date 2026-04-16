@@ -383,12 +383,64 @@ export const AuditActionType = {
   MATCH_SENT: 'match_sent',
   MATCH_APPROVED: 'match_approved',
   MATCH_DECLINED: 'match_declined',
+  // Operator forced a suggestion past overridable blockers with a
+  // recorded justification. Always accompanied by overrideReasons +
+  // hardBlockers in the metadata.
+  MATCH_FORCED: 'match_forced',
+  // Inbound reply on a match_sending channel was classified and
+  // applied as a sideX response.
+  RESPONSE_DETECTED: 'response_detected',
+  // Pre-pilot safe mode: an outbound send was rejected because the
+  // env / settings kill-switch blocked it. NO state machine
+  // advances; this is a non-destructive audit row only.
+  SEND_BLOCKED_SAFE_MODE: 'send_blocked_safe_mode',
   MESSAGE_SENT: 'message_sent',
   AI_QUERY: 'ai_query',
   LOGIN: 'login',
   EXPORT: 'export',
 } as const;
 export type AuditActionType = (typeof AuditActionType)[keyof typeof AuditActionType];
+
+// ── Blocker reason taxonomy ───────────────────────────────
+// Structured replacement for the free-text blocker strings the
+// matching engine used to emit. The UI renders these to explain
+// "why this pair didn't match" and to gate force-match safely.
+
+export const BlockerCode = {
+  SAME_GENDER: 'same_gender',
+  INTERNAL_NOT_ACTIVE: 'internal_not_active',
+  INTERNAL_ALREADY_DATING: 'internal_already_dating',
+  EXTERNAL_NOT_ACTIVE: 'external_not_active',
+  EXTERNAL_UNAVAILABLE: 'external_unavailable',
+  EXTERNAL_DATING: 'external_dating',
+  ACTIVE_PAIR_DUPLICATE: 'active_pair_duplicate',
+  RECENT_DECLINE_COOLDOWN: 'recent_decline_cooldown',
+  EXPLICIT_HARD_CONSTRAINT: 'explicit_hard_constraint',
+  PERSONAL_STATUS_DIVORCED: 'personal_status_divorced_not_open',
+  PERSONAL_STATUS_WIDOWED: 'personal_status_widowed_explicit_block',
+  CHILDREN_CONSTRAINT: 'children_constraint',
+  EXTERNAL_NOT_OPEN_TO_STATUS: 'external_not_open_to_status',
+} as const;
+export type BlockerCode = (typeof BlockerCode)[keyof typeof BlockerCode];
+
+export const BlockerSeverity = {
+  // Absolute business / ethical restriction. Never overridable.
+  HARD_NON_OVERRIDABLE: 'hard_non_overridable',
+  // Real block but overridable with explicit operator justification
+  // + audit trail.
+  HARD_OVERRIDABLE: 'hard_overridable',
+  // Not a block — appears as a "weak fit" warning only. Included here
+  // so the UI can reason over one unified list.
+  SOFT_WARNING: 'soft_warning',
+} as const;
+export type BlockerSeverity = (typeof BlockerSeverity)[keyof typeof BlockerSeverity];
+
+export const BlockerOverridable = {
+  NONE: 'none',            // server will reject force
+  WITH_REASON: 'with_reason', // server accepts force if justification provided
+  AUTO: 'auto',            // soft-warning; no force needed
+} as const;
+export type BlockerOverridable = (typeof BlockerOverridable)[keyof typeof BlockerOverridable];
 
 // ── Audit Entity Type ─────────────────────────────────────
 export const AuditEntityType = {

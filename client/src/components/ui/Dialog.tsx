@@ -8,7 +8,7 @@ export interface DialogProps {
   title: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
-  primaryAction?: { label: string; onClick: () => void; loading?: boolean; variant?: 'primary' | 'danger' };
+  primaryAction?: { label: string; onClick: () => void; loading?: boolean; disabled?: boolean; variant?: 'primary' | 'danger' };
   secondaryAction?: { label: string; onClick: () => void };
 }
 
@@ -42,6 +42,7 @@ export function Dialog({ open, onClose, title, description, children, primaryAct
               variant={primaryAction.variant ?? 'primary'}
               onClick={primaryAction.onClick}
               loading={primaryAction.loading}
+              disabled={primaryAction.disabled}
             >
               {primaryAction.label}
             </Button>

@@ -7,6 +7,8 @@ import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/sta
 import { TaskForm } from '@/features/forms/TaskForm';
 import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
+import { OwnershipFilter, type OwnershipScope } from '@/features/ownership/OwnershipFilter';
+import { OwnerChip } from '@/features/users/OwnerChip';
 import { label } from '@/utils/labels';
 import type { Task } from '@/types/domain';
 
@@ -14,21 +16,23 @@ export function TasksPage() {
   const qc = useQueryClient();
   const [status, setStatus] = useState('open');
   const [priority, setPriority] = useState('');
+  const [ownership, setOwnership] = useState<OwnershipScope>('mine');
   const [formOpen, setFormOpen] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 25;
 
   const list = useQuery({
-    queryKey: ['tasks', { status, priority, page }],
+    queryKey: ['tasks', { status, priority, ownership, page }],
     queryFn: () => tasksApi.list({
       status: status || undefined,
       priority: priority || undefined,
+      ownership,
       page,
       limit,
     }),
   });
 
-  const filterKey = `${status}|${priority}`;
+  const filterKey = `${status}|${priority}|${ownership}`;
   const [lastFilterKey, setLastFilterKey] = useState(filterKey);
   if (filterKey !== lastFilterKey) {
     setLastFilterKey(filterKey);
@@ -71,6 +75,7 @@ export function TasksPage() {
               <option value="medium">בינונית</option>
               <option value="low">נמוכה</option>
             </Select>
+            <OwnershipFilter value={ownership} onChange={setOwnership} />
           </div>
         </CardHeader>
         <CardBody className="!p-0">
@@ -121,6 +126,10 @@ function TaskRow({ task, onComplete }: { task: Task; onComplete: () => void }) {
             תאריך יעד: {new Date(task.dueAt).toLocaleDateString('he-IL')}
           </div>
         )}
+        <div className="mt-1 flex items-center gap-2">
+          <OwnerChip userId={task.assignedTo} label="שויך ל" size={16} />
+          <OwnerChip userId={task.ownerUserId} label="בעלים" size={16} />
+        </div>
       </div>
       {task.status !== 'completed' && task.status !== 'cancelled' && (
         <Button

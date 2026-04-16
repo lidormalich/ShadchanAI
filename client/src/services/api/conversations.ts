@@ -13,6 +13,8 @@ export const conversationsApi = {
   markRead: (id: string) => api.post<Conversation>(`/conversations/${id}/mark-read`),
   link: (id: string, body: { internalCandidateId?: string; externalCandidateId?: string; matchSuggestionId?: string }) =>
     api.patch<Conversation>(`/conversations/${id}/link`, body),
+  assignRole: (id: string, role: 'profiles_source' | 'match_sending' | 'ignore' | null) =>
+    api.patch<Conversation>(`/conversations/${id}/assigned-role`, { role }),
   sendMessage: (id: string, body: { body: string }) =>
     api.post<{ messageId: string; externalMessageId: string }>(`/conversations/${id}/send-message`, body),
 };

@@ -46,10 +46,15 @@ export function InternalCandidateForm({
         ? internalCandidatesApi.update(initial._id, body)
         : internalCandidatesApi.create(body);
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       toast.success(initial ? 'המועמד עודכן' : 'המועמד נוצר');
       qc.invalidateQueries({ queryKey: ['internals'] });
-      if (initial?._id) qc.invalidateQueries({ queryKey: ['internal', initial._id] });
+      if (initial?._id) {
+        // Write the fresh candidate into cache immediately so the
+        // detail page reflects the edit before any refetch lands.
+        qc.setQueryData(['internal', initial._id], res);
+        qc.invalidateQueries({ queryKey: ['internal', initial._id, 'readiness'] });
+      }
       onClose();
     },
     onError: (err) => toast.error('השמירה נכשלה', (err as Error).message),

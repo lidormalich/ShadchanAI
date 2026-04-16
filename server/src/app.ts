@@ -39,6 +39,17 @@ import { taskRouter } from './modules/tasks/task.router.js';
 import { noteRouter } from './modules/notes/note.router.js';
 import { aiRouter } from './services/ai/ai.router.js';
 import { extractionRouter } from './modules/extraction/extraction.router.js';
+import { auditRouter } from './modules/audit/audit.router.js';
+import { userRouter } from './modules/users/user.router.js';
+import { realtimeRouter } from './modules/realtime/realtime.router.js';
+import { dashboardRouter } from './modules/dashboard/dashboard.router.js';
+import { searchRouter } from './modules/search/search.router.js';
+import { notificationsRouter } from './modules/notifications/notifications.router.js';
+import { insightsRouter } from './modules/insights/insights.router.js';
+import { settingsRouter } from './modules/settings/settings.router.js';
+import { monitoringRouter } from './modules/monitoring/monitoring.router.js';
+import { safeModeRouter } from './modules/safe-mode/safe-mode.router.js';
+import { ensureNotificationsStarted } from './services/notifications/notifications.service.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -82,6 +93,20 @@ export function buildApp(): Express {
   app.use('/api/tasks', taskRouter);
   app.use('/api/notes', noteRouter);
   app.use('/api/extraction', extractionRouter);
+  app.use('/api/audit-logs', auditRouter);
+  app.use('/api/users', userRouter);
+  app.use('/api/realtime', realtimeRouter);
+  app.use('/api/dashboard', dashboardRouter);
+  app.use('/api/search', searchRouter);
+  app.use('/api/notifications', notificationsRouter);
+  app.use('/api/insights', insightsRouter);
+  app.use('/api/settings', settingsRouter);
+  app.use('/api/monitoring', monitoringRouter);
+  app.use('/api/safe-mode', safeModeRouter);
+
+  // Start the notifications feed subscription as part of app bootstrap
+  // so events are captured even before the first /api/notifications GET.
+  ensureNotificationsStarted();
 
   // ── 10. 404 ────────────────────────────────────────────
   app.use((_req, res) => {

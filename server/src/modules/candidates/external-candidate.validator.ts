@@ -107,6 +107,7 @@ export const ListExternalCandidatesQuerySchema = PaginationQuerySchema.extend({
   city: z.string().optional(),
   availabilityStatus: z.nativeEnum(AvailabilityStatus).optional(),
   search: z.string().max(200).optional(),
+  ownership: z.enum(['mine', 'team', 'all']).optional(),
 });
 
 export type ListExternalCandidatesQuery = z.infer<typeof ListExternalCandidatesQuerySchema>;

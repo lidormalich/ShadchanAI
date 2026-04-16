@@ -6,6 +6,8 @@ import {
   ReplaceChannelSchema,
   DisconnectChannelSchema,
   ChannelIdParamSchema,
+  AssignChatRoleSchema,
+  DeleteChannelSchema,
 } from './channel.validator.js';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
@@ -28,3 +30,11 @@ channelRouter.post('/:channelId/session/start',  validate({ params: ChannelIdPar
 channelRouter.get ('/:channelId/session/status', validate({ params: ChannelIdParamSchema }), ctrl.sessionStatusHandler);
 channelRouter.post('/:channelId/session/stop',   validate({ params: ChannelIdParamSchema }), ctrl.sessionStopHandler);
 channelRouter.post('/:channelId/session/logout', validate({ params: ChannelIdParamSchema }), ctrl.sessionLogoutHandler);
+
+// ── Pre-pilot discovery + mapping + safe delete ──────────
+channelRouter.get('/:channelId/chats', validate({ params: ChannelIdParamSchema }), ctrl.listChatsHandler);
+channelRouter.patch('/:channelId/chats/role', validate({ params: ChannelIdParamSchema, body: AssignChatRoleSchema }), ctrl.assignChatRoleHandler);
+// Using POST (not DELETE) so the operator-confirmation body is
+// trivially accepted by the standard API client. The body still
+// requires confirmChannelId to match — the guard is unchanged.
+channelRouter.post('/:channelId/delete', validate({ params: ChannelIdParamSchema, body: DeleteChannelSchema }), ctrl.deleteChannelHandler);

@@ -30,6 +30,9 @@ export type { INote } from '../modules/notes/note.model.js';
 export { AuditLog } from '../modules/audit/audit-log.model.js';
 export type { IAuditLog } from '../modules/audit/audit-log.model.js';
 
+export { ChatMapping } from '../modules/chat-mappings/chat-mapping.model.js';
+export type { IChatMapping, ChatRole, ChatType } from '../modules/chat-mappings/chat-mapping.model.js';
+
 export { AIRequest } from '../modules/ai/ai-request.model.js';
 export type { IAIRequest } from '../modules/ai/ai-request.model.js';
 

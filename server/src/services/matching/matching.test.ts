@@ -103,7 +103,7 @@ describe('Hard Rules', () => {
     const external = makeExternal({ gender: 'male' });
     const result = evaluateHardRules(internal, external, makeContext());
     expect(result.eligible).toBe(false);
-    expect(result.blockers).toContain('Same gender (male)');
+    expect(result.blockers.map((b) => b.message)).toContain('Same gender (male)');
   });
 
   it('passes opposite-gender pairs', () => {
@@ -121,7 +121,7 @@ describe('Hard Rules', () => {
     const internal = makeInternal({ status: 'paused' });
     const result = evaluateHardRules(internal, makeExternal(), makeContext());
     expect(result.eligible).toBe(false);
-    expect(result.blockers[0]).toContain('paused');
+    expect(result.blockers[0]!.message).toContain('paused');
   });
 
   it('blocks unavailable external candidates', () => {
@@ -146,7 +146,7 @@ describe('Hard Rules', () => {
     const context = makeContext({ activeMatchExternalIds: new Set(['external-1']) });
     const result = evaluateHardRules(makeInternal(), makeExternal(), context);
     expect(result.eligible).toBe(false);
-    expect(result.blockers[0]).toContain('active suggestion already exists');
+    expect(result.blockers[0]!.message).toContain('active suggestion already exists');
   });
 
   it('blocks recently declined pairs within cooldown', () => {
@@ -154,7 +154,7 @@ describe('Hard Rules', () => {
     const context = makeContext({ recentDeclines });
     const result = evaluateHardRules(makeInternal(), makeExternal(), context);
     expect(result.eligible).toBe(false);
-    expect(result.blockers[0]).toContain('declined');
+    expect(result.blockers[0]!.message).toContain('declined');
   });
 
   it('allows declined pairs past cooldown', () => {
@@ -191,7 +191,7 @@ describe('Hard Rules', () => {
     // External IS haredi → eq haredi: haredi === haredi is true → violation → blocked
     const result2 = evaluateHardRules(internal, makeExternal({ sectorGroup: 'haredi' }), makeContext());
     expect(result2.eligible).toBe(false);
-    expect(result2.blockers[0]).toContain('hard constraint violated');
+    expect(result2.blockers[0]!.message).toContain('hard constraint violated');
   });
 
   it('does NOT hard-block by sector by default (no constraint)', () => {
@@ -900,7 +900,7 @@ describe('Personal-Status Compatibility', () => {
     const external = makeExternal({ personalStatus: 'divorced' });
     const result = evaluateHardRules(internal, external, makeContext());
     expect(result.eligible).toBe(false);
-    expect(result.blockers.join(' ')).toContain('children');
+    expect(result.blockers.map((b) => b.message).join(' ')).toContain('children');
   });
 
   it('does NOT block second-chapter on children inference alone', () => {
@@ -1017,7 +1017,7 @@ describe('Bidirectional — hard rules (reverse direction)', () => {
     });
     const res = evaluateHardRules(internal, external, makeContext());
     expect(res.eligible).toBe(false);
-    expect(res.blockers[0]).toContain('External hard constraint violated');
+    expect(res.blockers[0]!.message).toContain('External hard constraint violated');
   });
 
   it('external eq constraint blocks when internal matches block target', () => {
@@ -1027,7 +1027,7 @@ describe('Bidirectional — hard rules (reverse direction)', () => {
     });
     const res = evaluateHardRules(internal, external, makeContext());
     expect(res.eligible).toBe(false);
-    expect(res.blockers[0]).toContain('External hard constraint violated');
+    expect(res.blockers[0]!.message).toContain('External hard constraint violated');
   });
 
   it('external openToDivorced=false blocks a divorced internal', () => {
@@ -1038,7 +1038,7 @@ describe('Bidirectional — hard rules (reverse direction)', () => {
     });
     const res = evaluateHardRules(internal, external, makeContext());
     expect(res.eligible).toBe(false);
-    expect(res.blockers.join(' ')).toContain('External candidate explicitly not open to divorced');
+    expect(res.blockers.map((b) => b.message).join(' ')).toContain('External candidate explicitly not open to divorced');
   });
 
   it('no external preferences leaves pair eligible (backward compatible)', () => {

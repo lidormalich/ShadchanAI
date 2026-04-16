@@ -37,7 +37,10 @@ export const ListTasksQuerySchema = PaginationQuerySchema.extend({
   assignedTo: ObjectIdString.optional(),
   dueBefore: z.coerce.date().optional(),
   internalCandidateId: ObjectIdString.optional(),
+  externalCandidateId: ObjectIdString.optional(),
   matchSuggestionId: ObjectIdString.optional(),
+  conversationId: ObjectIdString.optional(),
+  ownership: z.enum(['mine', 'team', 'all']).optional(),
 });
 export type ListTasksQuery = z.infer<typeof ListTasksQuerySchema>;
 

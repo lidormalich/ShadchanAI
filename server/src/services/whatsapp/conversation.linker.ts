@@ -30,6 +30,11 @@ export interface LinkConversationInput {
   channel: IChannel;
   participantPhone: string;
   participantName?: string;
+  /** Raw WhatsApp chat JID — passed through from the inbound mapper.
+   *  Enables the ChatMapping ingestion gate to correlate conversations
+   *  to WhatsApp chats by jid, not only by participant phone. */
+  chatJid?: string;
+  chatType?: 'group' | 'private';
   /** Optional known links (skip lookup when caller has them) */
   internalCandidateId?: string;
   externalCandidateId?: string;
@@ -104,6 +109,8 @@ export async function findOrCreateConversation(
     accountDisplayName: channel.accountDisplayName,
     participantPhone,
     participantName: input.participantName,
+    chatJid: input.chatJid,
+    chatType: input.chatType,
     internalCandidateId: toObjectId(input.internalCandidateId),
     externalCandidateId: toObjectId(input.externalCandidateId),
     matchSuggestionId: toObjectId(input.matchSuggestionId),

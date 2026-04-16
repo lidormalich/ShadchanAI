@@ -18,6 +18,7 @@
 
 import { ExternalCandidate, type IExternalCandidate } from '../../models/index.js';
 import type { ExtractedProfile } from './regex.extractor.js';
+import { normalizePhones } from '../../utils/phone.js';
 
 export type MatchStrength = 'exact' | 'strong' | 'weak' | 'none';
 
@@ -28,20 +29,26 @@ export interface MatchResult {
 }
 
 export async function findExistingCandidate(profile: ExtractedProfile): Promise<MatchResult> {
-  // ── Tier 1: contact phone ─────────────────────────────
-  // A phone number in the message body is the sharpest id we have —
-  // the same shadchan reposting a profile keeps the same phone.
-  const phones = profile.contactPhones ?? [];
-  if (phones.length > 0) {
+  // ── Tier 1: contact phone (canonicalized) ─────────────
+  // Canonical E.164 phone is the sharpest id we have. We match
+  // against BOTH the legacy contactPhone (for backward-compat
+  // with older rows that never had contactPhoneNormalized) AND
+  // contactPhoneNormalized (the authoritative dedup key).
+  const rawPhones = profile.contactPhones ?? [];
+  const normalized = normalizePhones(rawPhones);
+  if (rawPhones.length > 0 || normalized.length > 0) {
     const hit = await ExternalCandidate.findOne({
-      contactPhone: { $in: phones },
+      $or: [
+        ...(normalized.length > 0 ? [{ contactPhoneNormalized: { $in: normalized } }] : []),
+        ...(rawPhones.length > 0 ? [{ contactPhone: { $in: rawPhones } }] : []),
+      ],
       status: { $ne: 'archived' },
     }).exec();
     if (hit) {
       return {
         strength: 'exact',
         candidate: hit,
-        reason: `phone match: ${hit.contactPhone}`,
+        reason: `phone match: ${hit.contactPhoneNormalized ?? hit.contactPhone}`,
       };
     }
   }

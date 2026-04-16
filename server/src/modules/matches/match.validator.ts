@@ -15,6 +15,7 @@ export const ListMatchesQuerySchema = PaginationQuerySchema.extend({
   externalCandidateId: ObjectIdString.optional(),
   isDeferred: z.coerce.boolean().optional(),
   minScore: z.coerce.number().int().min(0).max(100).optional(),
+  ownership: z.enum(['mine', 'team', 'all']).optional(),
 });
 
 export type ListMatchesQuery = z.infer<typeof ListMatchesQuerySchema>;
@@ -47,6 +48,25 @@ export const DeclineSchema = z.object({
 });
 
 export const IdParamSchema = z.object({ id: ObjectIdString });
+
+export const ForceSuggestionSchema = z.object({
+  internalCandidateId: ObjectIdString,
+  externalCandidateId: ObjectIdString,
+  mode: z.nativeEnum(SourceMode).default(SourceMode.STRICT),
+  // Real operator justification — not just a checkbox. Short strings
+  // would be too easy to rubber-stamp; 10..500 chars is a sane band.
+  justification: z.string().trim().min(10).max(500),
+});
+
+export const AcknowledgeResponseSchema = z.object({
+  side: z.enum(['a', 'b']),
+});
+
+export const SaveDraftSchema = z.object({
+  side: z.enum(['a', 'b']),
+  body: z.string().max(4000),
+  source: z.enum(['ai', 'manual']).default('manual'),
+});
 
 export const SendProposalSchema = z.object({
   side: z.enum(['a', 'b']),

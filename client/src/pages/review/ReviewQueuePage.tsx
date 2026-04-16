@@ -18,15 +18,19 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Inbox, RefreshCw, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { Badge, Button, Card, CardBody, CardHeader, Divider } from '@/components/ui/primitives';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
-import { extractionApi, type ReviewQueueItem } from '@/services/api/extraction';
+import { extractionApi, type ExtractedProfileInput, type ReviewQueueItem } from '@/services/api/extraction';
 import { label } from '@/utils/labels';
 
 export function ReviewQueuePage() {
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const focusMessageId = searchParams.get('messageId');
+
   const queue = useQuery({
     queryKey: ['extraction', 'review-queue'],
     queryFn: () => extractionApi.reviewQueue(100),
@@ -38,7 +42,8 @@ export function ReviewQueuePage() {
   };
 
   const approve = useMutation({
-    mutationFn: (id: string) => extractionApi.approve(id),
+    mutationFn: ({ id, profile }: { id: string; profile: ExtractedProfileInput }) =>
+      extractionApi.approve(id, profile),
     onSuccess: (res) => { toast.success('המועמד נוצר בהצלחה', `candidate: ${res.data.candidateId}`); invalidate(); },
     onError: (e: Error) => toast.error('האישור נכשל', e.message),
   });
@@ -84,7 +89,8 @@ export function ReviewQueuePage() {
             <ReviewCard
               key={item.messageId}
               item={item}
-              onApprove={() => approve.mutate(item.messageId)}
+              focused={focusMessageId === item.messageId}
+              onApprove={(profile) => approve.mutate({ id: item.messageId, profile })}
               onReject={() => reject.mutate(item.messageId)}
               onRerun={() => rerun.mutate(item.messageId)}
               busy={approve.isPending || reject.isPending || rerun.isPending}
@@ -96,19 +102,42 @@ export function ReviewQueuePage() {
   );
 }
 
+const SECTOR_OPTIONS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani', 'other'];
+const STATUS_OPTIONS = ['single', 'divorced', 'widowed', 'separated'];
+
 function ReviewCard({
-  item, onApprove, onReject, onRerun, busy,
+  item, focused, onApprove, onReject, onRerun, busy,
 }: {
   item: ReviewQueueItem;
-  onApprove: () => void;
+  focused?: boolean;
+  onApprove: (profile: ExtractedProfileInput) => void;
   onReject: () => void;
   onRerun: () => void;
   busy: boolean;
 }) {
-  const f = item.extractedFields;
-  const canApprove = !!(f.firstName || (f.contactPhones && f.contactPhones.length > 0));
+  const [fields, setFields] = useState<ExtractedProfileInput>(item.extractedFields);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Re-seed local edits if the underlying extraction record changes
+  // (e.g. operator clicked "עבד מחדש" and the pipeline returned fresh fields).
+  useEffect(() => { setFields(item.extractedFields); }, [item.extractedFields]);
+
+  // Scroll into view when arrived via dashboard deep link
+  // (?messageId=...). Runs once per focus transition.
+  useEffect(() => {
+    if (focused && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [focused]);
+
+  const set = <K extends keyof ExtractedProfileInput>(k: K, v: ExtractedProfileInput[K]) =>
+    setFields((prev) => ({ ...prev, [k]: v }));
+
+  const phonesText = fields.contactPhones?.join(', ') ?? '';
+  const canApprove = !!(fields.firstName?.trim() || (fields.contactPhones && fields.contactPhones.length > 0));
 
   return (
+    <div ref={cardRef} className={focused ? 'ring-2 ring-brand-400 rounded-lg' : undefined}>
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -141,21 +170,61 @@ function ReviewCard({
               {item.body}
             </div>
           </div>
-          {/* Extracted fields */}
+          {/* Editable extracted fields */}
           <div>
-            <div className="text-xs text-ink-muted mb-1">שדות שחולצו</div>
-            <div className="rounded-md border border-border bg-white p-2 text-sm">
-              <FieldRow k="שם" v={[f.firstName, f.lastName].filter(Boolean).join(' ') || undefined} />
-              <FieldRow k="מגדר" v={f.gender ? label('gender', f.gender) : undefined} />
-              <FieldRow k="גיל" v={f.age} />
-              <FieldRow k="גובה" v={f.height ? `${f.height} ס"מ` : undefined} />
-              <FieldRow k="עיר" v={f.city} />
-              <FieldRow k="עדה" v={f.edah} />
-              <FieldRow k="מגזר" v={f.sectorGroup ? label('sectorGroup', f.sectorGroup) : undefined} />
-              <FieldRow k="סטטוס" v={f.personalStatus ? label('personalStatus', f.personalStatus) : undefined} />
-              <FieldRow k="עיסוק" v={f.occupation} />
-              <FieldRow k="טווח גילים" v={(f.seekingAgeMin || f.seekingAgeMax) ? `${f.seekingAgeMin ?? '?'}–${f.seekingAgeMax ?? '?'}` : undefined} />
-              <FieldRow k="טלפונים" v={f.contactPhones?.join(', ')} />
+            <div className="text-xs text-ink-muted mb-1">שדות לאישור (ניתנים לעריכה)</div>
+            <div className="rounded-md border border-border bg-white p-3 text-sm grid grid-cols-2 gap-2">
+              <EditRow label="שם פרטי"><Input value={fields.firstName ?? ''} onChange={(e) => set('firstName', e.target.value || undefined)} /></EditRow>
+              <EditRow label="שם משפחה"><Input value={fields.lastName ?? ''} onChange={(e) => set('lastName', e.target.value || undefined)} /></EditRow>
+              <EditRow label="מגדר">
+                <Select value={fields.gender ?? ''} onChange={(e) => set('gender', e.target.value || undefined)}>
+                  <option value="">—</option>
+                  <option value="male">{label('gender', 'male')}</option>
+                  <option value="female">{label('gender', 'female')}</option>
+                </Select>
+              </EditRow>
+              <EditRow label="גיל">
+                <Input type="number" value={fields.age ?? ''} onChange={(e) => set('age', e.target.value ? Number(e.target.value) : undefined)} />
+              </EditRow>
+              <EditRow label='גובה (ס"מ)'>
+                <Input type="number" value={fields.height ?? ''} onChange={(e) => set('height', e.target.value ? Number(e.target.value) : undefined)} />
+              </EditRow>
+              <EditRow label="עיר"><Input value={fields.city ?? ''} onChange={(e) => set('city', e.target.value || undefined)} /></EditRow>
+              <EditRow label="עדה"><Input value={fields.edah ?? ''} onChange={(e) => set('edah', e.target.value || undefined)} /></EditRow>
+              <EditRow label="מגזר">
+                <Select value={fields.sectorGroup ?? ''} onChange={(e) => set('sectorGroup', e.target.value || undefined)}>
+                  <option value="">—</option>
+                  {SECTOR_OPTIONS.map((s) => <option key={s} value={s}>{label('sectorGroup', s)}</option>)}
+                </Select>
+              </EditRow>
+              <EditRow label="סטטוס">
+                <Select value={fields.personalStatus ?? ''} onChange={(e) => set('personalStatus', e.target.value || undefined)}>
+                  <option value="">—</option>
+                  {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{label('personalStatus', s)}</option>)}
+                </Select>
+              </EditRow>
+              <EditRow label="עיסוק"><Input value={fields.occupation ?? ''} onChange={(e) => set('occupation', e.target.value || undefined)} /></EditRow>
+              <EditRow label="מגיל">
+                <Input type="number" value={fields.seekingAgeMin ?? ''} onChange={(e) => set('seekingAgeMin', e.target.value ? Number(e.target.value) : undefined)} />
+              </EditRow>
+              <EditRow label="עד גיל">
+                <Input type="number" value={fields.seekingAgeMax ?? ''} onChange={(e) => set('seekingAgeMax', e.target.value ? Number(e.target.value) : undefined)} />
+              </EditRow>
+              <EditRow label="טלפונים (מופרדים בפסיק)" full>
+                <Input
+                  value={phonesText}
+                  onChange={(e) => {
+                    const parts = e.target.value.split(',').map((p) => p.trim()).filter(Boolean);
+                    set('contactPhones', parts.length ? parts : undefined);
+                  }}
+                />
+              </EditRow>
+              <EditRow label="על עצמו" full>
+                <Textarea rows={2} value={fields.about ?? ''} onChange={(e) => set('about', e.target.value || undefined)} />
+              </EditRow>
+              <EditRow label="מה מחפש" full>
+                <Textarea rows={2} value={fields.whatSeeking ?? ''} onChange={(e) => set('whatSeeking', e.target.value || undefined)} />
+              </EditRow>
             </div>
           </div>
         </div>
@@ -171,25 +240,25 @@ function ReviewCard({
           </Button>
           <Button
             variant="primary"
-            onClick={onApprove}
+            onClick={() => onApprove(fields)}
             disabled={busy || !canApprove}
             leftIcon={<Check className="h-4 w-4" />}
-            title={canApprove ? undefined : 'חסר שם או טלפון — דחה או ערוך קודם'}
+            title={canApprove ? undefined : 'חסר שם או טלפון — מלא לפני אישור'}
           >
             אשר וצור
           </Button>
         </div>
       </CardBody>
     </Card>
+    </div>
   );
 }
 
-function FieldRow({ k, v }: { k: string; v?: string | number }) {
-  if (v === undefined || v === null || v === '') return null;
+function EditRow({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between text-xs border-b border-border/60 py-1 last:border-0">
-      <span className="text-ink-muted">{k}</span>
-      <span className="text-end">{v}</span>
+    <div className={full ? 'col-span-2' : ''}>
+      <div className="text-[11px] text-ink-muted mb-0.5">{label}</div>
+      {children}
     </div>
   );
 }

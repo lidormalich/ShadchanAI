@@ -44,13 +44,18 @@ export interface ReviewQueueItem {
   regexConfidence: number;
 }
 
+export type ExtractedProfileInput = ReviewQueueItem['extractedFields'];
+
 export const extractionApi = {
   run: (messageId: string) =>
     api.post<ExtractionOutcome>(`/extraction/messages/${messageId}/run`),
   reviewQueue: (limit = 50) =>
     api.get<ReviewQueueItem[]>('/extraction/review-queue', { limit }),
-  approve: (messageId: string) =>
-    api.post<{ candidateId: string; messageId: string }>(`/extraction/messages/${messageId}/approve`),
+  approve: (messageId: string, profile?: ExtractedProfileInput) =>
+    api.post<{ candidateId: string; messageId: string }>(
+      `/extraction/messages/${messageId}/approve`,
+      profile ? { profile } : undefined,
+    ),
   reject: (messageId: string) =>
     api.post<{ messageId: string; status: string }>(`/extraction/messages/${messageId}/reject`),
 };

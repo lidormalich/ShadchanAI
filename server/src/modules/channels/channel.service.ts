@@ -10,7 +10,12 @@ import { AuditActionType, AuditEntityType } from '@shadchanai/shared';
 import { Channel, type IChannel } from '../../models/index.js';
 import { channels as channelMgr } from '../../services/whatsapp/whatsapp.service.js';
 import { audit } from '../../services/audit.service.js';
-import { NotFoundError } from '../../utils/errors.js';
+import { NotFoundError, BusinessRuleError } from '../../utils/errors.js';
+import { publishRealtimeEvent } from '../../services/realtime/realtime.service.js';
+import { discoverChats, type DiscoveryResult } from '../../services/whatsapp/chat-discovery.service.js';
+import { ChatMapping } from '../../models/index.js';
+import { Types } from 'mongoose';
+import { ChannelStatus } from '@shadchanai/shared';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
 import type { ListChannelsQuery } from './channel.validator.js';
 import type { ConnectChannelInput } from '../../services/whatsapp/whatsapp.types.js';
@@ -115,6 +120,12 @@ export async function reconnect(channelId: string, performedBy: string): Promise
     after: toChannelView(doc),
     metadata: { transition: 'reconnect' },
   });
+  publishRealtimeEvent('channel.updated', {
+    channelId: doc.channelId,
+    status: doc.status,
+    connectionHealth: doc.connectionHealth,
+    transition: 'reconnect',
+  });
   return toChannelView(doc);
 }
 
@@ -134,6 +145,12 @@ export async function disconnect(
     after: toChannelView(doc),
     metadata: { transition: 'disconnect', reason },
   });
+  publishRealtimeEvent('channel.updated', {
+    channelId: doc.channelId,
+    status: doc.status,
+    connectionHealth: doc.connectionHealth,
+    transition: 'disconnect',
+  });
   return toChannelView(doc);
 }
 
@@ -151,6 +168,13 @@ export async function replace(
     before: toChannelView(result.oldChannel),
     after: toChannelView(result.newChannel),
     metadata: { transition: 'replace', oldChannelId, newChannelId: result.newChannel.channelId },
+  });
+  publishRealtimeEvent('channel.updated', {
+    channelId: result.newChannel.channelId,
+    status: result.newChannel.status,
+    connectionHealth: result.newChannel.connectionHealth,
+    transition: 'replace',
+    replacesChannelId: result.oldChannel.channelId,
   });
   return {
     oldChannel: toChannelView(result.oldChannel),
@@ -198,22 +222,47 @@ import {
 } from '../../services/whatsapp/providers/baileys/baileys.client.js';
 import type { BaileysChannelStatus } from '../../services/whatsapp/whatsapp.types.js';
 
+// In-memory lock to prevent two operators (or two tabs) from
+// concurrently initiating a pairing on the same channel. Single-
+// instance only — Phase 7 hardening explicitly accepts this.
+const sessionStartLocks = new Set<string>();
+
 /** Start (or restart) the Baileys session for a channel. */
 export async function startSession(channelId: string, performedBy: string): Promise<BaileysChannelStatus> {
   const channel = await channelMgr.findById(channelId);
   if (!channel) throw new NotFoundError('Channel', channelId);
 
-  const client = await startChannelClient(channel);
+  if (sessionStartLocks.has(channel.channelId)) {
+    throw new BusinessRuleError(
+      'A session-start is already in progress for this channel. Please wait a few seconds and refresh status.',
+      { code: 'session_start_in_progress', channelId: channel.channelId },
+    );
+  }
+  sessionStartLocks.add(channel.channelId);
+  try {
+    const client = await startChannelClient(channel);
 
-  await audit({
-    entityType: AuditEntityType.CHANNEL,
-    entityId: String(channel._id),
-    actionType: AuditActionType.STATUS_CHANGE,
-    performedBy,
-    metadata: { transition: 'baileys_session_start' },
-  });
+    await audit({
+      entityType: AuditEntityType.CHANNEL,
+      entityId: String(channel._id),
+      actionType: AuditActionType.STATUS_CHANGE,
+      performedBy,
+      metadata: { transition: 'baileys_session_start' },
+    });
 
-  return client.status;
+    // Publish so connected UIs can refresh channel state without
+    // manual polling. See realtime.service: 'channel.updated'.
+    publishRealtimeEvent('channel.updated', {
+      channelId: channel.channelId,
+      state: client.status.state,
+      connectionHealth: channel.connectionHealth,
+      transition: 'session_start',
+    });
+
+    return client.status;
+  } finally {
+    sessionStartLocks.delete(channel.channelId);
+  }
 }
 
 /** Return current Baileys session status — including the QR when pending_pairing.
@@ -249,5 +298,117 @@ export async function logoutSession(channelId: string, performedBy: string): Pro
     actionType: AuditActionType.STATUS_CHANGE,
     performedBy,
     metadata: { transition: 'baileys_session_logout' },
+  });
+  publishRealtimeEvent('channel.updated', {
+    channelId: ch.channelId,
+    status: ch.status,
+    transition: 'logout',
+  });
+}
+
+// ── Pre-pilot discovery & mapping ────────────────────────
+
+export async function listDiscoveredChats(channelId: string): Promise<DiscoveryResult> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+  return discoverChats(channelId);
+}
+
+export async function assignChatRole(
+  channelId: string,
+  chatJid: string,
+  chatType: 'group' | 'private',
+  role: 'profiles_source' | 'match_sending' | 'ignore' | null,
+  performedBy: string,
+  chatName?: string,
+): Promise<{ channelId: string; chatJid: string; role: typeof role }> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+
+  if (role === null) {
+    await ChatMapping.deleteOne({ channelId, chatJid }).exec();
+    await audit({
+      entityType: AuditEntityType.CHANNEL,
+      entityId: String(ch._id),
+      actionType: AuditActionType.UPDATE,
+      performedBy,
+      metadata: { scope: 'chat_mapping_cleared', chatJid, chatType },
+    });
+    return { channelId, chatJid, role: null };
+  }
+
+  await ChatMapping.findOneAndUpdate(
+    { channelId, chatJid },
+    {
+      $set: {
+        channelId,
+        chatJid,
+        chatType,
+        chatName,
+        role,
+        mappedBy: new Types.ObjectId(performedBy),
+        mappedAt: new Date(),
+      },
+    },
+    { upsert: true, new: true },
+  ).exec();
+
+  await audit({
+    entityType: AuditEntityType.CHANNEL,
+    entityId: String(ch._id),
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    metadata: { scope: 'chat_mapping_assigned', chatJid, chatType, role },
+  });
+
+  return { channelId, chatJid, role };
+}
+
+// ── Safe channel deletion ────────────────────────────────
+// Only allowed when the channel is already disconnected / suspended /
+// replaced AND no live Baileys client is running. Wipes the Channel
+// row + its ChatMappings; conversation history is retained because
+// Conversation rows reference channelId but don't cascade-delete.
+
+export async function deleteChannelSafely(channelId: string, performedBy: string): Promise<void> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+
+  const safeStatuses: string[] = [
+    ChannelStatus.DISCONNECTED,
+    ChannelStatus.SUSPENDED,
+    ChannelStatus.REPLACED,
+  ];
+  if (!safeStatuses.includes(ch.status)) {
+    throw new BusinessRuleError(
+      `Cannot delete channel in status '${ch.status}'. Disconnect or logout first.`,
+      { code: 'channel_not_safe_to_delete', status: ch.status },
+    );
+  }
+
+  // Defensive: if a Baileys client is still registered in memory for
+  // this id, refuse — logout/stop should have been called first.
+  const { getChannelClient } = await import('../../services/whatsapp/providers/baileys/baileys.client.js');
+  if (getChannelClient(channelId)) {
+    throw new BusinessRuleError(
+      'A live Baileys session is still running. Logout or stop it before deleting.',
+      { code: 'session_still_running' },
+    );
+  }
+
+  await ChatMapping.deleteMany({ channelId }).exec();
+  await Channel.deleteOne({ channelId }).exec();
+
+  await audit({
+    entityType: AuditEntityType.CHANNEL,
+    entityId: String(ch._id),
+    actionType: AuditActionType.DELETE,
+    performedBy,
+    metadata: { transition: 'delete', formerStatus: ch.status },
+  });
+  publishRealtimeEvent('channel.updated', {
+    channelId: ch.channelId,
+    status: 'deleted',
+    transition: 'delete',
   });
 }

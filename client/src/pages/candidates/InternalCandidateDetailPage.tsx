@@ -7,6 +7,12 @@ import { Dialog } from '@/components/ui/Dialog';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi, type FindMatchItem } from '@/services/api/matches';
 import { aiApi } from '@/services/api/ai';
+import { InternalCandidateForm } from '@/features/forms/InternalCandidateForm';
+import { NotesRail } from '@/features/notes/NotesRail';
+import { TasksRail } from '@/features/tasks/TasksRail';
+import { EntityTimeline } from '@/features/history/EntityTimeline';
+import { OwnerChip } from '@/features/users/OwnerChip';
+import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
@@ -17,6 +23,7 @@ import type { MatchSuggestion, Conversation, InternalCandidate } from '@/types/d
 export function InternalCandidateDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [findOpen, setFindOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const candidate = useQuery({
     queryKey: ['internal', id],
     queryFn: () => internalCandidatesApi.get(id!),
@@ -73,6 +80,7 @@ export function InternalCandidateDetailPage() {
               {c.phone && <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{c.phone}</span>}
               {c.email && <span className="inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{c.email}</span>}
               <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{new Date(c.dateOfBirth).toLocaleDateString('he-IL')}</span>
+              <OwnerChip userId={c.ownerUserId} />
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -90,7 +98,7 @@ export function InternalCandidateDetailPage() {
             >
               סיכום AI
             </Button>
-            <Button variant="secondary">עריכה</Button>
+            <Button variant="secondary" onClick={() => setEditOpen(true)}>עריכה</Button>
           </div>
         </CardBody>
       </Card>
@@ -126,7 +134,7 @@ export function InternalCandidateDetailPage() {
               {
                 id: 'history',
                 label: 'היסטוריה',
-                content: <EmptyState title="יומן פעילות" description="בקרוב: יומן מלא של פעולות, הצעות שנשלחו, שינויי סטטוס." />,
+                content: <EntityTimeline entityType="internal_candidate" entityId={c._id} title="יומן פעילות" asCard={false} />,
               },
             ]}
           />
@@ -148,6 +156,8 @@ export function InternalCandidateDetailPage() {
               <MetricRow label="אומת לאחרונה" value={c.lastVerifiedAt ? new Date(c.lastVerifiedAt).toLocaleDateString('he-IL') : '—'} />
             </CardBody>
           </Card>
+          <TasksRail related={{ type: 'internal_candidate', id: c._id }} />
+          <NotesRail entityType="internal_candidate" entityId={c._id} />
         </aside>
       </div>
 
@@ -155,6 +165,12 @@ export function InternalCandidateDetailPage() {
         open={findOpen}
         onClose={() => setFindOpen(false)}
         internalCandidateId={c._id}
+      />
+
+      <InternalCandidateForm
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        initial={c}
       />
     </div>
   );
@@ -193,46 +209,54 @@ function FindMatchesDialog({
       description="מנוע הניתוח דורג את המועמדים החיצוניים הזמינים לפי ציון התאמה."
       secondaryAction={{ label: 'סגור', onClick: onClose }}
     >
-      <div className="max-h-[60vh] overflow-y-auto">
-        {q.isLoading ? (
-          <LoadingSkeleton rows={6} />
-        ) : q.isError ? (
-          <ErrorState description={(q.error as Error).message} onRetry={() => q.refetch()} />
-        ) : !q.data?.data.length ? (
-          <EmptyState title="לא נמצאו התאמות זמינות" description="ייתכן שאין מועמדים חיצוניים פעילים העומדים בקריטריונים." />
-        ) : (
-          <ul className="space-y-2">
-            {q.data.data.map((m: FindMatchItem) => (
-              <li key={m.externalCandidateId} className="rounded-md border border-border bg-white p-3 flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className="text-sm font-medium truncate">
-                      {`${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || 'ללא שם'}
+      <div className="max-h-[70vh] overflow-y-auto space-y-5">
+        <section>
+          <div className="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">התאמות זמינות</div>
+          {q.isLoading ? (
+            <LoadingSkeleton rows={6} />
+          ) : q.isError ? (
+            <ErrorState description={(q.error as Error).message} onRetry={() => q.refetch()} />
+          ) : !q.data?.data.length ? (
+            <EmptyState title="לא נמצאו התאמות זמינות" description="ייתכן שאין מועמדים חיצוניים פעילים העומדים בקריטריונים." />
+          ) : (
+            <ul className="space-y-2">
+              {q.data.data.map((m: FindMatchItem) => (
+                <li key={m.externalCandidateId} className="rounded-md border border-border bg-white p-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="text-sm font-medium truncate">
+                        {`${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || 'ללא שם'}
+                      </div>
+                      <Badge tone={m.matchType === 'safe' ? 'success' : m.matchType === 'balanced' ? 'brand' : 'warning'}>
+                        {label('matchType', m.matchType)}
+                      </Badge>
+                      {m.sectorGroup && <Badge tone="neutral">{label('sectorGroup', m.sectorGroup)}</Badge>}
                     </div>
-                    <Badge tone={m.matchType === 'safe' ? 'success' : m.matchType === 'balanced' ? 'brand' : 'warning'}>
-                      {label('matchType', m.matchType)}
-                    </Badge>
-                    {m.sectorGroup && <Badge tone="neutral">{label('sectorGroup', m.sectorGroup)}</Badge>}
+                    <div className="text-xs text-ink-muted mt-1 flex items-center gap-2 flex-wrap">
+                      {m.city && <span>{m.city}</span>}
+                      {m.age && <span className="num">גיל {m.age}</span>}
+                    </div>
                   </div>
-                  <div className="text-xs text-ink-muted mt-1 flex items-center gap-2 flex-wrap">
-                    {m.city && <span>{m.city}</span>}
-                    {m.age && <span className="num">גיל {m.age}</span>}
+                  <div className="text-end shrink-0">
+                    <div className="text-lg font-semibold num text-brand-700">{m.matchScore}</div>
+                    <div className="text-xs text-ink-muted num">ביטחון {m.confidenceScore}</div>
                   </div>
-                </div>
-                <div className="text-end shrink-0">
-                  <div className="text-lg font-semibold num text-brand-700">{m.matchScore}</div>
-                  <div className="text-xs text-ink-muted num">ביטחון {m.confidenceScore}</div>
-                </div>
-                <div className="flex flex-col gap-1 shrink-0">
-                  <Link to={`/candidates/external/${m.externalCandidateId}`} className="text-xs text-brand-700 hover:underline text-center">פרופיל</Link>
-                  <Button size="sm" variant="secondary" loading={createSuggestion.isPending} onClick={() => createSuggestion.mutate(m.externalCandidateId)}>
-                    צור הצעה
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <div className="flex flex-col gap-1 shrink-0">
+                    <Link to={`/candidates/external/${m.externalCandidateId}`} className="text-xs text-brand-700 hover:underline text-center">פרופיל</Link>
+                    <Button size="sm" variant="secondary" loading={createSuggestion.isPending} onClick={() => createSuggestion.mutate(m.externalCandidateId)}>
+                      צור הצעה
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <div className="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">מועמדים חסומים / לא זמינים להתאמה</div>
+          <BlockedCandidatesList internalCandidateId={internalCandidateId} enabled={open} />
+        </section>
       </div>
     </Dialog>
   );

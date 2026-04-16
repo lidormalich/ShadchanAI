@@ -34,6 +34,8 @@ import {
 import { extractProfileFromText, type ExtractedProfile } from './regex.extractor.js';
 import { findExistingCandidate, type MatchResult } from './candidate.matcher.js';
 import { extractProfileWithAI, type AIExtractedProfile } from './ai.extractor.js';
+import { publishRealtimeEvent } from '../realtime/realtime.service.js';
+import { normalizePhone } from '../../utils/phone.js';
 
 // Threshold tuning. Moved here rather than into env so the decisions
 // live next to the logic that makes them. Revisit after ~100 messages
@@ -63,17 +65,23 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 
   const message = await Message.findById(messageId).exec();
   if (!message) return fail('message_not_found');
-  if (!message.body || !message.body.trim()) {
+
+  // Phase 7: fall back to media caption when body is empty. An
+  // image-with-caption profile ("שדכנים — שרה בת 24…" with photo)
+  // was previously silently ignored; now we extract from the caption.
+  const effectiveText = (message.body?.trim() || message.mediaCaption?.trim() || '');
+  if (!effectiveText) {
     return finalize(message, {
       status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
       method: ExtractionMethod.REGEX,
       confidence: 0,
       matchedFields: [],
+      failureReason: 'no_text',
     });
   }
 
   // ── 1. Regex pre-parse ─────────────────────────────────
-  const regex = extractProfileFromText(message.body);
+  const regex = extractProfileFromText(effectiveText);
 
   if (regex.isTemplateForm) {
     return finalize(message, {
@@ -112,7 +120,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 
   if (!regexSufficient) {
     try {
-      const ai = await extractProfileWithAI(message.body, { messageId: String(message._id) });
+      const ai = await extractProfileWithAI(effectiveText, { messageId: String(message._id) });
       if (!ai.profile.isProfile) {
         return finalize(message, {
           status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
@@ -231,12 +239,14 @@ async function linkToExisting(candidate: IExternalCandidate, message: IMessage):
 
 async function createFromProfile(profile: ExtractedProfile, message: IMessage): Promise<IExternalCandidate> {
   const primaryPhone = profile.contactPhones?.[0];
+  const normalizedPhone = normalizePhone(primaryPhone);
   return ExternalCandidate.create({
     sourceType: ExternalSourceType.WHATSAPP_GROUP,
     sourceChannelId: message.channelId,
     sourceImportedAt: message.createdAt,
     lastSourceUpdateAt: message.createdAt,
     contactPhone: primaryPhone,
+    contactPhoneNormalized: normalizedPhone ?? undefined,
     sourceMessageIds: [message._id],
     firstName: profile.firstName,
     lastName: profile.lastName,
@@ -283,6 +293,17 @@ async function finalize(
     matchedFields: outcome.matchedFields,
   };
   await message.save();
+
+  // Surface review-queue arrivals to connected operators live.
+  if (outcome.status === MessageExtractionStatus.NEEDS_REVIEW) {
+    publishRealtimeEvent('extraction.needs_review', {
+      messageId: String(message._id),
+      conversationId: String(message.conversationId),
+      channelId: message.channelId,
+      confidence: outcome.confidence,
+    });
+  }
+
   return outcome;
 }
 
