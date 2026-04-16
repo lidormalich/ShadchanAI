@@ -37,6 +37,10 @@ export async function listConversations(
   if (query.internalCandidateId) filter['internalCandidateId'] = new Types.ObjectId(query.internalCandidateId);
   if (query.externalCandidateId) filter['externalCandidateId'] = new Types.ObjectId(query.externalCandidateId);
   if (query.matchSuggestionId) filter['matchSuggestionId'] = new Types.ObjectId(query.matchSuggestionId);
+  if (query.assignedRole) {
+    if (query.assignedRole === 'unassigned') filter['assignedRole'] = { $exists: false };
+    else filter['assignedRole'] = query.assignedRole;
+  }
 
   const [items, total] = await Promise.all([
     Conversation.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
@@ -123,6 +127,42 @@ export async function linkConversation(
     metadata: { scope: 'link', ...links },
   });
   return after;
+}
+
+// ── Per-conversation role assignment (Phase: pre-pilot) ──
+// The single authoritative gate the ingestion pipeline reads.
+// Setting / clearing is admin-only via the controller; service
+// here records the change + writes audit.
+export async function assignConversationRole(
+  id: string,
+  role: 'profiles_source' | 'match_sending' | 'ignore' | null,
+  performedBy: string,
+): Promise<IConversation> {
+  const doc = await getConversationById(id);
+  const before = doc.toObject();
+
+  if (role === null) {
+    doc.assignedRole = undefined;
+    doc.assignedRoleAt = undefined;
+    doc.assignedRoleBy = undefined;
+  } else {
+    doc.assignedRole = role;
+    doc.assignedRoleAt = new Date();
+    doc.assignedRoleBy = new Types.ObjectId(performedBy);
+  }
+  await doc.save();
+
+  await audit({
+    entityType: AuditEntityType.CONVERSATION,
+    entityId: id,
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    before,
+    after: doc.toObject(),
+    metadata: { scope: 'assigned_role', assignedRole: role },
+  });
+
+  return doc;
 }
 
 // ── Channel-role listing ─────────────────────────────────

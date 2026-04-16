@@ -6,6 +6,7 @@ import {
   LinkConversationSchema,
   IdParamSchema,
   SendConvoMessageSchema,
+  AssignRoleSchema,
 } from './conversation.validator.js';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
@@ -20,4 +21,5 @@ conversationRouter.get('/:id/chain', validate({ params: IdParamSchema }), ctrl.c
 conversationRouter.get('/:id/messages', validate({ params: IdParamSchema, query: ListMessagesQuerySchema }), ctrl.listMessagesHandler);
 conversationRouter.post('/:id/mark-read', validate({ params: IdParamSchema }), ctrl.markReadHandler);
 conversationRouter.patch('/:id/link', validate({ params: IdParamSchema, body: LinkConversationSchema }), ctrl.linkHandler);
+conversationRouter.patch('/:id/assigned-role', validate({ params: IdParamSchema, body: AssignRoleSchema }), ctrl.assignRoleHandler);
 conversationRouter.post('/:id/send-message', validate({ params: IdParamSchema, body: SendConvoMessageSchema }), ctrl.sendMessageHandler);

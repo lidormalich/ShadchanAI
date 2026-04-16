@@ -12,6 +12,10 @@ export interface IConversation extends Document {
   // participant
   participantName?: string;
   participantPhone?: string; // only stored here for initial mapping; not used for routing
+  /** Raw WhatsApp chat JID — set on create so discovery & the
+   *  ChatMapping gate can correlate conversations to WhatsApp chats. */
+  chatJid?: string;
+  chatType?: 'group' | 'private';
 
   // links (optional — a conversation may be linked to entities)
   internalCandidateId?: Types.ObjectId;
@@ -20,6 +24,17 @@ export interface IConversation extends Document {
 
   // purpose
   purpose: ConversationPurpose;
+
+  // Pre-pilot safe mode: per-conversation explicit role mapping.
+  //   undefined        — not yet mapped → ingestion DISALLOWED
+  //   'profiles_source' — inbound text is eligible for the extraction pipeline
+  //   'match_sending'   — used for outbound proposals; never ingested as profile
+  //   'ignore'          — fully ignored by ingestion / extraction / candidate creation
+  // The channel-level role is now only a *default category* — the
+  // authoritative gate for ingestion is this per-conversation field.
+  assignedRole?: 'profiles_source' | 'match_sending' | 'ignore';
+  assignedRoleAt?: Date;
+  assignedRoleBy?: Types.ObjectId;
 
   // status
   isActive: boolean;
@@ -58,6 +73,8 @@ const conversationSchema = new Schema<IConversation>(
     // ── Participant ───────────────────────────────────────
     participantName: { type: String, trim: true },
     participantPhone: { type: String, trim: true },
+    chatJid: { type: String, trim: true, index: true, sparse: true },
+    chatType: { type: String, enum: ['group', 'private'] },
 
     // ── Entity links ──────────────────────────────────────
     internalCandidateId: {
@@ -80,6 +97,14 @@ const conversationSchema = new Schema<IConversation>(
       required: true,
       default: ConversationPurpose.GENERAL,
     },
+
+    // ── Per-conversation role assignment (Phase: pre-pilot) ──
+    assignedRole: {
+      type: String,
+      enum: ['profiles_source', 'match_sending', 'ignore'],
+    },
+    assignedRoleAt: { type: Date },
+    assignedRoleBy: { type: Schema.Types.ObjectId, ref: 'User' },
 
     // ── Status ────────────────────────────────────────────
     isActive: { type: Boolean, default: true },
@@ -112,6 +137,8 @@ const conversationSchema = new Schema<IConversation>(
 
 // Primary lookup: find conversations for a channel
 conversationSchema.index({ channelId: 1, channelRole: 1 });
+// Filter conversations by their explicit role assignment
+conversationSchema.index({ assignedRole: 1 }, { sparse: true });
 
 // Find conversations needing action
 conversationSchema.index({ needsAction: 1, isActive: 1 });
