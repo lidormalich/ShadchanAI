@@ -74,6 +74,8 @@ export function mapInboundMessage(
     businessPhoneNumber: channel.phoneNumber ?? '',
     participantPhone: jidToPhone(isGroup ? fromJid : senderJid),
     participantName,
+    chatJid: fromJid,
+    chatType: isGroup ? 'group' : 'private',
     timestamp,
     contentType: contentType as MessageContentType,
     body,

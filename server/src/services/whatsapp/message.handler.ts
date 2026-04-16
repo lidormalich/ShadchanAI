@@ -18,7 +18,7 @@
 //     skipReason='duplicate' without further side effects.
 // ═══════════════════════════════════════════════════════════
 
-import { Message, Conversation, type IMessage } from '../../models/index.js';
+import { Message, Conversation, ChatMapping, type IMessage } from '../../models/index.js';
 import type {
   NormalizedInboundMessage,
   NormalizedStatusUpdate,
@@ -29,6 +29,11 @@ import { findChannelByProviderSessionId, touchChannelActivity } from './channel.
 import { logWhatsApp, maskPhone } from './whatsapp.logger.js';
 import { ChannelRole, MessageDeliveryStatus, MessageDirection } from '@shadchanai/shared';
 import { enqueueExtraction } from '../extraction/queue.js';
+import { publishRealtimeEvent } from '../realtime/realtime.service.js';
+import { classifyResponse } from './response.classifier.js';
+import { applyInboundResponse } from '../../modules/matches/match.service.js';
+import { MatchSuggestion } from '../../models/index.js';
+import { classifyMessage as aiClassifyMessage } from '../ai/ai.service.js';
 
 // ── Inbound message handling ─────────────────────────────
 
@@ -73,6 +78,8 @@ export async function handleInboundMessage(
     channel,
     participantPhone: msg.participantPhone,
     participantName: msg.participantName,
+    chatJid: msg.chatJid,
+    chatType: msg.chatType,
   });
 
   // ── 4. Persist message (with belt-and-suspenders dedup) ─
@@ -127,25 +134,199 @@ export async function handleInboundMessage(
   // ── 6. Touch channel activity (non-blocking best-effort) ─
   void touchChannelActivity(channel.channelId, 'inbound').catch(() => {});
 
+  // ── 6b. Publish realtime event for live conversation UI ──
+  publishRealtimeEvent('conversation.updated', {
+    conversationId: String(conversation._id),
+    channelId: channel.channelId,
+    channelRole: channel.role,
+    direction: msg.direction,
+    messageId: String(saved._id),
+    at: msg.timestamp?.toISOString?.() ?? new Date().toISOString(),
+  });
+
   // ── 7. Enqueue profile extraction ─────────────────────
-  // Only inbound text on a profiles_source channel qualifies. Everything
-  // else (match_sending replies, outbound, media-only) bypasses the
-  // extraction pipeline. Fire-and-forget so persistence latency stays
-  // decoupled from AI latency.
-  if (
+  // PRE-PILOT GATE (authoritative ordering):
+  //   1. ChatMapping keyed by (channelId, chatJid) — the real
+  //      mapping the operator set from the discovery UI.
+  //   2. Conversation.assignedRole — legacy fallback for the
+  //      very first pilot rows that were mapped via conversations.
+  //
+  // Channel must still be PROFILES_SOURCE — match_sending channels
+  // never feed the extraction pipeline regardless of mapping.
+  const ingestionRoleEligible =
     channel.role === ChannelRole.PROFILES_SOURCE &&
-    msg.direction === MessageDirection.INBOUND &&
-    msg.body && msg.body.trim().length > 0
-  ) {
-    void enqueueExtraction(String(saved._id)).catch((err) => {
+    msg.direction === MessageDirection.INBOUND;
+
+  let effectiveRole: 'profiles_source' | 'match_sending' | 'ignore' | undefined;
+  if (ingestionRoleEligible && msg.chatJid) {
+    const mapping = await ChatMapping.findOne({
+      channelId: channel.channelId,
+      chatJid: msg.chatJid,
+    }).select('role').lean().exec();
+    if (mapping) effectiveRole = mapping.role;
+  }
+  if (ingestionRoleEligible && !effectiveRole) {
+    effectiveRole = conversation.assignedRole;
+  }
+
+  const conversationApprovedForIngestion = effectiveRole === 'profiles_source';
+
+  if (ingestionRoleEligible && effectiveRole === 'ignore') {
+    logWhatsApp({
+      event: 'message_ignored_assigned_ignore',
+      channelId: channel.channelId,
+      channelRole: channel.role,
+      conversationId: String(conversation._id),
+      messageId: String(saved._id),
+    });
+  } else if (ingestionRoleEligible && effectiveRole === 'match_sending') {
+    logWhatsApp({
+      event: 'message_ignored_assigned_match_sending',
+      channelId: channel.channelId,
+      channelRole: channel.role,
+      conversationId: String(conversation._id),
+      messageId: String(saved._id),
+    });
+  } else if (ingestionRoleEligible && !conversationApprovedForIngestion) {
+    logWhatsApp({
+      event: 'message_ignored_unmapped_conversation',
+      channelId: channel.channelId,
+      channelRole: channel.role,
+      conversationId: String(conversation._id),
+      messageId: String(saved._id),
+    });
+  } else if (ingestionRoleEligible && conversationApprovedForIngestion) {
+    const effectiveText = (msg.body?.trim() || msg.media?.caption?.trim() || '');
+    if (effectiveText.length > 0) {
       logWhatsApp({
-        event: 'error',
+        event: 'message_accepted_for_ingestion',
         channelId: channel.channelId,
         channelRole: channel.role,
+        conversationId: String(conversation._id),
         messageId: String(saved._id),
-        errorMessage: `enqueueExtraction: ${(err as Error).message}`,
       });
-    });
+      void enqueueExtraction(String(saved._id)).catch((err) => {
+        logWhatsApp({
+          event: 'error',
+          channelId: channel.channelId,
+          channelRole: channel.role,
+          messageId: String(saved._id),
+          errorMessage: `enqueueExtraction: ${(err as Error).message}`,
+        });
+      });
+    } else {
+      // Persist an explicit no-text skip so the operator's extraction
+      // badge on this message reads as "not a profile (no text)"
+      // rather than "no extraction attempted".
+      void Message.updateOne(
+        { _id: saved._id, 'extraction.status': { $exists: false } },
+        {
+          $set: {
+            extraction: {
+              status: 'skipped_not_profile',
+              method: 'regex',
+              attemptedAt: new Date(),
+              completedAt: new Date(),
+              confidence: 0,
+              failureReason: 'no_text',
+            },
+          },
+        },
+      ).exec().catch((err) => {
+        logWhatsApp({
+          event: 'error',
+          channelId: channel.channelId,
+          channelRole: channel.role,
+          messageId: String(saved._id),
+          errorMessage: `mark_no_text_skip: ${(err as Error).message}`,
+        });
+      });
+    }
+  }
+
+  // ── 7b. Auto-detect match response on match_sending channels ──
+  // If this inbound message arrived on a conversation linked to a
+  // sent proposal, classify it and persist a sideX response so the
+  // dashboard's new_response row is reachable without operator action.
+  // Fire-and-forget; never allowed to break the primary persistence path.
+  if (
+    channel.role === ChannelRole.MATCH_SENDING &&
+    msg.direction === MessageDirection.INBOUND &&
+    conversation.matchSuggestionId &&
+    msg.body && msg.body.trim().length > 0
+  ) {
+    const conversationId = String(conversation._id);
+    const matchId = String(conversation.matchSuggestionId);
+    const messageId = String(saved._id);
+    const body = msg.body;
+
+    void (async (): Promise<void> => {
+      try {
+        const match = await MatchSuggestion.findById(matchId).lean().exec();
+        if (!match) return;
+
+        // Determine which side this conversation represents.
+        let side: 'a' | 'b' | null = null;
+        if (String(match.conversationIds?.sideA ?? '') === conversationId) side = 'a';
+        else if (String(match.conversationIds?.sideB ?? '') === conversationId) side = 'b';
+        if (!side) return; // conversation linked to match but not bound to a specific side
+
+        // Deterministic classification first.
+        const regex = classifyResponse(body);
+        let status: 'accepted' | 'declined' | 'considering' = regex.status;
+        let classifier: 'regex' | 'ai' = 'regex';
+        let confidence = regex.confidence;
+
+        // Confidence policy (Phase 7 hardening):
+        //   - Regex ≥ 0.6  → apply regex verdict.
+        //   - Regex < 0.6  → AI advisory. AI may ONLY escalate to a
+        //     decisive accepted/declined when its own confidence
+        //     crosses AI_MIN_CONFIDENCE; otherwise status is held
+        //     at "considering". Prevents a low-confidence LLM reply
+        //     from mis-advancing the match state machine.
+        const AI_MIN_CONFIDENCE = 0.7;
+        if (regex.confidence < 0.6) {
+          try {
+            const ai = await aiClassifyMessage(
+              { text: body, context: { purpose: 'match_proposal' } },
+              { messageId },
+            );
+            const sentiment = ai.data.sentiment;
+            const aiConfidence = ai.data.confidence ?? 0;
+            const decisive = aiConfidence >= AI_MIN_CONFIDENCE;
+
+            if (sentiment === 'positive' && decisive) {
+              status = 'accepted';
+            } else if (sentiment === 'negative' && decisive) {
+              status = 'declined';
+            } else {
+              // non-decisive OR below confidence floor → conservative.
+              // Row surfaces on dashboard as "considering" for operator review.
+              status = 'considering';
+            }
+            classifier = 'ai';
+            confidence = aiConfidence;
+          } catch {
+            // AI unreachable — keep regex verdict (likely 'considering').
+          }
+        }
+
+        await applyInboundResponse(matchId, side, status, {
+          messageId,
+          classifier,
+          classifierConfidence: confidence,
+          rawText: body,
+        });
+      } catch (err) {
+        logWhatsApp({
+          event: 'error',
+          channelId: channel.channelId,
+          channelRole: channel.role,
+          messageId,
+          errorMessage: `response_detection: ${(err as Error).message}`,
+        });
+      }
+    })();
   }
 
   logWhatsApp({

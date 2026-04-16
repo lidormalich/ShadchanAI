@@ -26,6 +26,11 @@ export interface NormalizedInboundMessage {
   businessPhoneNumber: string;
   participantPhone: string;
   participantName?: string;
+  /** Raw WhatsApp chat JID (e.g. "12345@s.whatsapp.net" or "9999-123@g.us").
+   *  Authoritative key for the pre-pilot ChatMapping / ingestion gate. */
+  chatJid: string;
+  /** 'group' when the chat JID is a group id, else 'private'. */
+  chatType: 'group' | 'private';
   timestamp: Date;
   contentType: MessageContentType;
   body?: string;
