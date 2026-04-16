@@ -15,9 +15,9 @@ import type {
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    ensureUser(req.user);
+    const user = ensureUser(req.user);
     const q = getValidatedQuery<ListExternalCandidatesQuery>(req);
-    const { items, meta } = await svc.listExternalCandidates(q);
+    const { items, meta } = await svc.listExternalCandidates(q, user.id);
     ok(res, items, meta);
   } catch (e) { next(e); }
 }
@@ -45,7 +45,7 @@ export async function updateHandler(req: Request, res: Response, next: NextFunct
     const user = ensureUser(req.user);
     canWriteCandidates(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    const doc = await svc.updateExternalCandidate(id, req.body as UpdateExternalCandidateInput, user.id);
+    const doc = await svc.updateExternalCandidate(id, req.body as UpdateExternalCandidateInput, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }
@@ -55,7 +55,7 @@ export async function archiveHandler(req: Request, res: Response, next: NextFunc
     const user = ensureUser(req.user);
     canWriteCandidates(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    await svc.archiveExternalCandidate(id, user.id);
+    await svc.archiveExternalCandidate(id, user.id, user);
     noContent(res);
   } catch (e) { next(e); }
 }
@@ -65,7 +65,7 @@ export async function shareCardHandler(req: Request, res: Response, next: NextFu
     const user = ensureUser(req.user);
     canWriteCandidates(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    const doc = await svc.updateShareCard(id, req.body as Record<string, unknown>, user.id);
+    const doc = await svc.updateShareCard(id, req.body as Record<string, unknown>, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }
@@ -80,7 +80,7 @@ export async function availabilityHandler(req: Request, res: Response, next: Nex
       staleReason?: string;
       confirmAvailable?: boolean;
     };
-    const doc = await svc.updateAvailability(id, availabilityStatus, staleReason, confirmAvailable, user.id);
+    const doc = await svc.updateAvailability(id, availabilityStatus, staleReason, confirmAvailable, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }

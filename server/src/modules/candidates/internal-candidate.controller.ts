@@ -18,9 +18,9 @@ import { PaginationQuerySchema } from '../../utils/pagination.js';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    ensureUser(req.user);
+    const user = ensureUser(req.user);
     const q = getValidatedQuery<ListInternalCandidatesQuery>(req);
-    const { items, meta } = await svc.listInternalCandidates(q);
+    const { items, meta } = await svc.listInternalCandidates(q, user.id);
     ok(res, items, meta);
   } catch (e) { next(e); }
 }
@@ -48,7 +48,7 @@ export async function updateHandler(req: Request, res: Response, next: NextFunct
     const user = ensureUser(req.user);
     canWriteCandidates(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    const doc = await svc.updateInternalCandidate(id, req.body as UpdateInternalCandidateInput, user.id);
+    const doc = await svc.updateInternalCandidate(id, req.body as UpdateInternalCandidateInput, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }
@@ -58,7 +58,7 @@ export async function archiveHandler(req: Request, res: Response, next: NextFunc
     const user = ensureUser(req.user);
     canWriteCandidates(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    await svc.archiveInternalCandidate(id, user.id);
+    await svc.archiveInternalCandidate(id, user.id, user);
     noContent(res);
   } catch (e) { next(e); }
 }
@@ -69,7 +69,7 @@ export async function closeHandler(req: Request, res: Response, next: NextFuncti
     canWriteCandidates(user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const { reason, note } = req.body as { reason: string; note?: string };
-    const doc = await svc.closeInternalCandidate(id, reason, note, user.id);
+    const doc = await svc.closeInternalCandidate(id, reason, note, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }
@@ -83,7 +83,7 @@ export async function markDatingHandler(req: Request, res: Response, next: NextF
       partnerCandidateId: string;
       sourceMatchId?: string;
     };
-    const doc = await svc.markInternalCandidateDating(id, partnerCandidateId, sourceMatchId, user.id);
+    const doc = await svc.markInternalCandidateDating(id, partnerCandidateId, sourceMatchId, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }
@@ -98,7 +98,7 @@ export async function reopenHandler(req: Request, res: Response, next: NextFunct
       reason: string;
       note?: string;
     };
-    const doc = await svc.reopenInternalCandidate(id, fromDatingMatchId, reason, note, user.id);
+    const doc = await svc.reopenInternalCandidate(id, fromDatingMatchId, reason, note, user.id, user);
     ok(res, doc);
   } catch (e) { next(e); }
 }

@@ -15,8 +15,13 @@ import {
   type IExternalCandidate,
 } from '../../models/index.js';
 import { audit } from '../../services/audit.service.js';
-import { NotFoundError, BusinessRuleError } from '../../utils/errors.js';
+import { NotFoundError, BusinessRuleError, ConflictError } from '../../utils/errors.js';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
+import { applyOwnershipFilter } from '../../utils/ownership.js';
+import { assertOwnership } from '../../utils/ownership.assert.js';
+import type { AuthUser } from '../../middleware/auth.middleware.js';
+import { normalizePhone } from '../../utils/phone.js';
+import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import type {
   CreateExternalCandidateInput,
   UpdateExternalCandidateInput,
@@ -27,6 +32,7 @@ import type { MatchableInternal, MatchableExternal, MatchingContext } from '../.
 
 export async function listExternalCandidates(
   query: ListExternalCandidatesQuery,
+  currentUserId?: string,
 ): Promise<{ items: IExternalCandidate[]; total: number; meta: ReturnType<typeof makeMeta> }> {
   const { skip, limit } = toSkipLimit(query);
   const sort = buildSort(query, 'createdAt');
@@ -38,6 +44,7 @@ export async function listExternalCandidates(
   if (query.city) filter['city'] = query.city;
   if (query.availabilityStatus) filter['availabilityStatus'] = query.availabilityStatus;
   if (query.search) filter['$text'] = { $search: query.search };
+  applyOwnershipFilter(filter, 'ownerUserId', query.ownership, currentUserId);
 
   const [items, total] = await Promise.all([
     ExternalCandidate.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
@@ -61,10 +68,31 @@ export async function createExternalCandidate(
   input: CreateExternalCandidateInput,
   performedBy: string,
 ): Promise<IExternalCandidate> {
+  const normalizedPhone = normalizePhone(input.contactPhone);
+
+  // Soft duplicate guard: refuse to create a second active external
+  // with the same canonical phone. Callers can still reuse the
+  // existing external by querying first; we do NOT silently merge.
+  if (normalizedPhone) {
+    const existing = await ExternalCandidate.findOne({
+      contactPhoneNormalized: normalizedPhone,
+      archivedAt: { $exists: false },
+    }).select('_id firstName lastName').lean().exec();
+    if (existing) {
+      recordDuplicatePhone({ source: 'manual_create', existingCandidateId: String(existing._id) });
+      throw new ConflictError(
+        'An external candidate with this phone already exists',
+        { code: 'duplicate_phone', existingCandidateId: String(existing._id) },
+      );
+    }
+  }
+
   const doc = await ExternalCandidate.create({
     ...input,
+    contactPhoneNormalized: normalizedPhone ?? undefined,
     sourceImportedAt: new Date(),
     importedBy: new Types.ObjectId(performedBy),
+    ownerUserId: new Types.ObjectId(performedBy),
     shareCard: { approvedForShare: false },
   });
   await audit({
@@ -81,12 +109,18 @@ export async function updateExternalCandidate(
   id: string,
   input: UpdateExternalCandidateInput,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IExternalCandidate> {
   const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
   if (doc.archivedAt) throw new BusinessRuleError('External candidate is archived');
 
   const before = doc.toObject();
   Object.assign(doc, input);
+  // Keep contactPhoneNormalized in sync with contactPhone edits.
+  if (input.contactPhone !== undefined) {
+    doc.contactPhoneNormalized = normalizePhone(input.contactPhone) ?? undefined;
+  }
   doc.lastSourceUpdateAt = new Date();
   await doc.save();
 
@@ -102,8 +136,9 @@ export async function updateExternalCandidate(
   return doc;
 }
 
-export async function archiveExternalCandidate(id: string, performedBy: string): Promise<void> {
+export async function archiveExternalCandidate(id: string, performedBy: string, actor?: AuthUser): Promise<void> {
   const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
   if (doc.archivedAt) return;
   const before = doc.toObject();
   doc.archivedAt = new Date();
@@ -123,8 +158,10 @@ export async function updateShareCard(
   id: string,
   patch: Record<string, unknown>,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IExternalCandidate> {
   const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
   const before = doc.toObject();
   doc.shareCard = {
     ...(doc.shareCard ?? { approvedForShare: false }),
@@ -150,8 +187,10 @@ export async function updateAvailability(
   staleReason: string | undefined,
   confirmAvailable: boolean | undefined,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IExternalCandidate> {
   const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
   const before = doc.toObject();
 
   doc.availabilityStatus = availabilityStatus as IExternalCandidate['availabilityStatus'];

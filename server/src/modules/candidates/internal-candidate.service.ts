@@ -21,6 +21,9 @@ import { InternalCandidate, MatchSuggestion, Conversation, type IInternalCandida
 import { audit } from '../../services/audit.service.js';
 import { BusinessRuleError, NotFoundError } from '../../utils/errors.js';
 import { toSkipLimit, buildSort, makeMeta, type PaginationQuery } from '../../utils/pagination.js';
+import { applyOwnershipFilter } from '../../utils/ownership.js';
+import { assertOwnership } from '../../utils/ownership.assert.js';
+import type { AuthUser } from '../../middleware/auth.middleware.js';
 import type {
   CreateInternalCandidateInput,
   UpdateInternalCandidateInput,
@@ -98,6 +101,7 @@ function hasValue(v: unknown): boolean {
 
 export async function listInternalCandidates(
   query: ListInternalCandidatesQuery,
+  currentUserId?: string,
 ): Promise<{ items: IInternalCandidate[]; total: number; meta: ReturnType<typeof makeMeta> }> {
   const { skip, limit } = toSkipLimit(query);
   const sort = buildSort(query, 'createdAt');
@@ -110,6 +114,7 @@ export async function listInternalCandidates(
   if (query.search) {
     filter['$text'] = { $search: query.search };
   }
+  applyOwnershipFilter(filter, 'ownerUserId', query.ownership, currentUserId);
 
   const [items, total] = await Promise.all([
     InternalCandidate.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
@@ -139,6 +144,7 @@ export async function createInternalCandidate(
     ...input,
     status: CandidateStatus.ACTIVE,
     createdBy: new Types.ObjectId(performedBy),
+    ownerUserId: new Types.ObjectId(performedBy),
     profileCompletion: readiness.profileCompletion,
     missingCriticalFields: readiness.missingCriticalFields,
     sendReadinessBlockers: readiness.sendReadinessBlockers,
@@ -159,8 +165,10 @@ export async function updateInternalCandidate(
   id: string,
   input: UpdateInternalCandidateInput,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IInternalCandidate> {
   const existing = await getInternalCandidateById(id);
+  if (actor) assertOwnership(existing.ownerUserId, actor, { entity: 'internal candidate' });
   assertNotClosed(existing);
 
   const before = existing.toObject();
@@ -188,8 +196,9 @@ export async function updateInternalCandidate(
 
 // ── Lifecycle operations ─────────────────────────────────
 
-export async function archiveInternalCandidate(id: string, performedBy: string): Promise<void> {
+export async function archiveInternalCandidate(id: string, performedBy: string, actor?: AuthUser): Promise<void> {
   const doc = await getInternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'internal candidate' });
   if (doc.archivedAt) return;
 
   const before = doc.toObject();
@@ -212,8 +221,10 @@ export async function closeInternalCandidate(
   reason: string,
   note: string | undefined,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IInternalCandidate> {
   const doc = await getInternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'internal candidate' });
   const before = doc.toObject();
 
   doc.status = CandidateStatus.CLOSED;
@@ -241,8 +252,10 @@ export async function markInternalCandidateDating(
   partnerCandidateId: string,
   sourceMatchId: string | undefined,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IInternalCandidate> {
   const doc = await getInternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'internal candidate' });
   if (doc.status === CandidateStatus.CLOSED || doc.status === CandidateStatus.ARCHIVED) {
     throw new BusinessRuleError('Cannot mark a closed/archived candidate as dating');
   }
@@ -276,8 +289,10 @@ export async function reopenInternalCandidate(
   reason: string,
   note: string | undefined,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IInternalCandidate> {
   const doc = await getInternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'internal candidate' });
   if (doc.status !== CandidateStatus.DATING && doc.status !== CandidateStatus.CLOSED && doc.status !== CandidateStatus.PAUSED) {
     throw new BusinessRuleError('Only dating/closed/paused candidates can be reopened');
   }

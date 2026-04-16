@@ -7,6 +7,7 @@ import { Avatar, Badge, Button, Card, CardBody, Input, Select, TBody, THead, Tab
 import { EmptyState, ErrorState, RowSkeleton } from '@/components/states/states';
 import { InternalCandidateForm } from '@/features/forms/InternalCandidateForm';
 import { Pagination } from '@/components/ui/Pagination';
+import { OwnershipFilter, type OwnershipScope } from '@/features/ownership/OwnershipFilter';
 import { label } from '@/utils/labels';
 import type { InternalCandidate } from '@/types/domain';
 
@@ -20,25 +21,27 @@ export function InternalCandidatesListPage() {
   const [status, setStatus] = useState<string>('active');
   const [sectorGroup, setSectorGroup] = useState<string>('');
   const [gender, setGender] = useState<string>('');
+  const [ownership, setOwnership] = useState<OwnershipScope>('all');
   const [view, setView] = useState<ViewMode>('table');
   const [formOpen, setFormOpen] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 25;
 
   const query = useQuery({
-    queryKey: ['internals', { search, status, sectorGroup, gender, page }],
+    queryKey: ['internals', { search, status, sectorGroup, gender, ownership, page }],
     queryFn: () => internalCandidatesApi.list({
       search: search || undefined,
       status: status || undefined,
       sectorGroup: sectorGroup || undefined,
       gender: gender || undefined,
+      ownership,
       page,
       limit,
     }),
   });
 
   // Reset to page 1 when filters change
-  const filterKey = `${search}|${status}|${sectorGroup}|${gender}`;
+  const filterKey = `${search}|${status}|${sectorGroup}|${gender}|${ownership}`;
   const [lastFilterKey, setLastFilterKey] = useState(filterKey);
   if (filterKey !== lastFilterKey) {
     setLastFilterKey(filterKey);
@@ -79,6 +82,7 @@ export function InternalCandidatesListPage() {
             <option value="male">בנים</option>
             <option value="female">בנות</option>
           </Select>
+          <OwnershipFilter value={ownership} onChange={setOwnership} />
           <div className="ms-auto flex gap-1 p-0.5 rounded-md bg-bg-subtle border border-border">
             <button
               onClick={() => setView('table')}

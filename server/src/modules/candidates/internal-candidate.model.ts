@@ -243,6 +243,8 @@ export interface IInternalCandidate extends Document {
 
   // audit
   createdBy?: Types.ObjectId;
+  // ownership — the shadchan currently responsible for this candidate
+  ownerUserId?: Types.ObjectId;
   archivedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -368,6 +370,8 @@ const internalCandidateSchema = new Schema<IInternalCandidate>(
 
     // ── Audit ─────────────────────────────────────────────
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    // ── Ownership ─────────────────────────────────────────
+    ownerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     archivedAt: { type: Date },
   },
   {
