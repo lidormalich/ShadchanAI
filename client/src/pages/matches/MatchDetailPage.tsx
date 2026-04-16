@@ -1,23 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Heart, Send, Shield, Sparkles, XCircle } from 'lucide-react';
-import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Heart, MessageSquare, Send, Shield, Sparkles, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { matchesApi } from '@/services/api/matches';
 import { internalCandidatesApi, externalCandidatesApi } from '@/services/api/candidates';
 import { channelsApi } from '@/services/api/channels';
 import { aiApi } from '@/services/api/ai';
 import { toast } from '@/components/ui/Toast';
-import type { InternalCandidate, ExternalCandidate } from '@/types/domain';
+import type { InternalCandidate, ExternalCandidate, MatchSuggestion } from '@/types/domain';
 import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, Textarea } from '@/components/ui/primitives';
 import { ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { BlockedBanner } from '@/components/domain/banners';
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { AskAIPanel } from '@/features/ai/AskAIPanel';
+import { NotesRail } from '@/features/notes/NotesRail';
+import { TasksRail } from '@/features/tasks/TasksRail';
+import { EntityTimeline } from '@/features/history/EntityTimeline';
+import { conversationsApi } from '@/services/api/conversations';
+import { OwnerChip } from '@/features/users/OwnerChip';
+import { useSafeMode } from '@/features/safe-mode/useSafeMode';
 import { label } from '@/utils/labels';
 import type { SendPreview } from '@/types/domain';
 
 export function MatchDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const safeMode = useSafeMode();
   const qc = useQueryClient();
   const match = useQuery({
     queryKey: ['match', id],
@@ -100,27 +107,46 @@ export function MatchDetailPage() {
     onError: (err) => toast.error('הצעה נכשלה', (err as Error).message),
   });
 
-  // Advisory only: AI drafts a message the Shadchan will review
-  // BEFORE any send. The UI surfaces the text; no send happens here.
+  // Active side for the persisted draft textarea. Also drives
+  // which draft is prefilled into the send modal on open.
+  const [draftSide, setDraftSide] = useState<'a' | 'b'>('a');
+
+  // Persist the draft textarea to match.drafts[side] so it survives
+  // navigation and prefills the send modal.
+  const saveDraft = useMutation({
+    mutationFn: (payload: { body: string; source: 'ai' | 'manual' }) =>
+      matchesApi.saveDraft(id!, { side: draftSide, body: payload.body, source: payload.source }),
+    onSuccess: (r) => {
+      qc.setQueryData(['match', id], r);
+    },
+    onError: (err) => toast.error('שמירת הטיוטה נכשלה', (err as Error).message),
+  });
+
+  // Generate via AI → persist to match.drafts[side] (no more toast-only).
   const draftMessage = useMutation({
     mutationFn: async () => {
       const i = internal.data!.data;
       const e = external.data!.data;
-      return aiApi.generateMessage({
+      const r = await aiApi.generateMessage({
         purpose: 'intro',
         tone: 'warm',
         language: 'he',
         recipient: briefInternal(i),
         aboutCandidate: briefExternal(e),
       });
-    },
-    onSuccess: (r) => {
       const d = r.data as { message?: string; reviewFlags?: string[] };
-      toast.info(
-        'טיוטת הודעה',
-        [d.message, d.reviewFlags?.length ? `דורש בדיקה: ${d.reviewFlags.join(' · ')}` : undefined]
-          .filter(Boolean).join('\n\n'),
-      );
+      const text = (d.message ?? '').trim();
+      if (!text) throw new Error('AI did not return a message');
+      await matchesApi.saveDraft(id!, { side: draftSide, body: text, source: 'ai' });
+      return { text, reviewFlags: d.reviewFlags ?? [] };
+    },
+    onSuccess: ({ reviewFlags }) => {
+      qc.invalidateQueries({ queryKey: ['match', id] });
+      if (reviewFlags.length > 0) {
+        toast.warning('טיוטה נוצרה — דורשת בדיקה', reviewFlags.join(' · '));
+      } else {
+        toast.success('טיוטה נוצרה', 'הטיוטה נשמרה ותופיע בעת השליחה');
+      }
     },
     onError: (err) => toast.error('הכנת טיוטה נכשלה', (err as Error).message),
   });
@@ -158,11 +184,52 @@ export function MatchDetailPage() {
       toast.success('ההצעה נשלחה', `מצב הצעה: ${label('matchStatus', r.data.matchStatus)}`);
       setSendOpen(false);
       setSendBody('');
-      qc.invalidateQueries({ queryKey: ['match', id] });
+      // Reflect the new match status in the UI immediately instead of
+      // waiting for the invalidated query to refetch — the page would
+      // otherwise show the old status for a beat after a successful send.
+      qc.setQueryData<{ data: MatchSuggestion; meta?: unknown } | undefined>(
+        ['match', id],
+        (prev) => prev
+          ? { ...prev, data: { ...prev.data, status: r.data.matchStatus } }
+          : prev,
+      );
       qc.invalidateQueries({ queryKey: ['match', id, 'send-preview'] });
     },
     onError: (err) => toast.error('השליחה נכשלה', (err as Error).message),
   });
+
+  // When opening the send modal, prefill body from the persisted draft
+  // for the chosen side. Also re-prefill when the user switches side.
+  useEffect(() => {
+    if (!sendOpen) return;
+    const m = match.data?.data;
+    if (!m) return;
+    const draft = sendSide === 'a' ? m.drafts?.sideA?.body : m.drafts?.sideB?.body;
+    setSendBody(draft ?? '');
+  }, [sendOpen, sendSide, match.data]);
+
+  // Auto-acknowledge any unacked responses when the operator lands
+  // on this match. The dashboard "new_response" row for this match
+  // dismisses on the next refresh. Fire-and-forget; errors are silent.
+  useEffect(() => {
+    const m = match.data?.data;
+    if (!m || !id) return;
+    const sides: Array<'a' | 'b'> = [];
+    const a = m.sideAResponse;
+    const b = m.sideBResponse;
+    if (a?.respondedAt && (!a.acknowledgedAt || new Date(a.acknowledgedAt) < new Date(a.respondedAt))) sides.push('a');
+    if (b?.respondedAt && (!b.acknowledgedAt || new Date(b.acknowledgedAt) < new Date(b.respondedAt))) sides.push('b');
+    if (sides.length === 0) return;
+    Promise.all(sides.map((side) => matchesApi.acknowledgeResponse(id, { side })))
+      .then(() => {
+        qc.invalidateQueries({ queryKey: ['match', id] });
+        qc.invalidateQueries({ queryKey: ['dashboard', 'queue'] });
+      })
+      .catch(() => { /* silent — acknowledgement is a best-effort UX signal */ });
+    // Depend on id + the presence/timing of responses so we don't
+    // re-ack on every unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, match.data?.data.sideAResponse?.respondedAt, match.data?.data.sideBResponse?.respondedAt]);
 
   if (match.isLoading) return <div className="p-6"><LoadingSkeleton rows={8} /></div>;
   if (match.isError) return <ErrorState description={(match.error as Error).message} onRetry={() => match.refetch()} />;
@@ -170,6 +237,8 @@ export function MatchDetailPage() {
 
   const m = match.data.data;
   const preview = sendPreview.data?.data;
+  const activeDraftBody = draftSide === 'a' ? m.drafts?.sideA?.body ?? '' : m.drafts?.sideB?.body ?? '';
+  const activeDraftMeta = draftSide === 'a' ? m.drafts?.sideA : m.drafts?.sideB;
 
   return (
     <div className="space-y-4">
@@ -181,6 +250,12 @@ export function MatchDetailPage() {
             {m.isDeferred && <Badge tone="warning">מושהה</Badge>}
             {m.riskLevel !== 'none' && <Badge tone={m.riskLevel === 'high' ? 'danger' : 'warning'}>סיכון {label('riskLevel', m.riskLevel)}</Badge>}
             {m.flexibilityOverrideApplied && <Badge tone="purple">גמישות הופעלה</Badge>}
+            {m.forcedOverride && (
+              <Badge tone="danger" title="הצעה זו נכפתה על-ידי שדכן למרות חסימות של המנוע. ראו היסטוריה לנימוק מלא.">
+                נכפתה
+              </Badge>
+            )}
+            <OwnerChip userId={m.ownerUserId} />
           </div>
           <div className="ms-auto flex items-center gap-2">
             <Button
@@ -339,18 +414,70 @@ export function MatchDetailPage() {
         </Card>
       </div>
 
-      {/* Timeline (stub) */}
+      {/* Persisted proposal drafts — AI fills this, operator edits, send modal prefills from it */}
       <Card>
-        <CardHeader><h3 className="text-sm font-semibold">ציר זמן</h3></CardHeader>
-        <CardBody>
-          <div className="text-sm text-ink-muted">
-            נוצר {new Date(m.createdAt).toLocaleDateString('he-IL')}
-            {m.isDeferred && m.deferredAt && <> · הושהה {new Date(m.deferredAt).toLocaleDateString('he-IL')}</>}
-            {m.datingStartedAt && <> · יצא להיכרות {new Date(m.datingStartedAt).toLocaleDateString('he-IL')}</>}
-            {m.closedAt && <> · נסגר {new Date(m.closedAt).toLocaleDateString('he-IL')}</>}
+        <CardHeader>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h3 className="text-sm font-semibold">טיוטת הצעה</h3>
+            <div className="flex items-center gap-2">
+              <Select value={draftSide} onChange={(e) => setDraftSide(e.target.value as 'a' | 'b')}>
+                <option value="a">צד א (פנימי)</option>
+                <option value="b">צד ב (חיצוני)</option>
+              </Select>
+              <Button
+                variant="secondary"
+                loading={draftMessage.isPending}
+                disabled={!internal.data || !external.data}
+                onClick={() => draftMessage.mutate()}
+                leftIcon={<Sparkles className="h-4 w-4" />}
+                title="AI יוצר טיוטה ושומר אותה על ההצעה"
+              >
+                צור עם AI
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardBody className="space-y-2">
+          <Textarea
+            key={draftSide /* reset controlled value when side flips */}
+            rows={6}
+            defaultValue={activeDraftBody}
+            placeholder="טיוטה תישמר על ההצעה ותופיע בחלון השליחה"
+            onBlur={(e) => {
+              const next = e.target.value;
+              if (next !== activeDraftBody) {
+                saveDraft.mutate({ body: next, source: 'manual' });
+              }
+            }}
+          />
+          <div className="text-[11px] text-ink-faint flex items-center gap-2">
+            {activeDraftMeta?.updatedAt
+              ? <>עודכן {new Date(activeDraftMeta.updatedAt).toLocaleString('he-IL')} · מקור: {activeDraftMeta.source ?? 'manual'}</>
+              : 'אין טיוטה שמורה לצד זה.'}
+            {saveDraft.isPending && <span>· שומר…</span>}
           </div>
         </CardBody>
       </Card>
+
+      {/* Linked conversations per side (populated when a proposal is sent) */}
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-semibold">שיחות מקושרות</h3>
+        </CardHeader>
+        <CardBody className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <LinkedConversation side="a" conversationId={m.conversationIds?.sideA} />
+          <LinkedConversation side="b" conversationId={m.conversationIds?.sideB} />
+        </CardBody>
+      </Card>
+
+      {/* Real timeline from audit-logs */}
+      <EntityTimeline entityType="match_suggestion" entityId={m._id} title="ציר זמן" />
+
+      {/* Tasks + notes for this match */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <TasksRail related={{ type: 'match_suggestion', id: m._id }} />
+        <NotesRail entityType="match_suggestion" entityId={m._id} />
+      </div>
 
       <ConfirmActionModal
         open={confirm !== null}
@@ -378,9 +505,10 @@ export function MatchDetailPage() {
         title="שליחת הצעת שידוך"
         description="כל שליחה מתבצעת מערוץ match_sending בלבד, נרשמת ביומן הביקורת, ודורשת אישור שלך."
         primaryAction={{
-          label: 'שלח',
+          label: safeMode.outboundEnabled ? 'שלח' : 'שליחה מושבתת (מצב בטיחות)',
           onClick: () => sendProposal.mutate(),
           loading: sendProposal.isPending,
+          disabled: !safeMode.outboundEnabled,
         }}
         secondaryAction={{ label: 'ביטול', onClick: () => setSendOpen(false) }}
       >
@@ -502,12 +630,53 @@ function SendPreviewBlock({
         leftIcon={<Send className="h-4 w-4" />}
         onClick={onSend}
       >
-        התחל שליחה {!preview.canSend && '(חסום)'}
+        התחל שליחה {!preview.canSend && '(חסום)'} {safeMode.outboundEnabled ? '' : '(מצב בטיחות)'}
       </Button>
       <div className="text-[11px] text-ink-faint">
         כל שליחה דורשת אישור אנושי ונכתבת ביומן הביקורת.
       </div>
     </div>
+  );
+}
+
+function LinkedConversation({ side, conversationId }: { side: 'a' | 'b'; conversationId?: string }) {
+  const sideLabel = side === 'a' ? 'צד א (פנימי)' : 'צד ב (חיצוני)';
+  const conv = useQuery({
+    queryKey: ['conversation', conversationId],
+    queryFn: () => conversationsApi.get(conversationId!),
+    enabled: !!conversationId,
+  });
+
+  if (!conversationId) {
+    return (
+      <div className="rounded-md border border-dashed border-border p-3 text-xs text-ink-muted">
+        <div className="font-medium text-ink mb-1">{sideLabel}</div>
+        אין שיחה מקושרת. השיחה תיווצר עם שליחת ההצעה.
+      </div>
+    );
+  }
+
+  const c = conv.data?.data;
+  const participant = c?.participantName ?? 'משתתף';
+
+  return (
+    <Link
+      to={`/chats?conversation=${conversationId}`}
+      className="rounded-md border border-border bg-white p-3 text-sm hover:bg-bg-hover flex items-start gap-2"
+    >
+      <MessageSquare className="h-4 w-4 mt-0.5 text-brand-700" />
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">{sideLabel}</div>
+        <div className="text-xs text-ink-muted truncate">
+          {conv.isLoading ? 'טוען…' : c ? `${participant} · ${c.accountDisplayName}` : 'לא נמצאה שיחה'}
+        </div>
+        {c?.lastMessageAt && (
+          <div className="text-[11px] text-ink-faint mt-0.5">
+            הודעה אחרונה {new Date(c.lastMessageAt).toLocaleString('he-IL')}
+          </div>
+        )}
+      </div>
+    </Link>
   );
 }
 

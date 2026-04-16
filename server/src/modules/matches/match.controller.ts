@@ -12,9 +12,9 @@ import type { SourceMode } from '@shadchanai/shared';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    ensureUser(req.user);
+    const user = ensureUser(req.user);
     const q = getValidatedQuery<ListMatchesQuery>(req);
-    const { items, meta } = await svc.listMatches(q);
+    const { items, meta } = await svc.listMatches(q, user.id);
     ok(res, items, meta);
   } catch (e) { next(e); }
 }
@@ -51,6 +51,28 @@ export async function findForInternalHandler(req: Request, res: Response, next: 
   } catch (e) { next(e); }
 }
 
+export async function findBlockedForInternalHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const mode = ((req.query['mode'] as SourceMode | undefined) ?? 'strict') as SourceMode;
+    const limit = req.query['limit'] ? Number(req.query['limit']) : 50;
+    const items = await svc.findBlockedForInternal(id, mode, limit);
+    ok(res, items);
+  } catch (e) { next(e); }
+}
+
+export async function forceSuggestionHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { internalCandidateId, externalCandidateId, mode, justification } =
+      req.body as { internalCandidateId: string; externalCandidateId: string; mode: SourceMode; justification: string };
+    const doc = await svc.forceCreateSuggestion(internalCandidateId, externalCandidateId, mode, justification, user.id);
+    created(res, doc);
+  } catch (e) { next(e); }
+}
+
 export async function createManualHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = ensureUser(req.user);
@@ -70,7 +92,7 @@ export async function approveHandler(req: Request, res: Response, next: NextFunc
     const user = ensureUser(req.user);
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    ok(res, await svc.approveSuggestion(id, user.id));
+    ok(res, await svc.approveSuggestion(id, user.id, user));
   } catch (e) { next(e); }
 }
 
@@ -80,7 +102,7 @@ export async function declineHandler(req: Request, res: Response, next: NextFunc
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const { side, reason, notes } = req.body as { side: 'a' | 'b'; reason?: string; notes?: string };
-    ok(res, await svc.declineSuggestion(id, side, reason, notes, user.id));
+    ok(res, await svc.declineSuggestion(id, side, reason, notes, user.id, user));
   } catch (e) { next(e); }
 }
 
@@ -90,7 +112,7 @@ export async function deferHandler(req: Request, res: Response, next: NextFuncti
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const { reason } = req.body as { reason: string };
-    ok(res, await svc.deferSuggestion(id, reason, user.id));
+    ok(res, await svc.deferSuggestion(id, reason, user.id, user));
   } catch (e) { next(e); }
 }
 
@@ -99,7 +121,7 @@ export async function reopenDeferredHandler(req: Request, res: Response, next: N
     const user = ensureUser(req.user);
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    ok(res, await svc.reopenFromDeferred(id, user.id));
+    ok(res, await svc.reopenFromDeferred(id, user.id, user));
   } catch (e) { next(e); }
 }
 
@@ -108,7 +130,7 @@ export async function markDatingHandler(req: Request, res: Response, next: NextF
     const user = ensureUser(req.user);
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    ok(res, await svc.markMatchDating(id, user.id));
+    ok(res, await svc.markMatchDating(id, user.id, user));
   } catch (e) { next(e); }
 }
 
@@ -118,7 +140,7 @@ export async function closeHandler(req: Request, res: Response, next: NextFuncti
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const { reason } = req.body as { reason: string };
-    ok(res, await svc.closeSuggestion(id, reason, user.id));
+    ok(res, await svc.closeSuggestion(id, reason, user.id, user));
   } catch (e) { next(e); }
 }
 
@@ -138,6 +160,26 @@ export async function sendPreviewHandler(req: Request, res: Response, next: Next
   } catch (e) { next(e); }
 }
 
+export async function acknowledgeResponseHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { side } = req.body as { side: 'a' | 'b' };
+    ok(res, await svc.acknowledgeResponse(id, side, user.id));
+  } catch (e) { next(e); }
+}
+
+export async function saveDraftHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { side, body, source } = req.body as { side: 'a' | 'b'; body: string; source?: 'ai' | 'manual' };
+    const doc = await svc.saveDraft(id, side, body, user.id, source ?? 'manual', user);
+    ok(res, doc);
+  } catch (e) { next(e); }
+}
+
 export async function sendProposalHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = ensureUser(req.user);
@@ -145,7 +187,7 @@ export async function sendProposalHandler(req: Request, res: Response, next: Nex
     const { id } = getValidatedParams<{ id: string }>(req);
     const { side, channelId, body } = req.body as { side: 'a' | 'b'; channelId: string; body: string };
     const result = await svc.sendProposal(id, {
-      side, channelId, body, performedBy: user.id,
+      side, channelId, body, performedBy: user.id, actor: user,
     });
     ok(res, result);
   } catch (e) { next(e); }

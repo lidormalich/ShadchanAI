@@ -24,6 +24,7 @@ import type {
   RecommendedAction,
   SendStrategy,
   DimensionScore,
+  BlockerReason,
 } from './matching.types.js';
 import { evaluateHardRules } from './matching.rules.js';
 import { scorePair, type ScoreResult } from './matching.score.js';
@@ -50,10 +51,10 @@ export function evaluatePair(
   weights: MatchingWeights = DEFAULT_WEIGHTS,
 ): MatchResult {
   // Step 1: Hard rules
-  const { eligible, blockers } = evaluateHardRules(internal, external, context);
+  const hardRuleResult = evaluateHardRules(internal, external, context);
 
-  if (!eligible) {
-    return makeBlockedResult(internal, external, blockers, context);
+  if (!hardRuleResult.eligible) {
+    return makeBlockedResult(internal, external, hardRuleResult.blockers, context);
   }
 
   // Step 2: Score across 8 dimensions
@@ -95,6 +96,7 @@ export function evaluatePair(
     externalCandidateId: external._id,
     eligible: true,
     hardBlockers: [],
+    blockers: [],
     matchScore,
     rawScore: scoreResult.rawScore,
     confidenceScore,
@@ -520,14 +522,17 @@ function findDimension(
 function makeBlockedResult(
   internal: MatchableInternal,
   external: MatchableExternal,
-  blockers: string[],
+  blockers: BlockerReason[],
   context: MatchingContext,
 ): MatchResult {
   return {
     internalCandidateId: internal._id,
     externalCandidateId: external._id,
     eligible: false,
-    hardBlockers: blockers,
+    // Legacy string form kept so existing UI code that reads
+    // `hardBlockers` keeps functioning without change.
+    hardBlockers: blockers.map((b) => b.message),
+    blockers,
     matchScore: 0,
     rawScore: 0,
     confidenceScore: 0,

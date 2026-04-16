@@ -13,14 +13,27 @@
 // blocker string (fail).
 // ═══════════════════════════════════════════════════════════
 
-import { CandidateStatus, ExternalCandidateStatus, AvailabilityStatus } from '@shadchanai/shared';
-import type { MatchableInternal, MatchableExternal, MatchingContext, HardConstraint } from './matching.types.js';
+import {
+  CandidateStatus,
+  ExternalCandidateStatus,
+  AvailabilityStatus,
+  BlockerCode,
+  BlockerSeverity,
+  BlockerOverridable,
+} from '@shadchanai/shared';
+import type {
+  MatchableInternal,
+  MatchableExternal,
+  MatchingContext,
+  HardConstraint,
+  BlockerReason,
+} from './matching.types.js';
 import { DECLINE_COOLDOWN_DAYS } from './matching.constants.js';
 
 /** Result of running all hard rules against a pair */
 export interface HardRuleResult {
   eligible: boolean;
-  blockers: string[];
+  blockers: BlockerReason[];
 }
 
 /**
@@ -32,7 +45,7 @@ export function evaluateHardRules(
   external: MatchableExternal,
   context: MatchingContext,
 ): HardRuleResult {
-  const blockers: string[] = [];
+  const blockers: BlockerReason[] = [];
 
   for (const rule of HARD_RULES) {
     const result = rule(internal, external, context);
@@ -51,72 +64,128 @@ type HardRule = (
   internal: MatchableInternal,
   external: MatchableExternal,
   context: MatchingContext,
-) => string | null;
+) => BlockerReason | null;
 
-/** Gender must be opposite */
-function genderRule(internal: MatchableInternal, external: MatchableExternal): string | null {
-  if (!external.gender) return null; // missing data → not blocked, but confidence drops
+function block(
+  code: BlockerCode,
+  severity: BlockerSeverity,
+  overridable: BlockerOverridable,
+  message: string,
+  detail?: Record<string, unknown>,
+): BlockerReason {
+  return { code, severity, overridable, message, detail };
+}
+
+/** Gender must be opposite — ethical/biological, never overridable. */
+function genderRule(internal: MatchableInternal, external: MatchableExternal): BlockerReason | null {
+  if (!external.gender) return null;
   if (internal.gender === external.gender) {
-    return `Same gender (${internal.gender})`;
+    return block(
+      BlockerCode.SAME_GENDER,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      `Same gender (${internal.gender})`,
+    );
   }
   return null;
 }
 
-/** Internal candidate must be in a matchable status */
-function internalStatusRule(internal: MatchableInternal): string | null {
+/** Internal candidate must be in a matchable status. Not overridable —
+ *  the candidate themselves has been paused/closed/archived. */
+function internalStatusRule(internal: MatchableInternal): BlockerReason | null {
   const matchable: string[] = [CandidateStatus.ACTIVE];
   if (!matchable.includes(internal.status)) {
-    return `Internal candidate status is '${internal.status}'`;
+    return block(
+      BlockerCode.INTERNAL_NOT_ACTIVE,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      `Internal candidate status is '${internal.status}'`,
+      { status: internal.status },
+    );
   }
   return null;
 }
 
-/** External candidate must be available */
-function externalStatusRule(_i: MatchableInternal, external: MatchableExternal): string | null {
+/** External candidate must be available. Archival / dating are never
+ *  overridable (ethical: they've withdrawn or are dating someone else). */
+function externalStatusRule(_i: MatchableInternal, external: MatchableExternal): BlockerReason | null {
   if (external.status !== ExternalCandidateStatus.ACTIVE) {
-    return `External candidate status is '${external.status}'`;
+    return block(
+      BlockerCode.EXTERNAL_NOT_ACTIVE,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      `External candidate status is '${external.status}'`,
+      { status: external.status },
+    );
   }
   if (external.availabilityStatus === AvailabilityStatus.UNAVAILABLE) {
-    return 'External candidate is marked unavailable';
+    return block(
+      BlockerCode.EXTERNAL_UNAVAILABLE,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      'External candidate is marked unavailable',
+    );
   }
   if (external.availabilityStatus === AvailabilityStatus.DATING) {
-    return 'External candidate is currently dating';
+    return block(
+      BlockerCode.EXTERNAL_DATING,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      'External candidate is currently dating',
+    );
   }
   return null;
 }
 
-/** Internal candidate already dating someone */
-function alreadyDatingRule(internal: MatchableInternal): string | null {
+/** Internal already in a relationship. Ethical lock. */
+function alreadyDatingRule(internal: MatchableInternal): BlockerReason | null {
   if (internal.datingPartnerCandidateId) {
-    return 'Internal candidate is already in an active dating relationship';
+    return block(
+      BlockerCode.INTERNAL_ALREADY_DATING,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      'Internal candidate is already in an active dating relationship',
+    );
   }
   return null;
 }
 
-/** Same pair already has an active suggestion */
+/** Duplicate active suggestion. Overridable with reason (e.g. stale
+ *  state cleanup) but prompts a justification. */
 function activePairRule(
   _i: MatchableInternal,
   external: MatchableExternal,
   context: MatchingContext,
-): string | null {
+): BlockerReason | null {
   if (context.activeMatchExternalIds.has(external._id)) {
-    return 'An active suggestion already exists for this pair';
+    return block(
+      BlockerCode.ACTIVE_PAIR_DUPLICATE,
+      BlockerSeverity.HARD_OVERRIDABLE,
+      BlockerOverridable.WITH_REASON,
+      'An active suggestion already exists for this pair',
+    );
   }
   return null;
 }
 
-/** Same pair was recently declined — cooldown period */
+/** Recent decline cooldown. Overridable when operator has new info. */
 function declineCooldownRule(
   _i: MatchableInternal,
   external: MatchableExternal,
   context: MatchingContext,
-): string | null {
+): BlockerReason | null {
   const declineDate = context.recentDeclines.get(external._id);
   if (!declineDate) return null;
 
   const daysSinceDecline = daysBetween(declineDate, new Date());
   if (daysSinceDecline < DECLINE_COOLDOWN_DAYS) {
-    return `Pair was declined ${daysSinceDecline} days ago (cooldown: ${DECLINE_COOLDOWN_DAYS} days)`;
+    return block(
+      BlockerCode.RECENT_DECLINE_COOLDOWN,
+      BlockerSeverity.HARD_OVERRIDABLE,
+      BlockerOverridable.WITH_REASON,
+      `Pair was declined ${daysSinceDecline} days ago (cooldown: ${DECLINE_COOLDOWN_DAYS} days)`,
+      { daysSinceDecline, cooldownDays: DECLINE_COOLDOWN_DAYS },
+    );
   }
   return null;
 }
@@ -134,17 +203,31 @@ function declineCooldownRule(
 function explicitConstraintsRule(
   internal: MatchableInternal,
   external: MatchableExternal,
-): string | null {
-  // Forward direction: internal's constraints vs external's fields
+): BlockerReason | null {
+  // Forward direction: internal's constraints vs external's fields.
+  // Overridable with reason — an operator may know something the form didn't capture.
   for (const constraint of internal.hardConstraints) {
     if (evaluateConstraint(constraint, getSubjectFields(external))) {
-      return `Internal hard constraint violated: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`;
+      return block(
+        BlockerCode.EXPLICIT_HARD_CONSTRAINT,
+        BlockerSeverity.HARD_OVERRIDABLE,
+        BlockerOverridable.WITH_REASON,
+        `Internal hard constraint violated: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`,
+        { side: 'internal', field: constraint.field, operator: constraint.operator, value: constraint.value },
+      );
     }
   }
-  // Reverse direction: external's constraints (if any) vs internal's fields
+  // Reverse direction: external's own stated constraints. These are
+  // the candidate's own filter — NEVER overridable.
   for (const constraint of external.hardConstraints ?? []) {
     if (evaluateConstraint(constraint, getSubjectFields(internal))) {
-      return `External hard constraint violated: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`;
+      return block(
+        BlockerCode.EXPLICIT_HARD_CONSTRAINT,
+        BlockerSeverity.HARD_NON_OVERRIDABLE,
+        BlockerOverridable.NONE,
+        `External hard constraint violated: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`,
+        { side: 'external', field: constraint.field, operator: constraint.operator, value: constraint.value },
+      );
     }
   }
   return null;
@@ -160,14 +243,21 @@ function explicitConstraintsRule(
 function personalStatusCompatibilityRuleReverse(
   internal: MatchableInternal,
   external: MatchableExternal,
-): string | null {
+): BlockerReason | null {
   if (!internal.personalStatus || !external.openness) return null;
 
   const status = internal.personalStatus;
   const isDivorcedOrSeparated = status === 'divorced' || status === 'separated';
 
   if (isDivorcedOrSeparated && external.openness.openToDivorced === false) {
-    return `External candidate explicitly not open to ${status} candidates`;
+    // External stated their own openness — not overridable.
+    return block(
+      BlockerCode.EXTERNAL_NOT_OPEN_TO_STATUS,
+      BlockerSeverity.HARD_NON_OVERRIDABLE,
+      BlockerOverridable.NONE,
+      `External candidate explicitly not open to ${status} candidates`,
+      { status },
+    );
   }
   return null;
 }
@@ -191,7 +281,7 @@ function personalStatusCompatibilityRuleReverse(
 function personalStatusCompatibilityRule(
   internal: MatchableInternal,
   external: MatchableExternal,
-): string | null {
+): BlockerReason | null {
   if (!external.personalStatus) return null;
 
   const status = external.personalStatus;
@@ -199,23 +289,38 @@ function personalStatusCompatibilityRule(
   const isWidowed = status === 'widowed';
   const isSecondChapter = isDivorcedOrSeparated || isWidowed;
 
-  // ── Divorced / separated: standard openness check ───────
+  // ── Divorced / separated: internal-side openness ──────
+  // Overridable with reason — reflects the internal's stated preference
+  // which may have evolved since onboarding.
   if (isDivorcedOrSeparated && !internal.openness.openToDivorced) {
-    return `Internal candidate not open to ${status} candidates`;
+    return block(
+      BlockerCode.PERSONAL_STATUS_DIVORCED,
+      BlockerSeverity.HARD_OVERRIDABLE,
+      BlockerOverridable.WITH_REASON,
+      `Internal candidate not open to ${status} candidates`,
+      { status },
+    );
   }
 
-  // ── Widowed: more lenient, block only on explicit constraint ──
+  // ── Widowed + explicit internal constraint ────────────
   if (isWidowed && hasExplicitStatusBlocker(internal, 'widowed')) {
-    return 'Internal candidate has explicit hard constraint against widowed candidates';
+    return block(
+      BlockerCode.PERSONAL_STATUS_WIDOWED,
+      BlockerSeverity.HARD_OVERRIDABLE,
+      BlockerOverridable.WITH_REASON,
+      'Internal candidate has explicit hard constraint against widowed candidates',
+    );
   }
 
   // ── Children-related explicit blocker ──────────────────
-  // Second-chapter candidates commonly have children. If the internal
-  // has an explicit hard constraint against candidates with children,
-  // block the suggestion. Inference alone (without explicit constraint)
-  // is NOT a hard block — it becomes a soft score / attention point.
   if (isSecondChapter && !internal.openness.openToWithChildren && hasExplicitChildrenBlocker(internal)) {
-    return `Internal candidate explicitly not open to candidates with children (${status} profile flagged)`;
+    return block(
+      BlockerCode.CHILDREN_CONSTRAINT,
+      BlockerSeverity.HARD_OVERRIDABLE,
+      BlockerOverridable.WITH_REASON,
+      `Internal candidate explicitly not open to candidates with children (${status} profile flagged)`,
+      { externalStatus: status },
+    );
   }
 
   return null;

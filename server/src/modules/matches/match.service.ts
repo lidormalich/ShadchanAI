@@ -28,6 +28,12 @@ import {
 import { audit } from '../../services/audit.service.js';
 import { BusinessRuleError, NotFoundError, ConflictError } from '../../utils/errors.js';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
+import { applyOwnershipFilter } from '../../utils/ownership.js';
+import { assertOwnership } from '../../utils/ownership.assert.js';
+import type { AuthUser } from '../../middleware/auth.middleware.js';
+import { publishRealtimeEvent } from '../../services/realtime/realtime.service.js';
+import { recordAlreadySending, recordSendBlockedSafeMode } from '../../services/monitoring/metrics.service.js';
+import { getSafeModeStatus } from '../../services/safe-mode/safe-mode.service.js';
 import { evaluatePair as engineEvaluatePair } from '../../services/matching/matching.engine.js';
 import { computeReadiness } from '../candidates/internal-candidate.service.js';
 import type {
@@ -42,6 +48,7 @@ import type { ListMatchesQuery } from './match.validator.js';
 
 export async function listMatches(
   query: ListMatchesQuery,
+  currentUserId?: string,
 ): Promise<{ items: IMatchSuggestion[]; total: number; meta: ReturnType<typeof makeMeta> }> {
   const { skip, limit } = toSkipLimit(query);
   const sort = buildSort(query, 'matchScore');
@@ -53,6 +60,7 @@ export async function listMatches(
   if (query.externalCandidateId) filter['externalCandidateId'] = new Types.ObjectId(query.externalCandidateId);
   if (query.isDeferred !== undefined) filter['isDeferred'] = query.isDeferred;
   if (query.minScore !== undefined) filter['matchScore'] = { $gte: query.minScore };
+  applyOwnershipFilter(filter, 'ownerUserId', query.ownership, currentUserId);
 
   const [items, total] = await Promise.all([
     MatchSuggestion.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
@@ -131,10 +139,12 @@ export async function createManualSuggestion(
     riskLevel: result.riskLevel,
     scoreBreakdown: result.scoreBreakdown,
     hardBlockers: result.hardBlockers,
+    blockers: result.blockers,
     strengths: result.strengths,
     attentionPoints: result.attentionPoints,
     overrideReasons: result.overrideReasons,
     flexibilityOverrideApplied: result.flexibilityOverrideApplied,
+    forcedOverride: false,
     recommendedAction: result.recommendedAction,
     sendStrategy: result.sendStrategy,
     sourceMode: mode,
@@ -155,10 +165,98 @@ export async function createManualSuggestion(
   return doc;
 }
 
+// ── Force-create suggestion (override overridable blockers) ──
+//
+// Creates a suggestion for a pair the engine flagged ineligible.
+// Safety: rejects if ANY blocker is overridable=NONE. The operator
+// must supply a justification; the created row is tagged
+// forcedOverride=true with blockers retained for audit.
+export async function forceCreateSuggestion(
+  internalId: string,
+  externalId: string,
+  mode: SourceMode,
+  justification: string,
+  performedBy: string,
+): Promise<IMatchSuggestion> {
+  const result = await evaluatePair(internalId, externalId, mode);
+
+  // If the pair is already eligible, fall back to a regular manual
+  // create — no "force" needed.
+  if (result.eligible) {
+    return createManualSuggestion(internalId, externalId, mode, performedBy);
+  }
+
+  const nonOverridable = result.blockers.filter((b) => b.overridable === 'none');
+  if (nonOverridable.length > 0) {
+    throw new BusinessRuleError(
+      'Pair contains non-overridable blockers: ' + nonOverridable.map((b) => b.message).join('; '),
+      { code: 'non_overridable_blocker', blockers: nonOverridable },
+    );
+  }
+
+  // Duplicate guard still applies.
+  const existing = await MatchSuggestion.findOne({
+    internalCandidateId: new Types.ObjectId(internalId),
+    externalCandidateId: new Types.ObjectId(externalId),
+    status: { $nin: ['closed', 'expired'] },
+  }).exec();
+  if (existing) throw new ConflictError('An active suggestion already exists for this pair');
+
+  const overrideReasons = [
+    `forced: ${justification}`,
+    ...result.blockers.map((b) => `blocker: ${b.code} — ${b.message}`),
+  ];
+
+  const doc = await MatchSuggestion.create({
+    internalCandidateId: new Types.ObjectId(internalId),
+    externalCandidateId: new Types.ObjectId(externalId),
+    // Persist as eligible so downstream lifecycle (approve/send) works;
+    // the forcedOverride flag + retained blockers preserve the truth.
+    eligible: true,
+    status: MatchSuggestionStatus.DRAFT,
+    matchScore: result.matchScore,
+    confidenceScore: result.confidenceScore,
+    matchType: result.matchType,
+    riskLevel: result.riskLevel,
+    scoreBreakdown: result.scoreBreakdown,
+    hardBlockers: result.hardBlockers,
+    blockers: result.blockers,
+    strengths: result.strengths,
+    attentionPoints: result.attentionPoints,
+    overrideReasons,
+    flexibilityOverrideApplied: true,
+    forcedOverride: true,
+    recommendedAction: result.recommendedAction,
+    sendStrategy: result.sendStrategy,
+    sourceMode: mode,
+    penalties: result.penalties,
+    semanticSimilarityScore: result.semanticSimilarityScore,
+    ownerUserId: new Types.ObjectId(performedBy),
+  });
+
+  await audit({
+    entityType: AuditEntityType.MATCH_SUGGESTION,
+    entityId: String(doc._id),
+    actionType: AuditActionType.MATCH_FORCED,
+    performedBy,
+    after: doc.toObject(),
+    metadata: {
+      source: 'force_suggestion',
+      mode,
+      justification,
+      blockers: result.blockers,
+    },
+  });
+
+  publishMatchUpdate(doc, 'forced');
+  return doc;
+}
+
 // ── Lifecycle transitions ────────────────────────────────
 
-export async function approveSuggestion(id: string, performedBy: string): Promise<IMatchSuggestion> {
+export async function approveSuggestion(id: string, performedBy: string, actor?: AuthUser): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   if (doc.status !== MatchSuggestionStatus.DRAFT && doc.status !== MatchSuggestionStatus.PENDING_APPROVAL) {
     throw new BusinessRuleError(`Cannot approve from status: ${doc.status}`);
   }
@@ -177,6 +275,7 @@ export async function approveSuggestion(id: string, performedBy: string): Promis
     after: doc.toObject(),
   });
 
+  publishMatchUpdate(doc, 'approved');
   return doc;
 }
 
@@ -186,8 +285,10 @@ export async function declineSuggestion(
   reason: string | undefined,
   notes: string | undefined,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   const before = doc.toObject();
 
   const sideResponse = { status: 'declined', respondedAt: new Date(), declineReason: reason, notes };
@@ -210,6 +311,7 @@ export async function declineSuggestion(
     metadata: { side, reason },
   });
 
+  publishMatchUpdate(doc, 'declined');
   return doc;
 }
 
@@ -217,8 +319,10 @@ export async function deferSuggestion(
   id: string,
   reason: string,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   if (doc.status === MatchSuggestionStatus.CLOSED || doc.status === MatchSuggestionStatus.EXPIRED) {
     throw new BusinessRuleError('Cannot defer a closed/expired suggestion');
   }
@@ -239,11 +343,13 @@ export async function deferSuggestion(
     metadata: { transition: 'defer', reason },
   });
 
+  publishMatchUpdate(doc, 'deferred');
   return doc;
 }
 
-export async function reopenFromDeferred(id: string, performedBy: string): Promise<IMatchSuggestion> {
+export async function reopenFromDeferred(id: string, performedBy: string, actor?: AuthUser): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   if (!doc.isDeferred) throw new BusinessRuleError('Suggestion is not deferred');
 
   const before = doc.toObject();
@@ -265,8 +371,9 @@ export async function reopenFromDeferred(id: string, performedBy: string): Promi
   return doc;
 }
 
-export async function markMatchDating(id: string, performedBy: string): Promise<IMatchSuggestion> {
+export async function markMatchDating(id: string, performedBy: string, actor?: AuthUser): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   const before = doc.toObject();
   doc.status = MatchSuggestionStatus.DATING;
   doc.datingStartedAt = new Date();
@@ -289,8 +396,10 @@ export async function closeSuggestion(
   id: string,
   reason: string,
   performedBy: string,
+  actor?: AuthUser,
 ): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   const before = doc.toObject();
   doc.status = MatchSuggestionStatus.CLOSED;
   doc.closedAt = new Date();
@@ -307,6 +416,62 @@ export async function closeSuggestion(
     metadata: { transition: 'close', reason },
   });
 
+  publishMatchUpdate(doc, 'closed');
+  return doc;
+}
+
+// ── Acknowledge a side's response ────────────────────────
+//
+// Sets sideX.acknowledgedAt so the dashboard "new_response" row
+// for that side stops appearing. Idempotent: calling it twice
+// after the same respondedAt is a no-op.
+export async function acknowledgeResponse(
+  id: string,
+  side: 'a' | 'b',
+  performedBy: string,
+): Promise<IMatchSuggestion> {
+  const doc = await getMatchById(id);
+  const response = side === 'a' ? doc.sideAResponse : doc.sideBResponse;
+  if (!response?.respondedAt) return doc; // nothing to acknowledge
+  if (response.acknowledgedAt && response.acknowledgedAt >= response.respondedAt) return doc;
+
+  if (side === 'a') {
+    doc.sideAResponse.acknowledgedAt = new Date();
+    doc.sideAResponse.acknowledgedBy = new Types.ObjectId(performedBy);
+  } else {
+    doc.sideBResponse.acknowledgedAt = new Date();
+    doc.sideBResponse.acknowledgedBy = new Types.ObjectId(performedBy);
+  }
+  doc.markModified(side === 'a' ? 'sideAResponse' : 'sideBResponse');
+  await doc.save();
+  publishMatchUpdate(doc, 'response_acknowledged', { side });
+  return doc;
+}
+
+// ── Proposal drafts (persisted scratch space) ────────────
+
+export async function saveDraft(
+  id: string,
+  side: 'a' | 'b',
+  body: string,
+  performedBy: string,
+  source: 'ai' | 'manual' = 'manual',
+  actor?: AuthUser,
+): Promise<IMatchSuggestion> {
+  const doc = await getMatchById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
+  const entry = {
+    body,
+    updatedAt: new Date(),
+    updatedBy: new Types.ObjectId(performedBy),
+    source,
+  };
+  doc.drafts = doc.drafts ?? {};
+  if (side === 'a') doc.drafts.sideA = entry;
+  else doc.drafts.sideB = entry;
+  // Mongoose needs a hint that a nested mixed subdoc changed
+  doc.markModified('drafts');
+  await doc.save();
   return doc;
 }
 
@@ -559,6 +724,157 @@ export async function findMatchesForInternal(
   return results.slice(0, limit);
 }
 
+// ── Find blocked pairs for an internal candidate ─────────
+//
+// Counterpart to findMatchesForInternal: returns pairs the engine
+// rejected, with full BlockerReason metadata. The UI uses this
+// to render the "blocked candidates" section alongside suggestions.
+export interface BlockedMatchItem {
+  externalCandidateId: string;
+  firstName?: string | undefined;
+  lastName?: string | undefined;
+  city?: string | undefined;
+  age?: number | undefined;
+  sectorGroup?: string | undefined;
+  blockers: Array<{
+    code: string;
+    severity: string;
+    overridable: string;
+    message: string;
+    detail?: Record<string, unknown>;
+  }>;
+  // Aggregate classification for the whole pair:
+  //   'none'        → at least one blocker is non-overridable (force rejected)
+  //   'with_reason' → every blocker is overridable with justification
+  aggregateOverridable: 'none' | 'with_reason';
+}
+
+export async function findBlockedForInternal(
+  internalId: string,
+  mode: SourceMode,
+  limit = 50,
+): Promise<BlockedMatchItem[]> {
+  const internal = await InternalCandidate.findById(internalId).lean().exec();
+  if (!internal) throw new NotFoundError('InternalCandidate', internalId);
+
+  const oppositeGender = (internal as { gender?: string }).gender === 'male' ? 'female' : 'male';
+
+  // Same pool the eligible-find uses: active externals of opposite
+  // gender. Broadening would pollute the list with same-gender pairs
+  // (non-overridable blocker).
+  const externals = await ExternalCandidate.find({
+    gender: oppositeGender,
+    status: 'active',
+    availabilityStatus: { $in: ['available', 'unknown'] },
+  }).lean().exec();
+
+  const ctx = await buildEngineContext(internalId, mode);
+  const matchable = toMatchableInternal(internal);
+
+  const results: BlockedMatchItem[] = [];
+  for (const ext of externals) {
+    const r = engineEvaluatePair(matchable, toMatchableExternal(ext), ctx);
+    if (r.eligible) continue;
+    const anyNonOverridable = r.blockers.some((b) => b.overridable === 'none');
+    results.push({
+      externalCandidateId: String(ext._id),
+      firstName: ext['firstName'] as string | undefined,
+      lastName: ext['lastName'] as string | undefined,
+      city: ext['city'] as string | undefined,
+      age: ext['age'] as number | undefined,
+      sectorGroup: ext['sectorGroup'] as string | undefined,
+      blockers: r.blockers,
+      aggregateOverridable: anyNonOverridable ? 'none' : 'with_reason',
+    });
+    if (results.length >= limit) break;
+  }
+  return results;
+}
+
+// ── Apply inbound response (auto-detection on match_sending) ──
+//
+// Called by the WhatsApp message handler when an inbound message
+// arrives on a conversation linked to a match. Updates the relevant
+// sideXResponse and transitions the match state, preserving the
+// acknowledgedAt field so the operator still has to actively see
+// the response on the dashboard.
+export async function applyInboundResponse(
+  matchId: string,
+  side: 'a' | 'b',
+  status: 'accepted' | 'declined' | 'considering',
+  metadata: {
+    messageId: string;
+    classifier: 'regex' | 'ai' | 'manual';
+    classifierConfidence: number;
+    rawText?: string;
+  },
+): Promise<IMatchSuggestion> {
+  const doc = await getMatchById(matchId);
+  const before = doc.toObject();
+  const now = new Date();
+
+  if (side === 'a') {
+    doc.sideAResponse = {
+      ...(doc.sideAResponse ?? { status: 'pending' }),
+      status,
+      respondedAt: now,
+    } as IMatchSuggestion['sideAResponse'];
+  } else {
+    doc.sideBResponse = {
+      ...(doc.sideBResponse ?? { status: 'pending' }),
+      status,
+      respondedAt: now,
+    } as IMatchSuggestion['sideBResponse'];
+  }
+  doc.markModified(side === 'a' ? 'sideAResponse' : 'sideBResponse');
+
+  // Status-machine advance. Only applied when decisive.
+  const aStatus = side === 'a' ? status : doc.sideAResponse?.status;
+  const bStatus = side === 'b' ? status : doc.sideBResponse?.status;
+  if (status === 'declined') {
+    doc.status = side === 'a'
+      ? MatchSuggestionStatus.DECLINED_SIDE_A
+      : MatchSuggestionStatus.DECLINED_SIDE_B;
+  } else if (status === 'accepted') {
+    if (aStatus === 'accepted' && bStatus === 'accepted') {
+      doc.status = MatchSuggestionStatus.ACCEPTED_BOTH;
+    } else {
+      doc.status = side === 'a'
+        ? MatchSuggestionStatus.ACCEPTED_SIDE_A
+        : MatchSuggestionStatus.ACCEPTED_SIDE_B;
+    }
+  }
+  // 'considering' leaves the match state machine untouched.
+
+  await doc.save();
+
+  await audit({
+    entityType: AuditEntityType.MATCH_SUGGESTION,
+    entityId: matchId,
+    actionType: AuditActionType.RESPONSE_DETECTED,
+    // Auto-detection has no user context; use the match's owner
+    // so the audit row still has a valid ObjectId (required field).
+    performedBy: String(doc.ownerUserId),
+    before,
+    after: doc.toObject(),
+    metadata: {
+      side,
+      status,
+      classifier: metadata.classifier,
+      classifierConfidence: metadata.classifierConfidence,
+      messageId: metadata.messageId,
+      ...(metadata.rawText ? { rawTextPreview: metadata.rawText.slice(0, 200) } : {}),
+    },
+  });
+
+  publishMatchUpdate(doc, 'response_detected', {
+    side,
+    status,
+    classifier: metadata.classifier,
+  });
+  return doc;
+}
+
 // ═══════════════════════════════════════════════════════════
 // Outbound proposal sending (human-approved)
 //
@@ -589,7 +905,12 @@ export interface SendProposalInput {
   channelId: string;
   body: string;
   performedBy: string;
+  actor?: AuthUser;
 }
+
+// A send-in-flight claim older than this is considered stale and
+// can be taken over (prior request presumably crashed or timed out).
+const SEND_LOCK_STALE_MS = 30_000;
 
 export interface SendProposalResult {
   messageId: string;
@@ -602,6 +923,38 @@ export async function sendProposal(
   matchId: string,
   input: SendProposalInput,
 ): Promise<SendProposalResult> {
+  // ── PRE-PILOT SAFE MODE GATE ─────────────────────────
+  // Runs FIRST, before any state mutation, claim, or audit
+  // that would suggest a real send happened. If outbound is
+  // disabled we write a non-destructive audit row so the
+  // attempt is visible in monitoring/events, then throw.
+  const safeMode = await getSafeModeStatus();
+  if (!safeMode.outboundEnabled) {
+    recordSendBlockedSafeMode({ matchId, side: input.side, performedBy: input.performedBy });
+    await audit({
+      entityType: AuditEntityType.MATCH_SUGGESTION,
+      entityId: matchId,
+      actionType: AuditActionType.SEND_BLOCKED_SAFE_MODE,
+      performedBy: input.performedBy,
+      metadata: {
+        side: input.side,
+        channelId: input.channelId,
+        reason: safeMode.reason,
+        envEnabled: safeMode.envEnabled,
+        settingEnabled: safeMode.settingEnabled,
+      },
+    });
+    throw new BusinessRuleError(
+      'Safe mode active — outbound WhatsApp sending is disabled. No message was sent and the match status was NOT advanced.',
+      {
+        code: 'safe_mode_outbound_disabled',
+        envEnabled: safeMode.envEnabled,
+        settingEnabled: safeMode.settingEnabled,
+        reason: safeMode.reason,
+      },
+    );
+  }
+
   const preview = await previewSendReadiness(matchId);
   if (!preview.canSend) {
     throw new BusinessRuleError(
@@ -611,12 +964,42 @@ export async function sendProposal(
   }
 
   const match = await getMatchById(matchId);
+  if (input.actor) assertOwnership(match.ownerUserId, input.actor, { entity: 'match suggestion' });
 
   if (input.side === 'a' && match.sentSideAAt) {
     throw new BusinessRuleError('Side A has already received this proposal', { code: 'already_sent_side_a' });
   }
   if (input.side === 'b' && match.sentSideBAt) {
     throw new BusinessRuleError('Side B has already received this proposal', { code: 'already_sent_side_b' });
+  }
+
+  // Atomic claim: prevent double-sends from concurrent requests.
+  // This replaces the non-atomic check above as the CANONICAL gate.
+  // findOneAndUpdate returns null when another request has already
+  // claimed the slot; we surface that as a 422 with a specific code
+  // so the UI knows to refetch the match, not to retry blindly.
+  const sentField = input.side === 'a' ? 'sentSideAAt' : 'sentSideBAt';
+  const inFlightField = input.side === 'a' ? 'sendInFlightSideA' : 'sendInFlightSideB';
+  const staleCutoff = new Date(Date.now() - SEND_LOCK_STALE_MS);
+  const claim = await MatchSuggestion.findOneAndUpdate(
+    {
+      _id: match._id,
+      [sentField]: { $exists: false },
+      $or: [
+        { [inFlightField]: { $exists: false } },
+        { [inFlightField]: null },
+        { [inFlightField]: { $lte: staleCutoff } },
+      ],
+    },
+    { $set: { [inFlightField]: new Date() } },
+    { new: true },
+  ).exec();
+  if (!claim) {
+    recordAlreadySending({ matchId, side: input.side, performedBy: input.performedBy });
+    throw new BusinessRuleError(
+      `Side ${input.side.toUpperCase()} is already being sent or has been sent`,
+      { code: `already_sending_side_${input.side}` },
+    );
   }
 
   const channel = await ChannelModel.findOne({ channelId: input.channelId }).exec();
@@ -644,11 +1027,35 @@ export async function sendProposal(
     .sort({ lastMessageAt: -1 })
     .exec();
   if (!conversation || !conversation.participantPhone) {
+    // Release the claim so a future retry with a valid conversation
+    // isn't blocked by our own stale in-flight lock.
+    await MatchSuggestion.updateOne({ _id: match._id }, { $unset: { [inFlightField]: 1 } }).exec();
     throw new BusinessRuleError(
       'No reachable conversation on channel ' + channel.channelId + ' for side ' + input.side.toUpperCase(),
       { code: 'no_conversation_for_side' },
     );
   }
+
+  // Pre-link BOTH directions BEFORE sending so a very fast recipient
+  // reply (arriving between our send and its post-save update)
+  // already finds the linkage and gets classified correctly.
+  //   - conversation.matchSuggestionId  (so response auto-detection hits)
+  //   - match.conversationIds[side]     (so side resolution works)
+  // Both are safe on send failure because they only describe bindings,
+  // not lifecycle state.
+  if (!conversation.matchSuggestionId) {
+    await ConversationModel.updateOne(
+      { _id: conversation._id, matchSuggestionId: { $exists: false } },
+      { $set: { matchSuggestionId: match._id } },
+    ).exec();
+  }
+  const conversationIdsField = input.side === 'a'
+    ? 'conversationIds.sideA'
+    : 'conversationIds.sideB';
+  await MatchSuggestion.updateOne(
+    { _id: match._id, [conversationIdsField]: { $exists: false } },
+    { $set: { [conversationIdsField]: conversation._id } },
+  ).exec();
 
   const jid = phoneToJid(conversation.participantPhone);
 
@@ -706,6 +1113,8 @@ export async function sendProposal(
         error: (sendErr as Error).message,
       },
     });
+    // Release the in-flight claim so the operator can retry.
+    await MatchSuggestion.updateOne({ _id: match._id }, { $unset: { [inFlightField]: 1 } }).exec();
     throw new BusinessRuleError(
       'Send failed: ' + (sendErr as Error).message,
       { code: 'send_failed' },
@@ -732,7 +1141,8 @@ export async function sendProposal(
     { $set: { lastMessageAt: saved.createdAt, lastOutboundAt: saved.sentAt } },
   ).exec();
 
-  // Advance the match state machine
+  // Advance the match state machine and record the linked conversation
+  // so match ↔ conversation navigation works from either direction.
   const before = match.toObject();
   const now = new Date();
   if (input.side === 'a') {
@@ -742,7 +1152,22 @@ export async function sendProposal(
     match.sentSideBAt = now;
     match.status = match.sentSideAAt ? MatchSuggestionStatus.SENT_BOTH : MatchSuggestionStatus.SENT_SIDE_B;
   }
+  match.conversationIds = match.conversationIds ?? {};
+  if (input.side === 'a') match.conversationIds.sideA = conversation._id as Types.ObjectId;
+  else match.conversationIds.sideB = conversation._id as Types.ObjectId;
+  match.markModified('conversationIds');
+  // Clear the in-flight claim as part of the same save.
+  if (input.side === 'a') match.sendInFlightSideA = undefined;
+  else match.sendInFlightSideB = undefined;
   await match.save();
+
+  // Back-link the conversation to the match if not already linked.
+  if (!conversation.matchSuggestionId) {
+    await ConversationModel.updateOne(
+      { _id: conversation._id },
+      { $set: { matchSuggestionId: match._id } },
+    ).exec();
+  }
 
   await audit({
     entityType: AuditEntityType.MATCH_SUGGESTION,
@@ -768,10 +1193,23 @@ export async function sendProposal(
     },
   });
 
+  publishMatchUpdate(match, 'sent', { side: input.side, conversationId: String(conversation._id) });
+
   return {
     messageId: String(saved._id),
     externalMessageId,
     conversationId: String(conversation._id),
     matchStatus: match.status,
   };
+}
+
+// Thin wrapper so each transition publishes a uniform realtime event.
+function publishMatchUpdate(doc: IMatchSuggestion, transition: string, extra?: Record<string, unknown>): void {
+  publishRealtimeEvent('match.updated', {
+    matchId: String(doc._id),
+    status: doc.status,
+    isDeferred: doc.isDeferred,
+    transition,
+    ...extra,
+  });
 }

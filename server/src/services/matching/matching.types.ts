@@ -25,7 +25,21 @@ import type {
   ScoringDimension,
   AgeConfidence,
   ShareCardPhotoMode,
+  BlockerCode,
+  BlockerSeverity,
+  BlockerOverridable,
 } from '@shadchanai/shared';
+
+// ── Structured blocker reason ─────────────────────────────
+// Emitted by matching.rules; consumed by the engine, API layer,
+// and force-match validation path.
+export interface BlockerReason {
+  code: BlockerCode;
+  severity: BlockerSeverity;
+  overridable: BlockerOverridable;
+  message: string;
+  detail?: Record<string, unknown>;
+}
 
 // ── Engine Input: Internal Candidate (relevant subset) ────
 
@@ -232,7 +246,12 @@ export interface MatchResult {
   externalCandidateId: string;
 
   eligible: boolean;
+  // Legacy free-text list, retained so existing consumers (match doc
+  // strengths/attention rendering, error messages) keep working.
   hardBlockers: string[];
+  // Structured blocker details. Every entry in hardBlockers has a
+  // corresponding entry here with code + severity + overridable.
+  blockers: BlockerReason[];
 
   matchScore: number;         // 0-100 after penalties
   rawScore: number;           // 0-100 before penalties

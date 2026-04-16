@@ -114,6 +114,20 @@ vi.mock('../../models/index.js', () => {
     })),
     countDocuments: vi.fn(() => ({ exec: async () => 0 })),
     updateOne: vi.fn(() => ({ exec: async () => ({ matchedCount: 0 }) })),
+    // Mock the atomic send-claim lock. When the filter asks for a
+    // not-yet-sent side, accept the claim and return the live match.
+    findOneAndUpdate: vi.fn((filter: Record<string, unknown>) => ({
+      exec: async () => {
+        const idStr = String((filter['_id'] as { toString: () => string } | undefined)?.toString?.() ?? '');
+        const m = store.matches.find((x) => String(x._id) === idStr);
+        if (!m) return null;
+        // If the filter requires sentSideXAt to not exist and the
+        // match has already been sent, reject the claim.
+        if ((filter['sentSideAAt'] as { $exists?: boolean } | undefined)?.$exists === false && m.sentSideAAt) return null;
+        if ((filter['sentSideBAt'] as { $exists?: boolean } | undefined)?.$exists === false && m.sentSideBAt) return null;
+        return m;
+      },
+    })),
   };
 
   const Channel = {

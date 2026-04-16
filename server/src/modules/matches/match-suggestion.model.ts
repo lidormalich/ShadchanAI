@@ -48,6 +48,48 @@ const sideResponseSchema = new Schema(
     respondedAt: { type: Date },
     declineReason: { type: String },
     notes: { type: String },
+    // Set when the operator has seen/handled this response. The
+    // dashboard "new_response" row dismisses once acknowledgedAt
+    // is >= respondedAt. Never implicitly cleared.
+    acknowledgedAt: { type: Date },
+    acknowledgedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  },
+  { _id: false },
+);
+
+const messageDraftSchema = new Schema(
+  {
+    body: { type: String, default: '' },
+    updatedAt: { type: Date },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    source: { type: String, enum: ['ai', 'manual'], default: 'manual' },
+  },
+  { _id: false },
+);
+
+const draftsSchema = new Schema(
+  {
+    sideA: { type: messageDraftSchema },
+    sideB: { type: messageDraftSchema },
+  },
+  { _id: false },
+);
+
+const conversationIdsSchema = new Schema(
+  {
+    sideA: { type: Schema.Types.ObjectId, ref: 'Conversation' },
+    sideB: { type: Schema.Types.ObjectId, ref: 'Conversation' },
+  },
+  { _id: false },
+);
+
+const blockerReasonSchema = new Schema(
+  {
+    code: { type: String, required: true },
+    severity: { type: String, required: true },
+    overridable: { type: String, required: true },
+    message: { type: String, required: true },
+    detail: { type: Schema.Types.Mixed },
   },
   { _id: false },
 );
@@ -101,6 +143,18 @@ export interface IMatchSuggestion extends Document {
   // override
   overrideReasons: string[];
   flexibilityOverrideApplied: boolean;
+  // Structured blocker reasons retained on the suggestion so the UI
+  // can explain a forced match. Only populated when the operator
+  // forced a pair past overridable blockers via the force endpoint.
+  blockers: Array<{
+    code: string;
+    severity: string;
+    overridable: string;
+    message: string;
+    detail?: Record<string, unknown>;
+  }>;
+  // True when this suggestion was created via the force endpoint.
+  forcedOverride: boolean;
 
   // strategy
   recommendedAction: RecommendedAction;
@@ -127,6 +181,12 @@ export interface IMatchSuggestion extends Document {
   // send tracking
   sentSideAAt?: Date;
   sentSideBAt?: Date;
+  // In-flight claim locks (Phase 7). Prevent two concurrent
+  // sendProposal calls from both racing past the "not sent yet"
+  // gate and both hitting Baileys. Cleared on success/failure;
+  // TTL-like via LOCK_STALE_MS in the service.
+  sendInFlightSideA?: Date;
+  sendInFlightSideB?: Date;
 
   // side responses
   sideAResponse: {
@@ -134,12 +194,16 @@ export interface IMatchSuggestion extends Document {
     respondedAt?: Date;
     declineReason?: string;
     notes?: string;
+    acknowledgedAt?: Date;
+    acknowledgedBy?: Types.ObjectId;
   };
   sideBResponse: {
     status: string;
     respondedAt?: Date;
     declineReason?: string;
     notes?: string;
+    acknowledgedAt?: Date;
+    acknowledgedBy?: Types.ObjectId;
   };
 
   // deferred queue
@@ -154,6 +218,20 @@ export interface IMatchSuggestion extends Document {
   // closure
   closedAt?: Date;
   closeReason?: string;
+
+  // Proposal message drafts — persisted per side so AI-generated
+  // text survives navigation and prefills the send modal.
+  drafts?: {
+    sideA?: { body: string; updatedAt?: Date; updatedBy?: Types.ObjectId; source?: 'ai' | 'manual' };
+    sideB?: { body: string; updatedAt?: Date; updatedBy?: Types.ObjectId; source?: 'ai' | 'manual' };
+  };
+
+  // Resolved conversations per side — populated the first time a
+  // proposal is sent so the UI can navigate match ↔ conversation.
+  conversationIds?: {
+    sideA?: Types.ObjectId;
+    sideB?: Types.ObjectId;
+  };
 
   // AI explanation (advisory — generated after engine scoring)
   aiExplanation?: {
@@ -224,6 +302,8 @@ const matchSuggestionSchema = new Schema<IMatchSuggestion>(
     // ── Override ──────────────────────────────────────────
     overrideReasons: { type: [String], default: [] },
     flexibilityOverrideApplied: { type: Boolean, default: false },
+    blockers: { type: [blockerReasonSchema], default: [] },
+    forcedOverride: { type: Boolean, default: false },
 
     // ── Strategy ──────────────────────────────────────────
     recommendedAction: {
@@ -263,6 +343,8 @@ const matchSuggestionSchema = new Schema<IMatchSuggestion>(
     // ── Send tracking ─────────────────────────────────────
     sentSideAAt: { type: Date },
     sentSideBAt: { type: Date },
+    sendInFlightSideA: { type: Date },
+    sendInFlightSideB: { type: Date },
 
     // ── Side responses ────────────────────────────────────
     sideAResponse: {
@@ -286,6 +368,12 @@ const matchSuggestionSchema = new Schema<IMatchSuggestion>(
     // ── Closure ───────────────────────────────────────────
     closedAt: { type: Date },
     closeReason: { type: String },
+
+    // ── Proposal drafts (per side) ────────────────────────
+    drafts: { type: draftsSchema },
+
+    // ── Linked conversations (per side) ───────────────────
+    conversationIds: { type: conversationIdsSchema },
 
     // ── AI explanation (advisory) ─────────────────────────
     aiExplanation: { type: aiExplanationSchema },

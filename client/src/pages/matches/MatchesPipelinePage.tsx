@@ -5,6 +5,7 @@ import { Badge, Button, Card, Select } from '@/components/ui/primitives';
 import { EmptyState, LoadingSkeleton } from '@/components/states/states';
 import { MatchCard } from '@/components/domain/MatchCard';
 import { matchesApi } from '@/services/api/matches';
+import { OwnershipFilter } from '@/features/ownership/OwnershipFilter';
 import type { MatchSuggestion } from '@/types/domain';
 
 interface Stage {
@@ -26,12 +27,14 @@ const STAGES: Stage[] = [
 export function MatchesPipelinePage() {
   const [matchType, setMatchType] = useState('');
   const [minScore, setMinScore] = useState('');
+  const [ownership, setOwnership] = useState<'mine' | 'team' | 'all'>('all');
 
   const query = useQuery({
-    queryKey: ['matches', { matchType, minScore }],
+    queryKey: ['matches', { matchType, minScore, ownership }],
     queryFn: () => matchesApi.list({
       matchType: matchType || undefined,
       minScore: minScore ? Number(minScore) : undefined,
+      ownership,
       limit: 200,
     }),
   });
@@ -67,6 +70,7 @@ export function MatchesPipelinePage() {
           <option value="60">60+</option>
           <option value="40">40+</option>
         </Select>
+        <OwnershipFilter value={ownership} onChange={setOwnership} />
       </Card>
 
       {query.isLoading ? (
