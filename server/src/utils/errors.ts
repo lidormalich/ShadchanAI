@@ -36,8 +36,8 @@ export class ConflictError extends AppError {
 }
 
 export class ForbiddenError extends AppError {
-  constructor(message = 'forbidden') {
-    super('forbidden', message, 403);
+  constructor(message = 'forbidden', code = 'forbidden', details?: unknown) {
+    super(code, message, 403, details);
   }
 }
 

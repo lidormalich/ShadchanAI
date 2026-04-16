@@ -43,6 +43,9 @@ export type {
 } from '@shadchanai/shared';
 
 // ── Internal Candidate (UI shape) ────────────────────────
+// (Phase 3) ownerUserId present on candidates/matches/tasks once
+// they were created under the new schema. Older rows may lack it
+// and render as "לא שויך" in the UI.
 export interface InternalCandidate {
   _id: string;
   firstName: string;
@@ -93,6 +96,7 @@ export interface InternalCandidate {
   closureNote?: string;
   closedAt?: string;
   archivedAt?: string;
+  ownerUserId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -154,6 +158,7 @@ export interface ExternalCandidate {
   staleReason?: string;
   lastConfirmedAvailableAt?: string;
   archivedAt?: string;
+  ownerUserId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -201,16 +206,46 @@ export interface MatchSuggestion {
   datingStartedAt?: string;
   closedAt?: string;
   closeReason?: string;
-  sideAResponse?: { status: string; respondedAt?: string; declineReason?: string; notes?: string };
-  sideBResponse?: { status: string; respondedAt?: string; declineReason?: string; notes?: string };
+  sideAResponse?: { status: string; respondedAt?: string; declineReason?: string; notes?: string; acknowledgedAt?: string; acknowledgedBy?: string };
+  sideBResponse?: { status: string; respondedAt?: string; declineReason?: string; notes?: string; acknowledgedAt?: string; acknowledgedBy?: string };
   aiExplanation?: {
     text?: string;
     strengths?: string[];
     concerns?: string[];
     generatedAt?: string;
   };
+  drafts?: {
+    sideA?: { body: string; updatedAt?: string; source?: 'ai' | 'manual' };
+    sideB?: { body: string; updatedAt?: string; source?: 'ai' | 'manual' };
+  };
+  conversationIds?: {
+    sideA?: string;
+    sideB?: string;
+  };
+  ownerUserId?: string;
+  blockers?: BlockerReason[];
+  forcedOverride?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BlockerReason {
+  code: string;
+  severity: 'hard_non_overridable' | 'hard_overridable' | 'soft_warning';
+  overridable: 'none' | 'with_reason' | 'auto';
+  message: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface BlockedMatchItem {
+  externalCandidateId: string;
+  firstName?: string;
+  lastName?: string;
+  city?: string;
+  age?: number;
+  sectorGroup?: string;
+  blockers: BlockerReason[];
+  aggregateOverridable: 'none' | 'with_reason';
 }
 
 // ── Conversation / Message ───────────────────────────────
@@ -225,6 +260,11 @@ export interface Conversation {
   externalCandidateId?: string;
   matchSuggestionId?: string;
   purpose: string;
+  // Pre-pilot per-conversation role override. The authoritative
+  // gate the ingestion pipeline reads.
+  assignedRole?: 'profiles_source' | 'match_sending' | 'ignore';
+  assignedRoleAt?: string;
+  assignedRoleBy?: string;
   isActive: boolean;
   needsAction: boolean;
   unreadCount: number;
