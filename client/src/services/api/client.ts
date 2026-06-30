@@ -73,5 +73,6 @@ export const api = {
   get: <T>(p: string, query?: Record<string, unknown>) => apiRequest<T>(p, { method: 'GET', query }),
   post: <T>(p: string, body?: unknown) => apiRequest<T>(p, { method: 'POST', body }),
   patch: <T>(p: string, body?: unknown) => apiRequest<T>(p, { method: 'PATCH', body }),
+  put: <T>(p: string, body?: unknown) => apiRequest<T>(p, { method: 'PUT', body }),
   del: <T>(p: string) => apiRequest<T>(p, { method: 'DELETE' }),
 };

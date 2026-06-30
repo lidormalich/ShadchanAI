@@ -170,6 +170,50 @@ describe('mapInboundMessage', () => {
     const out = mapInboundMessage(baseMessage(), channelNoSession);
     expect(out!.providerSessionId).toBe('ch_test'); // channelId
   });
+
+  // Regression: messages in disappearing/view-once/edited chats arrive wrapped
+  // in an envelope. Without unwrapping, extractContent saw no top-level text
+  // and the message was silently dropped.
+  it('unwraps an ephemeral (disappearing) text message', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        message: { ephemeralMessage: { message: { conversation: 'נעלם' } } } as proto.IMessage,
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.contentType).toBe('text');
+    expect(out!.body).toBe('נעלם');
+  });
+
+  it('unwraps a view-once image message', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        message: {
+          viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', caption: 'pic' } } },
+        } as proto.IMessage,
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.contentType).toBe('image');
+    expect(out!.body).toBe('pic');
+  });
+
+  it('unwraps reply context nested inside an ephemeral envelope', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        message: {
+          ephemeralMessage: {
+            message: { extendedTextMessage: { text: 'reply', contextInfo: { stanzaId: 'wamid.parent' } } },
+          },
+        } as proto.IMessage,
+      }),
+      channel,
+    );
+    expect(out!.body).toBe('reply');
+    expect(out!.replyToExternalId).toBe('wamid.parent');
+  });
 });
 
 // ══════════════════════════════════════════════════════════

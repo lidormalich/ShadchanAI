@@ -130,3 +130,40 @@ export async function readinessHandler(req: Request, res: Response, next: NextFu
     ok(res, details);
   } catch (e) { next(e); }
 }
+
+// ── Compatibility workspace ──────────────────────────────────
+//
+// Returns the full operator board: suitable / weak / blocked /
+// forced / historical buckets, with deterministic explanations and
+// any operator review overlay. Engine is the source of truth — the
+// review layer is non-mutating overlay.
+import { buildBoardForInternal, checkPair } from '../../services/compatibility/compatibility.service.js';
+import type { SourceMode } from '@shadchanai/shared';
+
+export async function compatibilityBoardHandler(
+  req: Request, res: Response, next: NextFunction,
+): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const mode = ((req.query['mode'] as SourceMode | undefined) ?? 'strict') as SourceMode;
+    const limit = req.query['limit'] ? Number(req.query['limit']) : 200;
+    const board = await buildBoardForInternal(id, mode, { externalLimit: limit });
+    ok(res, board);
+  } catch (e) { next(e); }
+}
+
+export async function pairCheckHandler(
+  req: Request, res: Response, next: NextFunction,
+): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { externalCandidateId, mode } = req.body as {
+      externalCandidateId: string;
+      mode?: SourceMode;
+    };
+    const result = await checkPair(id, externalCandidateId, mode ?? 'strict');
+    ok(res, result);
+  } catch (e) { next(e); }
+}

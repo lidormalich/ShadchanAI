@@ -12,6 +12,16 @@ export type { IExternalCandidate } from '../modules/candidates/external-candidat
 export { MatchSuggestion } from '../modules/matches/match-suggestion.model.js';
 export type { IMatchSuggestion } from '../modules/matches/match-suggestion.model.js';
 
+export { PairScore, MatchScanState } from '../modules/matches/pair-score.model.js';
+export type {
+  IPairScore,
+  IMatchScanState,
+  PairScoreBucket,
+  ScoreDirection,
+  ScanStatus,
+  ScanMode,
+} from '../modules/matches/pair-score.model.js';
+
 export { Conversation } from '../modules/conversations/conversation.model.js';
 export type { IConversation } from '../modules/conversations/conversation.model.js';
 
@@ -33,8 +43,25 @@ export type { IAuditLog } from '../modules/audit/audit-log.model.js';
 export { ChatMapping } from '../modules/chat-mappings/chat-mapping.model.js';
 export type { IChatMapping, ChatRole, ChatType } from '../modules/chat-mappings/chat-mapping.model.js';
 
+export { PairReview } from '../modules/pair-reviews/pair-review.model.js';
+export type {
+  IPairReview,
+  IPairReviewHistoryEntry,
+  IPairReviewAIExplanation,
+  PairReviewStatus,
+} from '../modules/pair-reviews/pair-review.model.js';
+
+export { RejectionReason } from '../modules/rejection-reasons/rejection-reason.model.js';
+export type {
+  IRejectionReason,
+  RejectionReasonSource,
+} from '../modules/rejection-reasons/rejection-reason.model.js';
+
 export { AIRequest } from '../modules/ai/ai-request.model.js';
 export type { IAIRequest } from '../modules/ai/ai-request.model.js';
 
 export { User } from '../modules/users/user.model.js';
 export type { IUser, UserRole } from '../modules/users/user.model.js';
+
+export { FailedInboundMessage } from '../modules/conversations/failed-inbound-message.model.js';
+export type { IFailedInboundMessage, FailedInboundStatus } from '../modules/conversations/failed-inbound-message.model.js';

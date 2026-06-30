@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Activity, LogOut, Plug, PlugZap, QrCode, RefreshCcw, Replace, Shield, Unplug, PlayCircle, Link2,
+  Activity, AlertTriangle, KeyRound, LogOut, Plug, PlugZap, QrCode, RefreshCcw, Replace, Shield, Unplug, PlayCircle, Link2, Lock,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { channelsApi } from '@/services/api/channels';
+import { channelsApi, type AdminSessionView } from '@/services/api/channels';
 import {
   Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Spinner,
 } from '@/components/ui/primitives';
@@ -13,7 +13,8 @@ import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/sta
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { useRealtimeEvents } from '@/features/realtime/useRealtimeEvents';
-import { label } from '@/utils/labels';
+import { label, statusTone } from '@/utils/labels';
+import { formatDateTime } from '@/utils/format';
 import type { BaileysChannelStatus, Channel } from '@/types/domain';
 
 // ─────────────────────────────────────────────────────────────
@@ -34,13 +35,6 @@ const STATUS_REASON_MAP: Record<string, string> = {
   reconnect_circuit_open: 'חוגה שבורה — נדרשת התערבות ידנית',
 };
 
-function statusTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' {
-  if (status === 'active') return 'success';
-  if (status === 'rate_limited') return 'warning';
-  if (status === 'disconnected' || status === 'suspended' || status === 'replaced') return 'danger';
-  return 'neutral';
-}
-
 function connectionHealthTone(h: string): 'success' | 'warning' | 'danger' {
   if (h === 'healthy') return 'success';
   if (h === 'degraded') return 'warning';
@@ -57,10 +51,6 @@ function maskPhone(p: string): string {
   if (!p) return '—';
   const digits = p.replace(/\D/g, '');
   return `•••${digits.slice(-4)}`;
-}
-
-function formatDate(s?: string): string {
-  return s ? new Date(s).toLocaleString('he-IL') : '—';
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -111,6 +101,9 @@ export function ChannelsPage() {
         </CardBody>
       </Card>
 
+      {/* Multi-account admin: per-channel session + lock state */}
+      <SessionsAdminPanel />
+
       {/* Channel grid */}
       {list.isError ? (
         <ErrorState description={(list.error as Error).message} onRetry={() => list.refetch()} />
@@ -142,49 +135,29 @@ export function ChannelsPage() {
 
 function ChannelStatusCard({ channel }: { channel: Channel }) {
   const qc = useQueryClient();
-  const [session, setSession] = useState<BaileysChannelStatus | null>(null);
-  const [activeAction, setActiveAction] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<null | 'disconnect' | 'logout' | 'replace' | 'delete'>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [chainOpen, setChainOpen] = useState(false);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['channels'] });
 
-  async function run<T>(key: string, fn: () => Promise<T>, successMsg?: string): Promise<T | undefined> {
-    setActiveAction(key);
-    try {
-      const res = await fn();
-      if (successMsg) toast.success(successMsg);
-      return res;
-    } catch (err) {
-      toast.error('הפעולה נכשלה', (err as Error).message);
-      return undefined;
-    } finally {
-      setActiveAction(null);
-    }
-  }
-
-  const refreshStatus = async () => {
-    const res = await run('status', () => channelsApi.sessionStatus(channel.channelId));
-    if (res) setSession(res.data);
-  };
-
-  useEffect(() => {
-    // Initial fetch
-    refreshStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel.channelId]);
-
-  // Phase 7: while pairing, QR rotates on the Baileys side every
-  // ~20s. Auto-poll status so the UI picks up the fresh QR before
-  // the operator scans an expired one. Stops as soon as the state
-  // transitions away from pending_pairing.
-  useEffect(() => {
-    if (session?.state !== 'pending_pairing') return;
-    const interval = window.setInterval(() => { void refreshStatus(); }, 10_000);
-    return () => window.clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.state, channel.channelId]);
+  // Session status lives in the React Query cache under the same key
+  // the realtime channel.updated handler invalidates, so live
+  // disconnect/reconnect events refresh it without polling.
+  const sessionKey = ['channel', channel.channelId, 'session-status'] as const;
+  const statusQuery = useQuery({
+    queryKey: sessionKey,
+    queryFn: () => channelsApi.sessionStatus(channel.channelId),
+    // Phase 7: while pairing, QR rotates on the Baileys side every
+    // ~20s. Auto-poll status so the UI picks up the fresh QR before
+    // the operator scans an expired one. Stops as soon as the state
+    // transitions away from pending_pairing.
+    refetchInterval: (q) =>
+      q.state.data?.data.state === 'pending_pairing' ? 10_000 : false,
+  });
+  const session = statusQuery.data?.data ?? null;
+  const setSession = (s: BaileysChannelStatus) => qc.setQueryData(sessionKey, { data: s });
+  const refreshStatus = () => { void statusQuery.refetch(); };
 
   const startMut = useMutation({
     mutationFn: () => channelsApi.sessionStart(channel.channelId),
@@ -235,7 +208,7 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
 
   const pending =
     startMut.isPending || reconnectMut.isPending || disconnectMut.isPending ||
-    logoutMut.isPending || replaceMut.isPending || deleteMut.isPending || activeAction !== null;
+    logoutMut.isPending || replaceMut.isPending || deleteMut.isPending || statusQuery.isFetching;
 
   const state: BaileysChannelStatus['state'] = session?.state ?? 'idle';
   const status = channel.status;
@@ -268,7 +241,7 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
 
         <CardBody className="space-y-3 text-sm">
           {/* Info grid */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
             <InfoCell label="תקינות חיבור" value={
               <Badge tone={connectionHealthTone(channel.connectionHealth)}>
                 {label('connectionHealth', channel.connectionHealth)}
@@ -279,9 +252,9 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
                 {label('webhookStatus', channel.webhookStatus)}
               </Badge>
             } />
-            <InfoCell label="חיבור אחרון" value={formatDate(channel.lastConnectedAt)} />
-            <InfoCell label="הודעה אחרונה נכנסת" value={formatDate(channel.lastInboundAt)} />
-            <InfoCell label="הודעה אחרונה יוצאת" value={formatDate(channel.lastOutboundAt)} />
+            <InfoCell label="חיבור אחרון" value={formatDateTime(channel.lastConnectedAt)} />
+            <InfoCell label="הודעה אחרונה נכנסת" value={formatDateTime(channel.lastInboundAt)} />
+            <InfoCell label="הודעה אחרונה יוצאת" value={formatDateTime(channel.lastOutboundAt)} />
             <InfoCell label="סטטוס סשן" value={<Badge tone="neutral">{label('pairingStatus', state)}</Badge>} />
           </div>
 
@@ -317,7 +290,7 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
           {/* Actions */}
           <div className="flex flex-wrap gap-2 pt-1">
             <Button size="sm" variant="secondary" onClick={refreshStatus} disabled={pending}
-              loading={activeAction === 'status'} leftIcon={<RefreshCcw className="h-3.5 w-3.5" />}>
+              loading={statusQuery.isFetching} leftIcon={<RefreshCcw className="h-3.5 w-3.5" />}>
               רענן סטטוס
             </Button>
             {showStart && (
@@ -417,8 +390,6 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
         open={qrOpen}
         onClose={() => setQrOpen(false)}
         channelId={channel.channelId}
-        initial={session}
-        onUpdated={(s) => setSession(s)}
       />
 
       <ChainModal open={chainOpen} onClose={() => setChainOpen(false)} channelId={channel.channelId} />
@@ -501,45 +472,37 @@ function ConnectChannelModal({ open, onClose }: { open: boolean; onClose: () => 
 // ─────────────────────────────────────────────────────────────
 
 function QRPairingModal({
-  open, onClose, channelId, initial, onUpdated,
+  open, onClose, channelId,
 }: {
   open: boolean;
   onClose: () => void;
   channelId: string;
-  initial: BaileysChannelStatus | null;
-  onUpdated: (s: BaileysChannelStatus) => void;
 }) {
-  const [status, setStatus] = useState<BaileysChannelStatus | null>(initial);
-  const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => { setStatus(initial); }, [initial]);
-
-  const refresh = async () => {
-    setRefreshing(true);
-    try {
-      const r = await channelsApi.sessionStatus(channelId);
-      setStatus(r.data);
-      onUpdated(r.data);
-    } catch (err) {
-      toast.error('רענון QR נכשל', (err as Error).message);
-    } finally {
-      setRefreshing(false);
-    }
+  // Shares the same session-status cache entry the card uses, so a
+  // refresh here also refreshes the card (and vice-versa). While the
+  // modal is open and still pairing, poll faster (3s) than the card's
+  // background interval so the rotating QR stays fresh under the eye.
+  const statusQuery = useQuery({
+    queryKey: ['channel', channelId, 'session-status'] as const,
+    queryFn: () => channelsApi.sessionStatus(channelId),
+    enabled: open,
+    refetchInterval: (q) =>
+      open && q.state.data?.data.state === 'pending_pairing' ? 3000 : false,
+  });
+  const status = statusQuery.data?.data ?? null;
+  const refresh = () => {
+    void statusQuery.refetch().then((r) => {
+      if (r.isError) toast.error('רענון QR נכשל', (r.error as Error).message);
+    });
   };
 
   useEffect(() => {
     if (!open) return;
-    const currentState = status?.state;
-    if (currentState && currentState !== 'pending_pairing') {
-      if (currentState === 'connected') {
-        toast.success('החיבור הושלם');
-        const t = setTimeout(onClose, 1000);
-        return () => clearTimeout(t);
-      }
-      return;
+    if (status?.state === 'connected') {
+      toast.success('החיבור הושלם');
+      const t = setTimeout(onClose, 1000);
+      return () => clearTimeout(t);
     }
-    const id = setInterval(refresh, 3000);
-    return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, status?.state]);
 
@@ -577,7 +540,7 @@ function QRPairingModal({
 
         <div className="flex items-center justify-between text-xs text-ink-muted">
           <span>סטטוס: {label('pairingStatus', status?.state ?? 'idle')}</span>
-          <Button size="sm" variant="secondary" onClick={refresh} loading={refreshing} leftIcon={<RefreshCcw className="h-3.5 w-3.5" />}>
+          <Button size="sm" variant="secondary" onClick={refresh} loading={statusQuery.isFetching} leftIcon={<RefreshCcw className="h-3.5 w-3.5" />}>
             רענן QR
           </Button>
         </div>
@@ -619,11 +582,199 @@ function ChainModal({ open, onClose, channelId }: { open: boolean; onClose: () =
                 <div className="font-medium">{c.accountDisplayName}</div>
                 <div className="font-mono text-ink-faint truncate">{c.channelId}</div>
               </div>
-              <div className="text-ink-muted">{formatDate(c.createdAt)}</div>
+              <div className="text-ink-muted">{formatDateTime(c.createdAt)}</div>
             </li>
           ))}
         </ul>
       )}
     </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Multi-account admin: live sessions + persisted lock state.
+// Auto-refreshes every 30s so operators can watch concurrent
+// startup, lock holders, and force-release stale locks without
+// reaching for the CLI.
+// ─────────────────────────────────────────────────────────────
+
+function SessionsAdminPanel() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ['channels', 'sessions', 'admin'],
+    queryFn: () => channelsApi.adminSessions(),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
+  if (q.isLoading) return null;
+  if (q.isError) return null;
+  if (!q.data) return null;
+
+  const { instanceId, sessions } = q.data.data;
+  const stale = sessions.filter((s) => s.lock.isStale);
+  const heldElsewhere = sessions.filter((s) => s.lock.ownerInstanceId && !s.lock.isOurs);
+  const live = sessions.filter((s) => s.hasLiveClient);
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-semibold inline-flex items-center gap-2">
+          <KeyRound className="h-4 w-4" /> ניהול סשנים מרובי-חשבון
+        </h3>
+        <p className="text-xs text-ink-muted">
+          תצוגת בקרה: לקוחות חיים בתהליך הזה, ובעלי הנעילה הקבועים. תהליך נוכחי:
+          <span className="font-mono ms-1">{instanceId}</span>
+        </p>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <Badge tone="success">{live.length} חיים בתהליך זה</Badge>
+          <Badge tone={heldElsewhere.length > 0 ? 'warning' : 'neutral'}>
+            {heldElsewhere.length} נעולים בתהליך אחר
+          </Badge>
+          <Badge tone={stale.length > 0 ? 'danger' : 'neutral'}>
+            {stale.length} נעילות תקועות
+          </Badge>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-ink-muted">
+              <tr>
+                <th className="text-start py-1 pe-2">ערוץ</th>
+                <th className="text-start py-1 pe-2">תפקיד</th>
+                <th className="text-start py-1 pe-2">סטטוס</th>
+                <th className="text-start py-1 pe-2">לקוח חי</th>
+                <th className="text-start py-1 pe-2">מצב סשן</th>
+                <th className="text-start py-1 pe-2">בעל הנעילה</th>
+                <th className="text-start py-1 pe-2">גיל פעימה</th>
+                <th className="text-start py-1 pe-2"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {sessions.map((s) => (
+                <SessionAdminRow
+                  key={s.channelId}
+                  s={s}
+                  onChanged={() => qc.invalidateQueries({ queryKey: ['channels'] })}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {stale.length > 0 && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 inline-flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            נעילה נחשבת תקועה כשהפעימה האחרונה ישנה מ-60 שניות. ניתן לשחרר ידנית מהשורה.
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function SessionAdminRow({
+  s,
+  onChanged,
+}: {
+  s: AdminSessionView;
+  onChanged: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reason, setReason] = useState('');
+
+  const release = useMutation({
+    mutationFn: () => channelsApi.forceReleaseLock(s.channelId, { reason }),
+    onSuccess: () => {
+      toast.success('הנעילה שוחררה בכוח');
+      setConfirmOpen(false);
+      setReason('');
+      onChanged();
+    },
+    onError: (e: Error) => toast.error('שחרור הנעילה נכשל', e.message),
+  });
+
+  // Force-release allowed only when there IS an owner AND no live
+  // client in this process (server enforces the same rule, but we
+  // gate the button so the operator doesn't have to discover it).
+  const canForceRelease = !!s.lock.ownerInstanceId && !s.hasLiveClient;
+  const lockTone: 'success' | 'warning' | 'danger' | 'neutral' =
+    !s.lock.ownerInstanceId ? 'neutral'
+    : s.lock.isStale ? 'danger'
+    : s.lock.isOurs ? 'success' : 'warning';
+
+  const ageHe = s.lock.ageMs == null
+    ? '—'
+    : s.lock.ageMs < 60_000
+      ? `${Math.round(s.lock.ageMs / 1000)} שנ׳`
+      : `${Math.round(s.lock.ageMs / 60_000)} דק׳${s.lock.isStale ? ' (תקוע)' : ''}`;
+
+  return (
+    <>
+      <tr className="hover:bg-bg-hover/40">
+        <td className="py-1.5 pe-2">
+          <div className="font-medium">{s.accountDisplayName}</div>
+          <div className="font-mono text-[10px] text-ink-faint">{s.channelId}</div>
+        </td>
+        <td className="py-1.5 pe-2">{label('channelRole', s.role)}</td>
+        <td className="py-1.5 pe-2">
+          <Badge tone={statusTone(s.status)}>{label('channelStatus', s.status)}</Badge>
+        </td>
+        <td className="py-1.5 pe-2">
+          {s.hasLiveClient
+            ? <Badge tone="success">פעיל</Badge>
+            : <span className="text-ink-faint">—</span>}
+        </td>
+        <td className="py-1.5 pe-2">
+          {s.liveState ? <span className="font-mono text-[11px]">{s.liveState}</span> : <span className="text-ink-faint">—</span>}
+        </td>
+        <td className="py-1.5 pe-2">
+          <Badge tone={lockTone} icon={<Lock className="h-3 w-3" />}>
+            {!s.lock.ownerInstanceId ? 'פנוי'
+              : s.lock.isOurs ? 'תהליך זה'
+              : s.lock.isStale ? 'תקוע' : 'תהליך אחר'}
+          </Badge>
+          {s.lock.ownerInstanceId && (
+            <div className="font-mono text-[10px] text-ink-faint mt-0.5 truncate max-w-[180px]">
+              {s.lock.ownerInstanceId}
+            </div>
+          )}
+        </td>
+        <td className="py-1.5 pe-2 text-ink-muted">{ageHe}</td>
+        <td className="py-1.5 pe-2 text-end">
+          {canForceRelease && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setConfirmOpen(true)}
+            >
+              שחרר נעילה
+            </Button>
+          )}
+        </td>
+      </tr>
+      <Dialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="שחרור נעילה בכוח"
+        description={`ערוץ ${s.accountDisplayName}. הפעולה רלוונטית רק כשהבעלים הקודם נפל. תיעוד נשמר ב-AuditLog.`}
+        primaryAction={{
+          label: 'שחרר',
+          onClick: () => release.mutate(),
+          loading: release.isPending,
+          disabled: reason.trim().length < 3,
+          variant: 'danger',
+        }}
+        secondaryAction={{ label: 'ביטול', onClick: () => setConfirmOpen(false) }}
+      >
+        <Input
+          placeholder="סיבת השחרור (חובה — לפחות 3 תווים)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </Dialog>
+    </>
   );
 }

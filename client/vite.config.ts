@@ -11,11 +11,25 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 5175,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3005',
         changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-query': ['@tanstack/react-query'],
+          'vendor-icons': ['lucide-react'],
+          'vendor-forms': ['react-hook-form', 'zod'],
+          'vendor-qrcode': ['qrcode.react'],
+        },
       },
     },
   },

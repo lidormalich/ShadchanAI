@@ -13,6 +13,7 @@ import {
   MarkDatingSchema,
   ReopenCandidateSchema,
 } from './internal-candidate.validator.js';
+import { z } from 'zod';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 
@@ -84,4 +85,23 @@ internalCandidateRouter.get(
   '/:id/readiness',
   validate({ params: IdParamSchema }),
   ctrl.readinessHandler,
+);
+
+// ── Compatibility workspace ──────────────────────────────────
+
+internalCandidateRouter.get(
+  '/:id/compatibility',
+  validate({ params: IdParamSchema }),
+  ctrl.compatibilityBoardHandler,
+);
+
+const PairCheckBodySchema = z.object({
+  externalCandidateId: z.string().regex(/^[a-f\d]{24}$/i),
+  mode: z.enum(['strict', 'discovery']).optional(),
+});
+
+internalCandidateRouter.post(
+  '/:id/pair-check',
+  validate({ params: IdParamSchema, body: PairCheckBodySchema }),
+  ctrl.pairCheckHandler,
 );

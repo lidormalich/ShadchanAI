@@ -8,6 +8,9 @@ import type { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { AppError } from '../utils/errors.js';
 import type { ApiEnvelope } from '../utils/response.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('error-middleware');
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorMiddleware(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
@@ -45,7 +48,7 @@ export function errorMiddleware(err: unknown, _req: Request, res: Response, _nex
   }
 
   // Unknown — log + 500
-  console.error('[error-middleware] unhandled:', err);
+  log.error({ err }, 'unhandled');
   const body: ApiEnvelope = {
     success: false,
     error: { code: 'internal_error', message: (err as Error)?.message ?? 'Internal server error' },

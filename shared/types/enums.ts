@@ -215,9 +215,18 @@ export const SourceMode = {
 export type SourceMode = (typeof SourceMode)[keyof typeof SourceMode];
 
 // ── Recommended Action ────────────────────────────────────
+// Must stay in sync with the engine's RecommendedAction union
+// (server/src/services/matching/matching.types.ts). The match-suggestion
+// model validates persisted values against Object.values() of this enum,
+// so any action the engine can emit MUST appear here or persistence fails.
 export const RecommendedAction = {
   SEND_NOW: 'send_now',
+  SEND_SIDE_A_FIRST: 'send_side_a_first',
+  SEND_TO_BOTH: 'send_to_both',
+  AUTO_REVIEW_QUEUE: 'auto_review_queue',
+  REVIEW_REQUIRED: 'review_required',
   REVIEW_FIRST: 'review_first',
+  HOLD_FOR_MORE_DATA: 'hold_for_more_data',
   WAIT: 'wait',
   SKIP: 'skip',
 } as const;
@@ -398,6 +407,12 @@ export const AuditActionType = {
   AI_QUERY: 'ai_query',
   LOGIN: 'login',
   EXPORT: 'export',
+  // Operator-level pair review (compatibility workspace).
+  // Persisted on the PairReview collection; metadata.scope tells
+  // the timeline what kind of decision it was.
+  PAIR_REVIEW_SET: 'pair_review_set',
+  PAIR_REVIEW_CLEARED: 'pair_review_cleared',
+  PAIR_REVIEW_AI_EXPLAINED: 'pair_review_ai_explained',
 } as const;
 export type AuditActionType = (typeof AuditActionType)[keyof typeof AuditActionType];
 
@@ -453,6 +468,7 @@ export const AuditEntityType = {
   TASK: 'task',
   NOTE: 'note',
   USER: 'user',
+  PAIR_REVIEW: 'pair_review',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 
@@ -485,6 +501,22 @@ export const ExtractionMethod = {
 } as const;
 export type ExtractionMethod = (typeof ExtractionMethod)[keyof typeof ExtractionMethod];
 
+// Routing verdict for an inbound message on the ingestion gate.
+// Persisted on the message so operators can audit *why* a message did
+// or didn't feed the extraction pipeline — not only via log scraping.
+//   accepted                  — entered the extraction pipeline
+//   ignored_assigned_ignore   — chat explicitly mapped to "ignore"
+//   ignored_match_sending     — chat mapped to the match_sending role
+//   ignored_unmapped          — profiles_source channel but chat not approved
+export const MessageIngestionDecision = {
+  ACCEPTED: 'accepted',
+  IGNORED_ASSIGNED_IGNORE: 'ignored_assigned_ignore',
+  IGNORED_MATCH_SENDING: 'ignored_match_sending',
+  IGNORED_UNMAPPED: 'ignored_unmapped',
+} as const;
+export type MessageIngestionDecision =
+  (typeof MessageIngestionDecision)[keyof typeof MessageIngestionDecision];
+
 // ── AI Request Type ───────────────────────────────────────
 export const AIRequestType = {
   ASK: 'ask',
@@ -504,6 +536,43 @@ export const AIProvider = {
   LOCAL: 'local',
 } as const;
 export type AIProvider = (typeof AIProvider)[keyof typeof AIProvider];
+
+// ── Geographic Region ─────────────────────────────────────
+// Coarse Israeli region used as the PRIMARY location signal in
+// matching (city is a brittle exact-string match; region is a
+// robust, commute-aware bucket). Region NEVER disqualifies a
+// pair — it only feeds the soft `location` scoring dimension.
+export const Region = {
+  NORTH: 'north',                 // צפון (גליל, עמקים)
+  HAIFA_KRAYOT: 'haifa_krayot',   // חיפה והקריות
+  SHARON: 'sharon',               // השרון
+  GUSH_DAN: 'gush_dan',           // גוש דן
+  JERUSALEM: 'jerusalem',         // ירושלים והסביבה
+  SHFELA: 'shfela',               // שפלה
+  SOUTH: 'south',                 // דרום
+  YOSH: 'yosh',                   // יהודה ושומרון
+} as const;
+export type Region = (typeof Region)[keyof typeof Region];
+
+// ── Shared-goals enums (feed the mutual_expectations dimension) ──
+// Number-of-children aspiration for the future home.
+export const ChildrenPreference = {
+  LARGE_FAMILY: 'large_family',   // משפחה גדולה
+  BALANCED: 'balanced',           // מאוזן
+  SMALL_FAMILY: 'small_family',   // משפחה קטנה
+  FLEXIBLE: 'flexible',           // גמיש
+  UNDECIDED: 'undecided',         // טרם הוחלט
+} as const;
+export type ChildrenPreference = (typeof ChildrenPreference)[keyof typeof ChildrenPreference];
+
+// Torah-vs-career orientation for the household.
+export const CareerPriority = {
+  TORAH_FOCUSED: 'torah_focused', // עדיפות לתורה
+  BALANCED: 'balanced',           // תורה ועבודה מאוזן
+  CAREER_FOCUSED: 'career_focused', // עדיפות לקריירה
+  FLEXIBLE: 'flexible',           // גמיש
+} as const;
+export type CareerPriority = (typeof CareerPriority)[keyof typeof CareerPriority];
 
 // ── Scoring Dimension Keys ────────────────────────────────
 // The 8 approved dimensions for deterministic matching

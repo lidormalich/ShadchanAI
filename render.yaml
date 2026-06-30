@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────
+# ShadchanAI — Render Blueprint (Native Node, single instance)
+#
+# One Web Service that builds the npm-workspace monorepo
+# (shared → server → client) and runs ONE Node process serving
+# both the API and the built client SPA from the same origin.
+#
+# IMPORTANT — single-instance only. Baileys WhatsApp sessions, the
+# send-claim lock, and the notifications buffer are all in-process.
+# Keep numInstances: 1 and a persistent disk mounted for the
+# Baileys session files (those files ARE the WhatsApp credentials).
+#
+# After first deploy you still must, manually:
+#   1. Set the `sync: false` secrets below in the Render dashboard.
+#   2. Seed the first admin (server/src/scripts/seed-admin.ts) or
+#      bootstrap via the auth endpoint when the users collection is empty.
+#   3. Scan the WhatsApp QR per channel at /channels.
+# ─────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: shadchanai
+    runtime: node
+    region: frankfurt        # closest Render region to Israel
+    plan: starter            # disks require Starter+ (not available on free)
+    numInstances: 1          # MUST stay 1 — in-process state + single disk
+    autoDeploy: true
+    branch: main
+    healthCheckPath: /api/health
+
+    # Build needs devDependencies (vite, typescript). NODE_ENV=production
+    # below would otherwise make `npm ci` skip them, so force --include=dev.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node server/dist/server.js
+
+    # Persistent disk for Baileys auth state. WITHOUT this the WhatsApp
+    # session is wiped on every deploy/restart → re-scan QR every time.
+    disk:
+      name: wa-sessions
+      mountPath: /data
+      sizeGB: 1
+
+    envVars:
+      # ── Core ────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # PORT is injected by Render automatically; the app reads env.PORT.
+
+      # ── Auth ────────────────────────────────────────────
+      # Render generates a secure random value (≥32 chars) once and keeps it.
+      - key: JWT_SECRET
+        generateValue: true
+      # Dev-only header auth — hard boot-fail if true in production.
+      - key: AUTH_DEV_HEADER_ALLOWED
+        value: "false"
+
+      # ── Database (set in dashboard) ─────────────────────
+      # MongoDB Atlas URI — Render does not host MongoDB.
+      - key: MONGODB_URI
+        sync: false
+
+      # ── CORS (set in dashboard) ─────────────────────────
+      # The service's public URL, e.g. https://shadchanai.onrender.com
+      # Must NOT contain "localhost" in production (enforced).
+      - key: CORS_ORIGINS
+        sync: false
+
+      # ── Same-origin SPA hosting ─────────────────────────
+      # Absolute path to the built client. Render checks out the repo at
+      # /opt/render/project/src, so client/dist lands here.
+      - key: CLIENT_DIST_DIR
+        value: /opt/render/project/src/client/dist
+
+      # ── WhatsApp session storage ────────────────────────
+      # Lives on the persistent disk mounted at /data above.
+      - key: WA_SESSIONS_DIR
+        value: /data/wa-sessions
+      # Safe default: every real outbound is rejected until explicitly
+      # enabled. Flip to "true" only when you intend to send real proposals.
+      - key: ENABLE_OUTBOUND_MESSAGES
+        value: "false"
+
+      # ── AI provider (set at least one in dashboard) ─────
+      # Groq is the free primary engine. Alternatively set OPENAI_API_KEY,
+      # or set AI_DISABLED=true to run with degraded extraction/advisory.
+      - key: GROQ_API_KEY
+        sync: false
+
+      # ── Optional but recommended (set in dashboard) ─────
+      # 64 hex chars (32 bytes). Encrypts on-disk Baileys auth state.
+      # - key: WA_SESSION_ENCRYPTION_KEY
+      #   sync: false

@@ -36,10 +36,12 @@ export function DashboardPage() {
   const activeInternals = useQuery({
     queryKey: ['internals', 'active-count'],
     queryFn: () => internalCandidatesApi.list({ status: 'active', limit: 1 }),
+    staleTime: 60_000,
   });
   const datingInternals = useQuery({
     queryKey: ['internals', 'dating-count'],
     queryFn: () => internalCandidatesApi.list({ status: 'dating', limit: 1 }),
+    staleTime: 60_000,
   });
   const sentThisWeek = useQuery({
     queryKey: ['matches', 'sent-week'],
@@ -50,10 +52,11 @@ export function DashboardPage() {
       status: 'sent_side_a',
       limit: 1,
     }),
+    staleTime: 60_000,
   });
 
   const queue = useQuery({
-    queryKey: ['dashboard', 'queue', { ownership, type }],
+    queryKey: ['dashboard', 'queue', ownership, type],
     queryFn: () => dashboardApi.queue({
       ownership,
       type: type || undefined,
@@ -81,7 +84,7 @@ export function DashboardPage() {
 
       <Card className="p-3 flex items-center gap-3 flex-wrap">
         <OwnershipFilter value={ownership} onChange={setOwnership} />
-        <Select value={type} onChange={(e) => setType(e.target.value as DashboardRowType | '')}>
+        <Select className="w-full sm:w-auto" value={type} onChange={(e) => setType(e.target.value as DashboardRowType | '')}>
           <option value="">כל הקטגוריות</option>
           <option value="new_response">תגובה חדשה</option>
           <option value="inbound_action">שיחה דורשת תשומת לב</option>

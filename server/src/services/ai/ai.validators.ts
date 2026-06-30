@@ -25,6 +25,7 @@ export const ExplainMatchOutputSchema = z.object({
   concerns: z.array(z.string().trim().min(1)).max(10).default([]),
   nuance: z.string().trim().max(2000).default(''),
   recommendedApproach: nonEmptyString.max(1000),
+  notMatchReasons: z.array(z.string().trim().min(1)).max(10).default([]),
 });
 
 // ── generateMessage ──────────────────────────────────────

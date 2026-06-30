@@ -10,6 +10,11 @@ import { ChannelRole, MessageDirection, MessageExtractionStatus } from '@shadcha
 import { ExternalCandidate, Message } from '../../models/index.js';
 import { registerJob } from './job.scheduler.js';
 import { enqueueExtraction } from '../extraction/queue.js';
+import { runScanNow } from '../matching/match-scan.service.js';
+import { replayFailedInboundMessages } from '../whatsapp/message.handler.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('job');
 
 // ── Stale external detection ─────────────────────────────
 // Marks external candidates whose lastSourceUpdateAt is more
@@ -32,7 +37,7 @@ registerJob({
       { $set: { staleAt: new Date() } },
     ).exec();
     if (res.modifiedCount > 0) {
-      console.log(`[job] mark-stale-externals: flagged ${res.modifiedCount} profiles`);
+      log.info({ job: 'mark-stale-externals', flagged: res.modifiedCount }, 'flagged profiles');
     }
   },
 });
@@ -55,8 +60,12 @@ registerJob({
 //   - status=pending for >2 minutes (process crash mid-run)
 //   - OR no extraction subdoc at all on a profiles_source inbound
 //     message younger than 24h (hook miss during deploy / hotfix)
-// Also re-enqueues status=failed messages once per hour for a single
-// retry; failures beyond that stay for manual inspection.
+// Also re-enqueues status=failed messages once per hour, but only up to
+// MAX_EXTRACTION_RETRIES attempts. Beyond the cap they stay failed for
+// manual inspection (operators can still force a retry via POST /run),
+// so a permanently-failing body can't loop on the AI provider forever.
+const MAX_EXTRACTION_RETRIES = 3;
+
 registerJob({
   name: 'extraction-reconciler',
   intervalMs: 5 * 60 * 1000, // every 5 minutes
@@ -72,7 +81,12 @@ registerJob({
       body: { $exists: true, $ne: '' },
       $or: [
         { 'extraction.status': MessageExtractionStatus.PENDING, 'extraction.attemptedAt': { $lt: stalePending } },
-        { 'extraction.status': MessageExtractionStatus.FAILED, 'extraction.attemptedAt': { $lt: failedRetryCutoff } },
+        {
+          'extraction.status': MessageExtractionStatus.FAILED,
+          'extraction.attemptedAt': { $lt: failedRetryCutoff },
+          // $not/$gte also matches legacy docs with no retryCount field.
+          'extraction.retryCount': { $not: { $gte: MAX_EXTRACTION_RETRIES } },
+        },
         { extraction: { $exists: false }, createdAt: { $gt: backfillCutoff } },
       ],
     })
@@ -85,7 +99,51 @@ registerJob({
     for (const doc of candidates) {
       await enqueueExtraction(String(doc._id));
     }
-    console.log(`[job] extraction-reconciler: re-enqueued ${candidates.length} messages`);
+    log.info({ job: 'extraction-reconciler', reEnqueued: candidates.length }, 're-enqueued messages');
+  },
+});
+
+// ── Incremental match scan ───────────────────────────────
+// Re-scores only the candidates whose engine-relevant fields changed
+// since the last run (or are new), caches the score per pair, and
+// auto-creates draft suggestions for strong eligible pairs. When
+// nothing changed the run does zero engine work. Operators can also
+// trigger this on demand via POST /matches/scan.
+registerJob({
+  name: 'incremental-match-scan',
+  intervalMs: 60 * 60 * 1000, // hourly
+  async run() {
+    const summary = await runScanNow({ trigger: 'job', mode: 'incremental' });
+    if (summary && (summary.pairsScored > 0 || summary.draftsCreated > 0)) {
+      log.info({
+        job: 'incremental-match-scan',
+        pairsScored: summary.pairsScored,
+        pairsSkipped: summary.pairsSkipped,
+        draftsCreated: summary.draftsCreated,
+        durationMs: summary.durationMs,
+      }, 'scan complete');
+    }
+  },
+});
+
+// ── Replay dead-lettered inbound WhatsApp messages ───────
+// Inbound persistence that failed on a transient DB fault is recorded to
+// the FailedInboundMessage dead-letter store. This job replays due rows so
+// no inbound message is permanently lost to a momentary DB blip. Replays
+// are idempotent (unique externalMessageId), so a re-run is always safe.
+registerJob({
+  name: 'replay-failed-inbound',
+  intervalMs: 2 * 60 * 1000, // every 2 minutes
+  async run() {
+    const r = await replayFailedInboundMessages(50);
+    if (r.resolved > 0 || r.parked > 0) {
+      log.info({
+        job: 'replay-failed-inbound',
+        resolved: r.resolved,
+        retrying: r.failed,
+        parked: r.parked,
+      }, 'replay complete');
+    }
   },
 });
 

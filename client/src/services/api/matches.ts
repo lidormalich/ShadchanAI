@@ -17,9 +17,53 @@ export interface FindMatchItem {
   recommendedAction: string;
 }
 
+export type ScanStatus = 'idle' | 'running' | 'done' | 'error';
+export type ScanMode = 'missing' | 'incremental' | 'full';
+
+export interface ScanState {
+  status: ScanStatus;
+  mode: ScanMode;
+  running: boolean;
+  progressCurrent: number;
+  progressTotal: number;
+  internalsConsidered: number;
+  externalsConsidered: number;
+  pairsScored: number;
+  pairsSkipped: number;
+  draftsCreated: number;
+  improved: number;
+  declined: number;
+  durationMs: number;
+  lastScanAt?: string;
+  lastError?: string;
+}
+
+export interface ScanResultItem {
+  internalCandidateId: string;
+  externalCandidateId: string;
+  internalName: string;
+  externalName: string;
+  matchScore: number;
+  previousScore?: number;
+  scoreDelta: number;
+  scoreDirection: 'new' | 'up' | 'down' | 'same';
+  confidenceScore: number;
+  matchType: string;
+  eligible: boolean;
+  bucket: 'suitable' | 'weak' | 'blocked';
+  matchSuggestionId?: string;
+  autoCreated: boolean;
+  scoredAt: string;
+}
+
 export const matchesApi = {
   list: (query: Record<string, unknown> = {}) =>
     api.get<MatchSuggestion[]>('/matches', query),
+  scan: (body: { mode?: ScanMode } = {}) =>
+    api.post<{ started: boolean; state: ScanState | null }>('/matches/scan', body),
+  scanState: () => api.get<ScanState | null>('/matches/scan/state'),
+  scanResults: (query: Record<string, unknown> = {}) =>
+    api.get<ScanResultItem[]>('/matches/scan/results', query),
   get: (id: string) => api.get<MatchSuggestion>(`/matches/${id}`),
   evaluate: (body: { internalCandidateId: string; externalCandidateId: string; mode?: string }) =>
     api.post<MatchSuggestion>('/matches/evaluate', body),

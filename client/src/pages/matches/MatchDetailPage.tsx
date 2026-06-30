@@ -5,9 +5,9 @@ import { Link, useParams } from 'react-router-dom';
 import { matchesApi } from '@/services/api/matches';
 import { internalCandidatesApi, externalCandidatesApi } from '@/services/api/candidates';
 import { channelsApi } from '@/services/api/channels';
-import { aiApi } from '@/services/api/ai';
+import { aiApi, buildCandidateBrief } from '@/services/api/ai';
 import { toast } from '@/components/ui/Toast';
-import type { InternalCandidate, ExternalCandidate, MatchSuggestion } from '@/types/domain';
+import type { MatchSuggestion } from '@/types/domain';
 import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, Textarea } from '@/components/ui/primitives';
 import { ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { BlockedBanner } from '@/components/domain/banners';
@@ -19,7 +19,9 @@ import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { conversationsApi } from '@/services/api/conversations';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { useSafeMode } from '@/features/safe-mode/useSafeMode';
-import { label } from '@/utils/labels';
+import { useSetPageTitle } from '@/layouts/PageTitleContext';
+import { label, matchTypeTone } from '@/utils/labels';
+import { formatDateTime } from '@/utils/format';
 import type { SendPreview } from '@/types/domain';
 
 export function MatchDetailPage() {
@@ -34,7 +36,7 @@ export function MatchDetailPage() {
   const sendPreview = useQuery({
     queryKey: ['match', id, 'send-preview'],
     queryFn: () => matchesApi.sendPreview(id!),
-    enabled: !!id,
+    enabled: !!id && !match.isLoading,
   });
 
   const internalId = match.data?.data.internalCandidateId;
@@ -51,6 +53,15 @@ export function MatchDetailPage() {
     enabled: !!externalId,
   });
 
+  // Breadcrumb shows the pair's names ("internal × external") instead of
+  // the raw suggestion id from the URL, once both sides have loaded.
+  const i = internal.data?.data;
+  const e = external.data?.data;
+  const pairTitle = i && e
+    ? `${i.firstName} ${i.lastName} × ${`${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || 'ללא שם'}`
+    : undefined;
+  useSetPageTitle(pairTitle);
+
   const approve = useMutation({
     mutationFn: () => matchesApi.approve(id!),
     onSuccess: () => {
@@ -65,8 +76,8 @@ export function MatchDetailPage() {
       const i = internal.data!.data;
       const e = external.data!.data;
       return aiApi.explainMatch({
-        internal: briefInternal(i),
-        external: briefExternal(e),
+        internal: buildCandidateBrief(i),
+        external: buildCandidateBrief(e),
         matchScore: m.matchScore,
         confidenceScore: m.confidenceScore,
         matchType: m.matchType,
@@ -131,8 +142,8 @@ export function MatchDetailPage() {
         purpose: 'intro',
         tone: 'warm',
         language: 'he',
-        recipient: briefInternal(i),
-        aboutCandidate: briefExternal(e),
+        recipient: buildCandidateBrief(i),
+        aboutCandidate: buildCandidateBrief(e),
       });
       const d = r.data as { message?: string; reviewFlags?: string[] };
       const text = (d.message ?? '').trim();
@@ -190,7 +201,7 @@ export function MatchDetailPage() {
       qc.setQueryData<{ data: MatchSuggestion; meta?: unknown } | undefined>(
         ['match', id],
         (prev) => prev
-          ? { ...prev, data: { ...prev.data, status: r.data.matchStatus } }
+          ? { ...prev, data: { ...prev.data, status: r.data.matchStatus as MatchSuggestion['status'] } }
           : prev,
       );
       qc.invalidateQueries({ queryKey: ['match', id, 'send-preview'] });
@@ -331,7 +342,7 @@ export function MatchDetailPage() {
                 name={`${internal.data.data.firstName} ${internal.data.data.lastName}`}
                 photo={internal.data.data.photoApproved ? internal.data.data.photoUrl : undefined}
                 lines={[
-                  internal.data.data.city,
+                  [internal.data.data.city, internal.data.data.region ? label('region', internal.data.data.region) : undefined].filter(Boolean).join(' · ') || undefined,
                   label('sectorGroup', internal.data.data.sectorGroup),
                   label('studyWorkDirection', internal.data.data.studyWorkDirection),
                   label('personalStatus', internal.data.data.personalStatus),
@@ -370,7 +381,7 @@ export function MatchDetailPage() {
                 name={`${external.data.data.firstName ?? ''} ${external.data.data.lastName ?? ''}`.trim() || 'ללא שם'}
                 photo={external.data.data.sharePhoto ? external.data.data.photoUrl : undefined}
                 lines={[
-                  external.data.data.city,
+                  [external.data.data.city, external.data.data.region ? label('region', external.data.data.region) : undefined].filter(Boolean).join(' · ') || undefined,
                   label('sectorGroup', external.data.data.sectorGroup),
                   label('studyWorkDirection', external.data.data.studyWorkDirection),
                   label('personalStatus', external.data.data.personalStatus),
@@ -403,12 +414,22 @@ export function MatchDetailPage() {
           </CardBody>
         </Card>
 
+        {/* Background, goals & character — the richer "פרטי שידוך" detail */}
+        {internal.data && (
+          <Card className="xl:col-span-3">
+            <CardHeader><h3 className="text-sm font-semibold">רקע, מטרות ואופי</h3></CardHeader>
+            <CardBody>
+              <BackgroundGoals internal={internal.data.data} external={external.data?.data} />
+            </CardBody>
+          </Card>
+        )}
+
         {/* Send preview + action bar */}
         <Card>
           <CardHeader><h3 className="text-sm font-semibold">מצב שליחה</h3></CardHeader>
           <CardBody>
             {sendPreview.isLoading ? <LoadingSkeleton rows={4} /> : preview ? (
-              <SendPreviewBlock preview={preview} onSend={() => setSendOpen(true)} />
+              <SendPreviewBlock preview={preview} onSend={() => setSendOpen(true)} safeMode={safeMode} />
             ) : null}
           </CardBody>
         </Card>
@@ -452,7 +473,7 @@ export function MatchDetailPage() {
           />
           <div className="text-[11px] text-ink-faint flex items-center gap-2">
             {activeDraftMeta?.updatedAt
-              ? <>עודכן {new Date(activeDraftMeta.updatedAt).toLocaleString('he-IL')} · מקור: {activeDraftMeta.source ?? 'manual'}</>
+              ? <>עודכן {formatDateTime(activeDraftMeta.updatedAt)} · מקור: {activeDraftMeta.source ?? 'manual'}</>
               : 'אין טיוטה שמורה לצד זה.'}
             {saveDraft.isPending && <span>· שומר…</span>}
           </div>
@@ -561,14 +582,14 @@ export function MatchDetailPage() {
 }
 
 function MatchTypeBadge({ type }: { type: string }) {
-  const map: Record<string, { tone: 'success' | 'brand' | 'warning' | 'danger'; icon: React.ReactNode; label: string }> = {
-    safe: { tone: 'success', icon: <Shield className="h-3.5 w-3.5" />, label: 'בטוח' },
-    balanced: { tone: 'brand', icon: <Heart className="h-3.5 w-3.5" />, label: 'מאוזן' },
-    creative: { tone: 'warning', icon: <Sparkles className="h-3.5 w-3.5" />, label: 'יצירתי' },
-    risky: { tone: 'danger', icon: <AlertTriangle className="h-3.5 w-3.5" />, label: 'מסוכן' },
+  const iconMap: Record<string, React.ReactNode> = {
+    safe: <Shield className="h-3.5 w-3.5" />,
+    balanced: <Heart className="h-3.5 w-3.5" />,
+    creative: <Sparkles className="h-3.5 w-3.5" />,
+    risky: <AlertTriangle className="h-3.5 w-3.5" />,
   };
-  const m = map[type] ?? map['balanced']!;
-  return <Badge tone={m.tone} icon={m.icon}>{m.label}</Badge>;
+  const icon = iconMap[type] ?? iconMap['balanced'];
+  return <Badge tone={matchTypeTone(type)} icon={icon}>{label('matchType', type)}</Badge>;
 }
 
 function ScoreTriad({ matchScore, confidenceScore, riskLevel }: { matchScore: number; confidenceScore: number; riskLevel: string }) {
@@ -590,6 +611,77 @@ function ScoreTriad({ matchScore, confidenceScore, riskLevel }: { matchScore: nu
   );
 }
 
+function BackgroundGoals({
+  internal,
+  external,
+}: {
+  internal: import('@/types/domain').InternalCandidate;
+  external?: import('@/types/domain').ExternalCandidate;
+}) {
+  const traits = internal.characterTraits ?? [];
+  const goals = internal.lifeGoals;
+  const hasGoals = Boolean(goals?.childrenPreference || goals?.careerPriority || goals?.homeVision);
+  const hasFamily = Boolean(internal.ethnicity || internal.familyBackground);
+  const hasCharacter = traits.length > 0 || Boolean(internal.characterNotes);
+
+  if (!hasGoals && !hasFamily && !hasCharacter && !internal.region && !external?.region) {
+    return <div className="text-xs text-ink-muted">אין מידע רקע/מטרות נוסף. ניתן להוסיף בעריכת המועמד.</div>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 text-sm">
+      {/* Goals */}
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-brand-700 uppercase tracking-wide">מטרות משותפות</div>
+        {hasGoals ? (
+          <dl className="space-y-1">
+            {goals?.childrenPreference && <InfoRow k="גודל משפחה" v={label('childrenPreference', goals.childrenPreference)} />}
+            {goals?.careerPriority && <InfoRow k="תורה / קריירה" v={label('careerPriority', goals.careerPriority)} />}
+            {goals?.homeVision && <InfoRow k="חזון הבית" v={goals.homeVision} />}
+          </dl>
+        ) : <div className="text-xs text-ink-muted">—</div>}
+      </div>
+
+      {/* Family background */}
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-brand-700 uppercase tracking-wide">רקע משפחתי</div>
+        {hasFamily ? (
+          <dl className="space-y-1">
+            {internal.ethnicity && <InfoRow k="עדה / מוצא" v={internal.ethnicity} />}
+            {internal.familyBackground && <InfoRow k="רקע" v={internal.familyBackground} />}
+          </dl>
+        ) : <div className="text-xs text-ink-muted">—</div>}
+      </div>
+
+      {/* Character / middot */}
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-brand-700 uppercase tracking-wide">מידות ואופי</div>
+        {hasCharacter ? (
+          <div className="space-y-2">
+            {traits.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {traits.map((t) => (
+                  <span key={t} className="px-2 py-0.5 rounded-full text-xs bg-bg-subtle border border-border text-ink-muted">{t}</span>
+                ))}
+              </div>
+            )}
+            {internal.characterNotes && <p className="text-xs text-ink-muted">{internal.characterNotes}</p>}
+          </div>
+        ) : <div className="text-xs text-ink-muted">—</div>}
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="text-xs text-ink-faint min-w-[5.5rem]">{k}</dt>
+      <dd className="text-xs text-ink flex-1">{v}</dd>
+    </div>
+  );
+}
+
 function SummaryBlock({ name, photo, lines }: { name: string; photo?: string; lines: Array<string | undefined> }) {
   return (
     <div className="flex items-start gap-3">
@@ -607,9 +699,11 @@ function SummaryBlock({ name, photo, lines }: { name: string; photo?: string; li
 function SendPreviewBlock({
   preview,
   onSend,
+  safeMode,
 }: {
   preview: SendPreview;
   onSend: () => void;
+  safeMode: ReturnType<typeof useSafeMode>;
 }) {
   return (
     <div className="space-y-3">
@@ -672,7 +766,7 @@ function LinkedConversation({ side, conversationId }: { side: 'a' | 'b'; convers
         </div>
         {c?.lastMessageAt && (
           <div className="text-[11px] text-ink-faint mt-0.5">
-            הודעה אחרונה {new Date(c.lastMessageAt).toLocaleString('he-IL')}
+            הודעה אחרונה {formatDateTime(c.lastMessageAt)}
           </div>
         )}
       </div>
@@ -680,24 +774,3 @@ function LinkedConversation({ side, conversationId }: { side: 'a' | 'b'; convers
   );
 }
 
-// ── AI brief builders ────────────────────────────────────
-// Keep payloads compact so AI requests stay under the
-// backend's prompt length cap.
-function briefInternal(c: InternalCandidate) {
-  return {
-    id: c._id, firstName: c.firstName, lastName: c.lastName, gender: c.gender,
-    city: c.city, sectorGroup: c.sectorGroup, subSector: c.subSector,
-    lifestyleTone: c.lifestyleTone, personalStatus: c.personalStatus,
-    lifeStage: c.lifeStage, studyWorkDirection: c.studyWorkDirection,
-    about: c.about, whatSeeking: c.whatSeeking,
-  };
-}
-function briefExternal(c: ExternalCandidate) {
-  return {
-    id: c._id, firstName: c.firstName, lastName: c.lastName, gender: c.gender,
-    age: c.age, city: c.city, sectorGroup: c.sectorGroup, subSector: c.subSector,
-    lifestyleTone: c.lifestyleTone, personalStatus: c.personalStatus,
-    lifeStage: c.lifeStage, studyWorkDirection: c.studyWorkDirection,
-    about: c.about, whatSeeking: c.whatSeeking,
-  };
-}

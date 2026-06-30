@@ -18,7 +18,8 @@
 //     skipReason='duplicate' without further side effects.
 // ═══════════════════════════════════════════════════════════
 
-import { Message, Conversation, ChatMapping, type IMessage } from '../../models/index.js';
+import { Types } from 'mongoose';
+import { Message, Conversation, ChatMapping, FailedInboundMessage, type IMessage } from '../../models/index.js';
 import type {
   NormalizedInboundMessage,
   NormalizedStatusUpdate,
@@ -27,13 +28,11 @@ import type {
 import { findOrCreateConversation } from './conversation.linker.js';
 import { findChannelByProviderSessionId, touchChannelActivity } from './channel.manager.js';
 import { logWhatsApp, maskPhone } from './whatsapp.logger.js';
-import { ChannelRole, MessageDeliveryStatus, MessageDirection } from '@shadchanai/shared';
+import { env } from '../../config/env.js';
+import { ChannelRole, MessageDeliveryStatus, MessageDirection, MessageIngestionDecision } from '@shadchanai/shared';
 import { enqueueExtraction } from '../extraction/queue.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
-import { classifyResponse } from './response.classifier.js';
-import { applyInboundResponse } from '../../modules/matches/match.service.js';
-import { MatchSuggestion } from '../../models/index.js';
-import { classifyMessage as aiClassifyMessage } from '../ai/ai.service.js';
+import { classifyAndApplyInboundResponse } from '../../modules/matches/match.response.js';
 
 // ── Inbound message handling ─────────────────────────────
 
@@ -169,9 +168,17 @@ export async function handleInboundMessage(
     effectiveRole = conversation.assignedRole;
   }
 
-  const conversationApprovedForIngestion = effectiveRole === 'profiles_source';
+  // Decision is a pure function (resolveIngestionGate, below) so the
+  // gate — including the REQUIRE_EXPLICIT_SOURCE_MAPPING semantics — is
+  // unit-testable without a DB.
+  const gate = resolveIngestionGate({
+    channelRole: channel.role,
+    direction: msg.direction,
+    effectiveRole,
+    requireExplicitMapping: env.REQUIRE_EXPLICIT_SOURCE_MAPPING,
+  });
 
-  if (ingestionRoleEligible && effectiveRole === 'ignore') {
+  if (gate === 'ignored_assigned_ignore') {
     logWhatsApp({
       event: 'message_ignored_assigned_ignore',
       channelId: channel.channelId,
@@ -179,7 +186,8 @@ export async function handleInboundMessage(
       conversationId: String(conversation._id),
       messageId: String(saved._id),
     });
-  } else if (ingestionRoleEligible && effectiveRole === 'match_sending') {
+    recordIngestionDecision(saved._id, MessageIngestionDecision.IGNORED_ASSIGNED_IGNORE, effectiveRole);
+  } else if (gate === 'ignored_match_sending') {
     logWhatsApp({
       event: 'message_ignored_assigned_match_sending',
       channelId: channel.channelId,
@@ -187,7 +195,8 @@ export async function handleInboundMessage(
       conversationId: String(conversation._id),
       messageId: String(saved._id),
     });
-  } else if (ingestionRoleEligible && !conversationApprovedForIngestion) {
+    recordIngestionDecision(saved._id, MessageIngestionDecision.IGNORED_MATCH_SENDING, effectiveRole);
+  } else if (gate === 'ignored_unmapped') {
     logWhatsApp({
       event: 'message_ignored_unmapped_conversation',
       channelId: channel.channelId,
@@ -195,7 +204,8 @@ export async function handleInboundMessage(
       conversationId: String(conversation._id),
       messageId: String(saved._id),
     });
-  } else if (ingestionRoleEligible && conversationApprovedForIngestion) {
+    recordIngestionDecision(saved._id, MessageIngestionDecision.IGNORED_UNMAPPED, effectiveRole);
+  } else if (gate === 'approved') {
     const effectiveText = (msg.body?.trim() || msg.media?.caption?.trim() || '');
     if (effectiveText.length > 0) {
       logWhatsApp({
@@ -205,6 +215,7 @@ export async function handleInboundMessage(
         conversationId: String(conversation._id),
         messageId: String(saved._id),
       });
+      recordIngestionDecision(saved._id, MessageIngestionDecision.ACCEPTED, effectiveRole);
       void enqueueExtraction(String(saved._id)).catch((err) => {
         logWhatsApp({
           event: 'error',
@@ -243,6 +254,7 @@ export async function handleInboundMessage(
       });
     }
   }
+  // gate === 'not_eligible' → no-op (match_sending channel / outbound)
 
   // ── 7b. Auto-detect match response on match_sending channels ──
   // If this inbound message arrived on a conversation linked to a
@@ -260,64 +272,12 @@ export async function handleInboundMessage(
     const messageId = String(saved._id);
     const body = msg.body;
 
-    void (async (): Promise<void> => {
-      try {
-        const match = await MatchSuggestion.findById(matchId).lean().exec();
-        if (!match) return;
-
-        // Determine which side this conversation represents.
-        let side: 'a' | 'b' | null = null;
-        if (String(match.conversationIds?.sideA ?? '') === conversationId) side = 'a';
-        else if (String(match.conversationIds?.sideB ?? '') === conversationId) side = 'b';
-        if (!side) return; // conversation linked to match but not bound to a specific side
-
-        // Deterministic classification first.
-        const regex = classifyResponse(body);
-        let status: 'accepted' | 'declined' | 'considering' = regex.status;
-        let classifier: 'regex' | 'ai' = 'regex';
-        let confidence = regex.confidence;
-
-        // Confidence policy (Phase 7 hardening):
-        //   - Regex ≥ 0.6  → apply regex verdict.
-        //   - Regex < 0.6  → AI advisory. AI may ONLY escalate to a
-        //     decisive accepted/declined when its own confidence
-        //     crosses AI_MIN_CONFIDENCE; otherwise status is held
-        //     at "considering". Prevents a low-confidence LLM reply
-        //     from mis-advancing the match state machine.
-        const AI_MIN_CONFIDENCE = 0.7;
-        if (regex.confidence < 0.6) {
-          try {
-            const ai = await aiClassifyMessage(
-              { text: body, context: { purpose: 'match_proposal' } },
-              { messageId },
-            );
-            const sentiment = ai.data.sentiment;
-            const aiConfidence = ai.data.confidence ?? 0;
-            const decisive = aiConfidence >= AI_MIN_CONFIDENCE;
-
-            if (sentiment === 'positive' && decisive) {
-              status = 'accepted';
-            } else if (sentiment === 'negative' && decisive) {
-              status = 'declined';
-            } else {
-              // non-decisive OR below confidence floor → conservative.
-              // Row surfaces on dashboard as "considering" for operator review.
-              status = 'considering';
-            }
-            classifier = 'ai';
-            confidence = aiConfidence;
-          } catch {
-            // AI unreachable — keep regex verdict (likely 'considering').
-          }
-        }
-
-        await applyInboundResponse(matchId, side, status, {
-          messageId,
-          classifier,
-          classifierConfidence: confidence,
-          rawText: body,
-        });
-      } catch (err) {
+    // Match-domain decisioning (side resolution, classifier confidence
+    // policy, state-machine advance) lives in the matches module. The
+    // handler just delegates; this is fire-and-forget and never allowed
+    // to break the primary persistence path.
+    void classifyAndApplyInboundResponse({ matchId, conversationId, messageId, body })
+      .catch((err: unknown) => {
         logWhatsApp({
           event: 'error',
           channelId: channel.channelId,
@@ -325,8 +285,7 @@ export async function handleInboundMessage(
           messageId,
           errorMessage: `response_detection: ${(err as Error).message}`,
         });
-      }
-    })();
+      });
   }
 
   logWhatsApp({
@@ -345,6 +304,64 @@ export async function handleInboundMessage(
     messageId: String(saved._id),
     conversationId: String(conversation._id),
   };
+}
+
+export type IngestionGateOutcome =
+  | 'not_eligible'
+  | 'ignored_assigned_ignore'
+  | 'ignored_match_sending'
+  | 'ignored_unmapped'
+  | 'approved';
+
+/**
+ * Pure decision for whether an inbound message feeds the extraction
+ * pipeline. Extracted so the gate (and the REQUIRE_EXPLICIT_SOURCE_MAPPING
+ * semantics) is unit-testable without a DB.
+ *
+ *   - Only INBOUND messages on a PROFILES_SOURCE channel are eligible.
+ *   - An explicit 'ignore' / 'match_sending' mapping always diverts.
+ *   - Otherwise approved iff the chat is mapped 'profiles_source', OR
+ *     explicit mapping is not required (requireExplicitMapping=false →
+ *     a profiles_source channel ingests by default).
+ */
+export function resolveIngestionGate(params: {
+  channelRole: ChannelRole;
+  direction: MessageDirection;
+  effectiveRole: 'profiles_source' | 'match_sending' | 'ignore' | undefined;
+  requireExplicitMapping: boolean;
+}): IngestionGateOutcome {
+  const eligible =
+    params.channelRole === ChannelRole.PROFILES_SOURCE &&
+    params.direction === MessageDirection.INBOUND;
+  if (!eligible) return 'not_eligible';
+  if (params.effectiveRole === 'ignore') return 'ignored_assigned_ignore';
+  if (params.effectiveRole === 'match_sending') return 'ignored_match_sending';
+  const approved =
+    params.effectiveRole === 'profiles_source' || !params.requireExplicitMapping;
+  return approved ? 'approved' : 'ignored_unmapped';
+}
+
+/**
+ * Persist the ingestion routing verdict on the message so operators can
+ * audit *why* a message was/wasn't extracted from the UI — not only by
+ * scraping logs. Fire-and-forget: a failure here must never break the
+ * primary persistence path, so we only log on error.
+ */
+function recordIngestionDecision(
+  messageId: Types.ObjectId | string,
+  decision: MessageIngestionDecision,
+  effectiveRole?: string,
+): void {
+  void Message.updateOne(
+    { _id: messageId },
+    { $set: { ingestion: { decision, effectiveRole, decidedAt: new Date() } } },
+  ).exec().catch((err) => {
+    logWhatsApp({
+      event: 'error',
+      messageId: String(messageId),
+      errorMessage: `record_ingestion_decision: ${(err as Error).message}`,
+    });
+  });
 }
 
 // ── Outbound status updates ──────────────────────────────
@@ -399,6 +416,140 @@ export async function handleStatusUpdate(
   });
 
   return { updated: true };
+}
+
+// ── Resilient inbound ingestion ──────────────────────────
+// handleInboundMessage is the SOLE inbound persistence point. If it throws
+// before the Message row is durably written (transient Mongo fault during a
+// failover/timeout, or a validation error), the message would otherwise be
+// lost forever — Baileys does not redeliver an already-acked message. The
+// wrapper below adds bounded inline retries for transient faults and, failing
+// that, records the message to a dead-letter store that the replay job drains.
+// Replays are safe because persistence is idempotent (unique externalMessageId).
+
+const INGEST_MAX_INLINE_ATTEMPTS = 3;
+const INGEST_INLINE_BACKOFF_MS = 250;
+const REPLAY_MAX_ATTEMPTS = 10;
+const REPLAY_BACKOFF_BASE_MS = 60_000; // 1 min, grows per attempt
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Transient/infra DB errors worth retrying (vs. permanent validation errors). */
+export function isTransientDbError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if (isDuplicateKeyError(err)) return false;
+  const e = err as { name?: string; code?: number; message?: string };
+  const name = e.name ?? '';
+  if (
+    name === 'MongoNetworkError' || name === 'MongoNetworkTimeoutError' ||
+    name === 'MongoServerSelectionError' || name === 'MongoNotConnectedError' ||
+    name === 'MongoTimeoutError' || name === 'MongoPoolClearedError'
+  ) return true;
+  // Retryable server codes: not-primary / interruptions / write conflicts / timeouts.
+  const retryableCodes = new Set([6, 7, 89, 91, 112, 189, 251, 262, 9001, 10107, 11600, 11602, 13435, 13436]);
+  if (typeof e.code === 'number' && retryableCodes.has(e.code)) return true;
+  const msg = (e.message ?? '').toLowerCase();
+  if (
+    msg.includes('timed out') || msg.includes('not primary') ||
+    msg.includes('pool is draining') || msg.includes('connection') || msg.includes('socket')
+  ) return true;
+  return false;
+}
+
+/**
+ * Persist an inbound message with bounded retry + dead-letter durability.
+ * The provider event bridge should call THIS (not handleInboundMessage
+ * directly) so a transient DB fault never silently drops a message.
+ */
+export async function ingestInboundMessage(
+  msg: NormalizedInboundMessage,
+): Promise<MessageHandleResult> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= INGEST_MAX_INLINE_ATTEMPTS; attempt++) {
+    try {
+      return await handleInboundMessage(msg);
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientDbError(err) || attempt === INGEST_MAX_INLINE_ATTEMPTS) break;
+      await sleep(INGEST_INLINE_BACKOFF_MS * attempt);
+    }
+  }
+  // Inline retries exhausted (or a permanent error). Record to the dead-letter
+  // store for later replay. If even THIS write fails (full DB outage), rethrow
+  // so the caller logs an error event — the only remaining signal.
+  try {
+    await deadLetterInboundMessage(msg, lastErr);
+  } catch {
+    throw lastErr;
+  }
+  return { stored: false, skipReason: 'deferred_failed' };
+}
+
+async function deadLetterInboundMessage(msg: NormalizedInboundMessage, err: unknown): Promise<void> {
+  const e = (err ?? {}) as { name?: string; message?: string };
+  const now = new Date();
+  await FailedInboundMessage.updateOne(
+    { externalMessageId: msg.externalMessageId },
+    {
+      $set: {
+        providerSessionId: msg.providerSessionId,
+        normalized: msg as unknown as Record<string, unknown>,
+        errorName: e.name,
+        errorMessage: e.message ?? String(err),
+        status: 'pending',
+        lastTriedAt: now,
+        nextRetryAt: new Date(now.getTime() + REPLAY_BACKOFF_BASE_MS),
+      },
+      $setOnInsert: { firstFailedAt: now, attempts: 0 },
+    },
+    { upsert: true },
+  ).exec();
+  logWhatsApp({
+    event: 'error',
+    externalMessageId: msg.externalMessageId,
+    participantPhoneMasked: maskPhone(msg.participantPhone),
+    errorMessage: `inbound dead-lettered after retries: ${e.message ?? String(err)}`,
+  });
+}
+
+/**
+ * Replay pending dead-lettered inbound messages whose backoff has elapsed.
+ * Called by the background job. Idempotent — already-persisted messages
+ * resolve via the duplicate path (handleInboundMessage returns, doesn't throw).
+ */
+export async function replayFailedInboundMessages(
+  limit = 50,
+): Promise<{ resolved: number; failed: number; parked: number }> {
+  const now = new Date();
+  const due = await FailedInboundMessage.find({ status: 'pending', nextRetryAt: { $lte: now } })
+    .sort({ nextRetryAt: 1 })
+    .limit(limit)
+    .exec();
+
+  let resolved = 0, failed = 0, parked = 0;
+  for (const row of due) {
+    try {
+      await handleInboundMessage(row.normalized as unknown as NormalizedInboundMessage);
+      row.status = 'resolved';
+      row.resolvedAt = new Date();
+      resolved++;
+    } catch (err) {
+      row.attempts += 1;
+      row.lastTriedAt = new Date();
+      row.errorMessage = (err as Error)?.message ?? String(err);
+      if (row.attempts >= REPLAY_MAX_ATTEMPTS) {
+        row.status = 'parked';
+        parked++;
+      } else {
+        row.nextRetryAt = new Date(Date.now() + REPLAY_BACKOFF_BASE_MS * row.attempts);
+        failed++;
+      }
+    }
+    await row.save();
+  }
+  return { resolved, failed, parked };
 }
 
 // ── Utility ──────────────────────────────────────────────

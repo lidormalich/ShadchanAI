@@ -28,6 +28,9 @@ import type {
   BlockerCode,
   BlockerSeverity,
   BlockerOverridable,
+  Region,
+  ChildrenPreference,
+  CareerPriority,
 } from '@shadchanai/shared';
 
 // ── Structured blocker reason ─────────────────────────────
@@ -52,7 +55,13 @@ export interface MatchableInternal {
 
   // demographics
   city?: string;
+  region?: Region;
+  ethnicity?: string;
   height?: number;
+
+  // shared goals (feed mutual_expectations; never hard-block)
+  childrenPreference?: ChildrenPreference;
+  careerPriority?: CareerPriority;
 
   // religious identity
   sectorGroup: SectorGroup;
@@ -105,7 +114,13 @@ export interface MatchableExternal {
 
   // demographics
   city?: string;
+  region?: Region;
+  ethnicity?: string;
   height?: number;
+
+  // shared goals (optional — used when the source supplied them)
+  childrenPreference?: ChildrenPreference;
+  careerPriority?: CareerPriority;
 
   // religious identity
   sectorGroup?: SectorGroup;

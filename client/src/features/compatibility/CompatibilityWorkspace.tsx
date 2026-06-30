@@ -1,0 +1,1023 @@
+// ═══════════════════════════════════════════════════════════
+// CompatibilityWorkspace — operator's main matching screen for a
+// single internal candidate.
+//
+// Layout:
+//   - Top bar: bucket counters + refresh + manual pair-check entry
+//   - Sub-tabs: Suitable | Weak | Forced | Blocked | Historical
+//   - Per row: deterministic explanation + manual review overlay +
+//              per-row actions (mark, force, AI explain, drill in)
+//
+// All explanations come from the deterministic engine. AI commentary
+// is fetched on demand and labeled clearly as advisory.
+// ═══════════════════════════════════════════════════════════
+
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Filter,
+  History,
+  Lock,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+  Sparkles,
+  Target,
+} from 'lucide-react';
+import { memo, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Input,
+  Select,
+  Tabs,
+  Textarea,
+} from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/Dialog';
+import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
+import { toast } from '@/components/ui/Toast';
+import { label } from '@/utils/labels';
+import {
+  compatibilityApi,
+  pairReviewsApi,
+  type CompatibilityBoard,
+  type CompatibilityBucket,
+  type CompatibilityRow,
+  type PairCheckResult,
+  type PairReviewStatus,
+} from '@/services/api/pair-reviews';
+import { matchesApi } from '@/services/api/matches';
+import { externalCandidatesApi } from '@/services/api/candidates';
+import type { ExternalCandidate } from '@/types/domain';
+
+const BUCKET_LABEL: Record<CompatibilityBucket, string> = {
+  suitable: 'מתאימים',
+  weak: 'חלשים / אזהרה',
+  blocked: 'חסומים',
+  forced: 'כפויים',
+  historical: 'היסטוריה',
+};
+
+const BUCKET_ICON: Record<CompatibilityBucket, JSX.Element> = {
+  suitable: <CheckCircle2 className="h-4 w-4" />,
+  weak: <AlertTriangle className="h-4 w-4" />,
+  blocked: <Lock className="h-4 w-4" />,
+  forced: <ShieldAlert className="h-4 w-4" />,
+  historical: <History className="h-4 w-4" />,
+};
+
+const BUCKET_TONE: Record<CompatibilityBucket, 'success' | 'warning' | 'danger' | 'purple' | 'neutral'> = {
+  suitable: 'success',
+  weak: 'warning',
+  blocked: 'danger',
+  forced: 'purple',
+  historical: 'neutral',
+};
+
+const MANUAL_STATUS_LABEL: Record<PairReviewStatus, string> = {
+  suitable: 'מתאים',
+  not_suitable: 'לא מתאים',
+  review_later: 'לבדוק מאוחר',
+  forced: 'כפוי',
+  rejected_after_contact: 'נכשל לאחר קשר',
+};
+
+const MANUAL_STATUS_TONE: Record<PairReviewStatus, 'success' | 'danger' | 'warning' | 'purple' | 'neutral'> = {
+  suitable: 'success',
+  not_suitable: 'danger',
+  review_later: 'warning',
+  forced: 'purple',
+  rejected_after_contact: 'danger',
+};
+
+export function CompatibilityWorkspace({ internalCandidateId }: { internalCandidateId: string }) {
+  const qc = useQueryClient();
+  const [reviewTarget, setReviewTarget] = useState<CompatibilityRow | null>(null);
+  const [forceTarget, setForceTarget] = useState<CompatibilityRow | null>(null);
+  const [drilldownTarget, setDrilldownTarget] = useState<CompatibilityRow | null>(null);
+  const [pairCheckOpen, setPairCheckOpen] = useState(false);
+
+  const board = useQuery({
+    queryKey: ['compatibility-board', internalCandidateId],
+    queryFn: () => compatibilityApi.board(internalCandidateId, { mode: 'strict' }),
+  });
+
+  const refetch = () => board.refetch();
+
+  if (board.isLoading) return <LoadingSkeleton rows={8} />;
+  if (board.isError) {
+    return (
+      <ErrorState
+        description={(board.error as Error).message}
+        onRetry={() => board.refetch()}
+      />
+    );
+  }
+  if (!board.data) return null;
+
+  const data = board.data.data;
+
+  return (
+    <div className="space-y-4">
+      <BoardHeader
+        board={data}
+        onRefresh={refetch}
+        refreshing={board.isFetching}
+        onPairCheck={() => setPairCheckOpen(true)}
+      />
+
+      <Tabs
+        tabs={(['suitable', 'weak', 'forced', 'blocked', 'historical'] as CompatibilityBucket[]).map((b) => ({
+          id: b,
+          label: (
+            <span className="inline-flex items-center gap-1.5">
+              {BUCKET_ICON[b]}
+              {BUCKET_LABEL[b]}
+            </span>
+          ),
+          badge: <Badge tone={BUCKET_TONE[b]}>{data.totals[b]}</Badge>,
+          content: (
+            <BucketSection
+              bucket={b}
+              rows={data.rows.filter((r) => r.bucket === b)}
+              onMark={setReviewTarget}
+              onForce={setForceTarget}
+              onDrilldown={setDrilldownTarget}
+              internalCandidateId={internalCandidateId}
+            />
+          ),
+        }))}
+      />
+
+      {reviewTarget && (
+        <ManualReviewDialog
+          internalCandidateId={internalCandidateId}
+          row={reviewTarget}
+          onClose={() => {
+            setReviewTarget(null);
+            qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+          }}
+        />
+      )}
+
+      {forceTarget && (
+        <ForceMatchDialog
+          internalCandidateId={internalCandidateId}
+          row={forceTarget}
+          onClose={() => {
+            setForceTarget(null);
+            qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+          }}
+        />
+      )}
+
+      {drilldownTarget && (
+        <PairDrilldownDialog
+          internalCandidateId={internalCandidateId}
+          row={drilldownTarget}
+          onClose={() => setDrilldownTarget(null)}
+          onMark={() => {
+            setReviewTarget(drilldownTarget);
+            setDrilldownTarget(null);
+          }}
+          onForce={() => {
+            setForceTarget(drilldownTarget);
+            setDrilldownTarget(null);
+          }}
+        />
+      )}
+
+      {pairCheckOpen && (
+        <PairCheckDialog
+          internalCandidateId={internalCandidateId}
+          onClose={() => {
+            setPairCheckOpen(false);
+            qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Header ──────────────────────────────────────────────────
+
+function BoardHeader({
+  board,
+  onRefresh,
+  refreshing,
+  onPairCheck,
+}: {
+  board: CompatibilityBoard;
+  onRefresh: () => void;
+  refreshing: boolean;
+  onPairCheck: () => void;
+}) {
+  return (
+    <Card>
+      <CardBody className="flex items-center gap-3 flex-wrap">
+        <Target className="h-5 w-5 text-brand-700" />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold">לוח התאמה</h3>
+          <div className="text-xs text-ink-muted">
+            {board.externalsConsidered} מועמדים נסקרו · עודכן {new Date(board.generatedAt).toLocaleString('he-IL')}
+          </div>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={<Search className="h-3.5 w-3.5" />}
+          onClick={onPairCheck}
+        >
+          בדיקה ידנית של זוג
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+          onClick={onRefresh}
+          loading={refreshing}
+        >
+          רענון
+        </Button>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Bucket section ──────────────────────────────────────────
+
+function BucketSection({
+  bucket,
+  rows,
+  onMark,
+  onForce,
+  onDrilldown,
+  internalCandidateId,
+}: {
+  bucket: CompatibilityBucket;
+  rows: CompatibilityRow[];
+  onMark: (row: CompatibilityRow) => void;
+  onForce: (row: CompatibilityRow) => void;
+  onDrilldown: (row: CompatibilityRow) => void;
+  internalCandidateId: string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <Card className="p-6">
+        <EmptyState
+          title={`אין מועמדים בקטגוריה "${BUCKET_LABEL[bucket]}"`}
+          description={emptyHint(bucket)}
+        />
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardBody className="!p-0">
+        <ul className="divide-y divide-border">
+          {rows.map((row) => (
+            <CompatibilityRowItem
+              key={row.externalCandidateId}
+              row={row}
+              onMark={onMark}
+              onForce={onForce}
+              onDrilldown={onDrilldown}
+              internalCandidateId={internalCandidateId}
+            />
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
+  );
+}
+
+function emptyHint(b: CompatibilityBucket): string {
+  switch (b) {
+    case 'suitable':   return 'כשיתעדכנו פרופילים זמינים, הם יסווגו לכאן.';
+    case 'weak':       return 'אין מועמדים עם ציון נמוך כעת.';
+    case 'blocked':    return 'אין חסימות מנוע על המועמדים הזמינים.';
+    case 'forced':     return 'אין הצעות כפויות פעילות.';
+    case 'historical': return 'אין הצעות בעבר עבור מועמד זה.';
+  }
+}
+
+// ── Single row ──────────────────────────────────────────────
+
+const CompatibilityRowItem = memo(function CompatibilityRowItem({
+  row,
+  onMark,
+  onForce,
+  onDrilldown,
+  internalCandidateId,
+}: {
+  row: CompatibilityRow;
+  onMark: (row: CompatibilityRow) => void;
+  onForce: (row: CompatibilityRow) => void;
+  onDrilldown: (row: CompatibilityRow) => void;
+  internalCandidateId: string;
+}) {
+  const qc = useQueryClient();
+  const aiExplain = useMutation({
+    mutationFn: () => pairReviewsApi.aiExplain(internalCandidateId, row.externalCandidateId),
+    onSuccess: () => {
+      toast.success('סיכום AI נטען');
+      qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+    },
+    onError: (e) => toast.error('שליפת סיכום AI נכשלה', (e as Error).message),
+  });
+
+  const createSuggestion = useMutation({
+    mutationFn: () => matchesApi.createManual({
+      internalCandidateId,
+      externalCandidateId: row.externalCandidateId,
+      mode: 'strict',
+    }),
+    onSuccess: () => {
+      toast.success('הצעה נוצרה');
+      qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+      qc.invalidateQueries({ queryKey: ['internal', internalCandidateId, 'suggestions'] });
+    },
+    onError: (e) => toast.error('יצירת הצעה נכשלה', (e as Error).message),
+  });
+
+  const name = `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim() || 'ללא שם';
+
+  return (
+    <li className="px-5 py-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              to={`/candidates/external/${row.externalCandidateId}`}
+              className="text-sm font-medium hover:underline truncate"
+            >
+              {name}
+            </Link>
+            <Badge tone={BUCKET_TONE[row.bucket]} icon={BUCKET_ICON[row.bucket]}>
+              {BUCKET_LABEL[row.bucket]}
+            </Badge>
+            {row.matchType && row.bucket !== 'historical' && row.bucket !== 'blocked' && (
+              <Badge tone={matchTypeTone(row.matchType)}>
+                {label('matchType', row.matchType)}
+              </Badge>
+            )}
+            {row.matchStatus && (row.bucket === 'forced' || row.bucket === 'historical') && (
+              <Badge tone="neutral">{label('matchStatus', row.matchStatus)}</Badge>
+            )}
+            {row.manualStatus && (
+              <Badge tone={MANUAL_STATUS_TONE[row.manualStatus]} icon={<History className="h-3 w-3" />}>
+                ידני: {MANUAL_STATUS_LABEL[row.manualStatus]}
+              </Badge>
+            )}
+            {row.bucket === 'blocked' && row.forceability === 'with_reason' && (
+              <Badge tone="warning"><ShieldAlert className="h-3 w-3" /> ניתן לעקוף</Badge>
+            )}
+            {row.bucket === 'blocked' && row.forceability === 'none' && (
+              <Badge tone="danger"><Lock className="h-3 w-3" /> חסימה קשיחה</Badge>
+            )}
+          </div>
+
+          <div className="text-xs text-ink-muted flex items-center gap-3 flex-wrap">
+            {typeof row.age === 'number' && <span className="num">גיל {row.age}</span>}
+            {row.city && <span>{row.city}</span>}
+            {row.sectorGroup && <span>{label('sectorGroup', row.sectorGroup)}</span>}
+            {row.personalStatus && <span>{label('personalStatus', row.personalStatus)}</span>}
+            {row.availabilityStatus && row.availabilityStatus !== 'available' && (
+              <Badge tone="warning">{row.availabilityStatus}</Badge>
+            )}
+          </div>
+
+          {/* Deterministic explanation — primary */}
+          <ExplanationBlock row={row} />
+        </div>
+
+        {/* Right rail: score + actions */}
+        <div className="shrink-0 flex flex-col items-end gap-2 w-44">
+          {row.bucket !== 'blocked' && row.bucket !== 'historical' && typeof row.matchScore === 'number' && (
+            <div className="text-end">
+              <div className="text-2xl font-semibold num text-brand-700">{row.matchScore}</div>
+              <div className="text-[11px] text-ink-faint num">ביטחון {row.confidenceScore ?? 0}</div>
+            </div>
+          )}
+          <div className="flex flex-col gap-1.5 w-full">
+            {row.bucket === 'suitable' && !row.matchSuggestionId && (
+              <Button
+                size="sm"
+                onClick={() => createSuggestion.mutate()}
+                loading={createSuggestion.isPending}
+              >
+                צור הצעה
+              </Button>
+            )}
+            {row.matchSuggestionId && (
+              <Link
+                to={`/matches/${row.matchSuggestionId}`}
+                className="text-xs text-center text-brand-700 hover:underline"
+              >
+                פתיחת הצעה
+              </Link>
+            )}
+            {row.bucket === 'blocked' && row.forceability === 'with_reason' && (
+              <Button size="sm" variant="secondary" onClick={() => onForce(row)}>
+                כפה עם נימוק
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => onMark(row)}>
+              סמן ידנית
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              leftIcon={<Sparkles className="h-3.5 w-3.5" />}
+              loading={aiExplain.isPending}
+              onClick={() => aiExplain.mutate()}
+            >
+              {row.bucket === 'blocked' || row.bucket === 'weak'
+                ? (row.aiExplanation ? 'רענן ניתוח' : 'בדוק למה לא מתאים')
+                : (row.aiExplanation ? 'רענן AI' : 'סיכום AI')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onDrilldown(row)}>
+              פירוט מלא
+            </Button>
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+});
+
+function ExplanationBlock({ row }: { row: CompatibilityRow }) {
+  return (
+    <div className="space-y-1.5 text-sm">
+      <div className="font-medium text-ink">{row.explanation.primary}</div>
+      {row.explanation.manualOverlay && (
+        <div className="rounded-md bg-purple-50 border border-purple-100 px-2.5 py-1.5 text-xs text-purple-900">
+          <span className="font-semibold">החלטה ידנית:</span> {row.explanation.manualOverlay}
+        </div>
+      )}
+      {row.explanation.positives.length > 0 && (
+        <ul className="list-disc list-inside text-xs text-emerald-700 space-y-0.5">
+          {row.explanation.positives.slice(0, 3).map((p, i) => <li key={i}>{p}</li>)}
+        </ul>
+      )}
+      {row.explanation.negatives.length > 0 && (
+        <ul className="list-disc list-inside text-xs text-red-700 space-y-0.5">
+          {row.explanation.negatives.slice(0, 3).map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+      )}
+      {row.explanation.warnings.length > 0 && (
+        <ul className="list-disc list-inside text-xs text-amber-700 space-y-0.5">
+          {row.explanation.warnings.slice(0, 3).map((w, i) => <li key={i}>{w}</li>)}
+        </ul>
+      )}
+      {(row.aiExplanation?.notMatchReasons?.length ?? 0) > 0 && (
+        <div className="mt-2 rounded-md bg-red-50 border border-red-100 px-2.5 py-2 text-xs text-red-900">
+          <div className="flex items-center gap-1 font-semibold mb-1">
+            <Sparkles className="h-3 w-3" /> סיבות אי-התאמה · נשמרו ותועדו
+          </div>
+          <ul className="list-disc list-inside space-y-0.5 leading-relaxed">
+            {row.aiExplanation!.notMatchReasons!.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        </div>
+      )}
+      {row.aiExplanation?.text && (
+        <div className="mt-2 rounded-md bg-sky-50 border border-sky-100 px-2.5 py-2 text-xs text-sky-900">
+          <div className="flex items-center gap-1 font-semibold mb-1">
+            <Sparkles className="h-3 w-3" /> פרשנות AI · ייעוץ בלבד
+          </div>
+          <div className="leading-relaxed">{row.aiExplanation.text}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Manual review dialog ────────────────────────────────────
+
+function ManualReviewDialog({
+  internalCandidateId,
+  row,
+  onClose,
+}: {
+  internalCandidateId: string;
+  row: CompatibilityRow;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState<PairReviewStatus>(row.manualStatus ?? 'review_later');
+  const [reason, setReason] = useState(row.operatorReason ?? '');
+  const [outcome, setOutcome] = useState(row.outcomeReason ?? '');
+
+  const mutation = useMutation({
+    mutationFn: () => pairReviewsApi.upsert(internalCandidateId, row.externalCandidateId, {
+      manualStatus: status,
+      operatorReason: reason || undefined,
+      outcomeReason: outcome || undefined,
+      matchSuggestionId: row.matchSuggestionId,
+    }),
+    onSuccess: () => {
+      toast.success('המיפוי הידני נשמר');
+      qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+      onClose();
+    },
+    onError: (e) => toast.error('שמירת המיפוי נכשלה', (e as Error).message),
+  });
+
+  const clearMutation = useMutation({
+    mutationFn: () => pairReviewsApi.clear(internalCandidateId, row.externalCandidateId),
+    onSuccess: () => {
+      toast.success('המיפוי הידני נמחק');
+      qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+      onClose();
+    },
+    onError: (e) => toast.error('מחיקת המיפוי נכשלה', (e as Error).message),
+  });
+
+  const reasonRequired = status === 'not_suitable';
+  const outcomeRequired = status === 'rejected_after_contact';
+  const canSave = (!reasonRequired || reason.trim().length > 0)
+    && (!outcomeRequired || outcome.trim().length > 0);
+
+  return (
+    <Dialog
+      open={true}
+      onClose={onClose}
+      title={`סימון ידני · ${row.firstName ?? ''} ${row.lastName ?? ''}`.trim()}
+      description="ההחלטה תישמר בזיכרון הזוג ותוצג בכל פעם שתעריך אותו מחדש. אינה משפיעה על תוצאת המנוע."
+      primaryAction={{
+        label: 'שמור',
+        onClick: () => mutation.mutate(),
+        loading: mutation.isPending,
+        disabled: !canSave,
+      }}
+      secondaryAction={{ label: 'ביטול', onClick: onClose }}
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs font-medium text-ink-muted block mb-1">סטטוס ידני</label>
+          <Select value={status} onChange={(e) => setStatus(e.target.value as PairReviewStatus)}>
+            {(Object.keys(MANUAL_STATUS_LABEL) as PairReviewStatus[]).map((s) => (
+              <option key={s} value={s}>{MANUAL_STATUS_LABEL[s]}</option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-ink-muted block mb-1">
+            סיבה / הערה {reasonRequired && <span className="text-red-600">*</span>}
+          </label>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="לדוגמה: מגזר חזק מדי לפי שיחה עם הצד; הופנה ע״י המשפחה ללא היכרות; וכו'."
+          />
+        </div>
+        {(status === 'rejected_after_contact') && (
+          <div>
+            <label className="text-xs font-medium text-ink-muted block mb-1">
+              סיבת הכישלון לאחר קשר <span className="text-red-600">*</span>
+            </label>
+            <Textarea
+              value={outcome}
+              onChange={(e) => setOutcome(e.target.value)}
+              placeholder="לדוגמה: צד א׳ סירב; חוסר התאמה משפחתית; הופסק ע״י השדכנית."
+            />
+          </div>
+        )}
+        {row.manualStatus && (
+          <div className="flex items-center justify-between text-xs text-ink-muted">
+            <span>החלטה אחרונה: {MANUAL_STATUS_LABEL[row.manualStatus]} ({row.reviewedAt ? new Date(row.reviewedAt).toLocaleString('he-IL') : '—'})</span>
+            <Button variant="ghost" size="sm" onClick={() => clearMutation.mutate()} loading={clearMutation.isPending}>
+              נקה החלטה
+            </Button>
+          </div>
+        )}
+        {(row.reviewHistoryCount ?? 0) > 0 && (
+          <div className="text-[11px] text-ink-faint">
+            {row.reviewHistoryCount} החלטות קודמות נשמרות בהיסטוריית הזוג.
+          </div>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+// ── Force match dialog ──────────────────────────────────────
+
+function ForceMatchDialog({
+  internalCandidateId,
+  row,
+  onClose,
+}: {
+  internalCandidateId: string;
+  row: CompatibilityRow;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [justification, setJustification] = useState('');
+  const mutation = useMutation({
+    mutationFn: () => matchesApi.force({
+      internalCandidateId,
+      externalCandidateId: row.externalCandidateId,
+      mode: 'strict',
+      justification,
+    }),
+    onSuccess: async () => {
+      toast.success('הצעה כפויה נוצרה');
+      // Mirror as manual "forced" review so the operator's own decision
+      // is preserved on the board overlay alongside the suggestion.
+      try {
+        await pairReviewsApi.upsert(internalCandidateId, row.externalCandidateId, {
+          manualStatus: 'forced',
+          operatorReason: justification,
+        });
+      } catch { /* non-blocking */ }
+      qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+      qc.invalidateQueries({ queryKey: ['internal', internalCandidateId, 'suggestions'] });
+      onClose();
+    },
+    onError: (e) => toast.error('הכפייה נכשלה', (e as Error).message),
+  });
+
+  return (
+    <Dialog
+      open={true}
+      onClose={onClose}
+      title={`כפיית הצעה — ${row.firstName ?? ''} ${row.lastName ?? ''}`.trim()}
+      description="כל החסימות הניתנות לעקיפה יישמרו בהצעה לתיעוד. שדה הנימוק חובה (10 תווים לפחות)."
+      primaryAction={{
+        label: 'אשר וכפה',
+        onClick: () => mutation.mutate(),
+        loading: mutation.isPending,
+        disabled: justification.trim().length < 10,
+        variant: 'danger',
+      }}
+      secondaryAction={{ label: 'ביטול', onClick: onClose }}
+    >
+      <div className="space-y-3">
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 space-y-1">
+          {row.blockers.map((b) => (
+            <div key={b.code}>· {b.message}</div>
+          ))}
+        </div>
+        <Textarea
+          value={justification}
+          onChange={(e) => setJustification(e.target.value)}
+          placeholder="נימוק תפעולי: למה לעקוף את החסימות (חובה — לפחות 10 תווים)."
+          rows={4}
+        />
+      </div>
+    </Dialog>
+  );
+}
+
+// ── Drilldown dialog ────────────────────────────────────────
+
+function PairDrilldownDialog({
+  internalCandidateId,
+  row,
+  onClose,
+  onMark,
+  onForce,
+}: {
+  internalCandidateId: string;
+  row: CompatibilityRow;
+  onClose: () => void;
+  onMark: () => void;
+  onForce: () => void;
+}) {
+  const q = useQuery({
+    queryKey: ['compatibility-pair', internalCandidateId, row.externalCandidateId],
+    queryFn: () => compatibilityApi.pairCheck(internalCandidateId, {
+      externalCandidateId: row.externalCandidateId,
+      mode: 'strict',
+    }),
+  });
+
+  return (
+    <Dialog
+      open={true}
+      onClose={onClose}
+      title={`פירוט זוג · ${row.firstName ?? ''} ${row.lastName ?? ''}`.trim()}
+      secondaryAction={{ label: 'סגור', onClick: onClose }}
+    >
+      <div className="max-h-[70vh] overflow-y-auto -mx-1 px-1">
+        {q.isLoading && <LoadingSkeleton rows={4} />}
+        {q.isError && <ErrorState description={(q.error as Error).message} onRetry={() => q.refetch()} />}
+        {q.data && (
+          <PairDrilldownContent
+            data={q.data.data}
+            onMark={onMark}
+            onForce={onForce}
+          />
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+function PairDrilldownContent({
+  data, onMark, onForce,
+}: {
+  data: PairCheckResult;
+  onMark: () => void;
+  onForce: () => void;
+}) {
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3">
+        <div className="text-xs font-semibold mb-1 inline-flex items-center gap-1">
+          <Filter className="h-3 w-3" /> תוצאת מנוע (דטרמיניסטית)
+        </div>
+        <div className="font-medium">{data.explanation.primary}</div>
+      </div>
+
+      {data.engine && (
+        <div>
+          <div className="text-xs font-semibold text-ink-muted mb-1">פירוט ציון לפי מימדים</div>
+          <ul className="space-y-1">
+            {data.engine.scoreBreakdown.map((d) => (
+              <li key={d.dimension} className="flex items-center justify-between text-xs">
+                <span>{label('scoringDimension', d.dimension)}</span>
+                <span className="num text-ink-muted">{d.score} × {(d.weight * 100).toFixed(0)}% = {d.weightedScore.toFixed(1)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {data.engine && data.engine.blockers.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-red-700 mb-1">חסימות מנוע</div>
+          <ul className="text-xs space-y-1">
+            {data.engine.blockers.map((b) => (
+              <li key={b.code}>
+                <Badge tone={severityTone(b.severity)}>{b.severity}</Badge>
+                <span className="ms-2">{b.message}</span>
+                <span className="ms-1 text-ink-faint">[{b.overridable}]</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {data.pairReview && (
+        <div className="rounded-md bg-purple-50 border border-purple-100 p-3">
+          <div className="text-xs font-semibold mb-1 inline-flex items-center gap-1">
+            <History className="h-3 w-3" /> זיכרון תפעולי לזוג
+          </div>
+          <div>סטטוס ידני: {MANUAL_STATUS_LABEL[data.pairReview.manualStatus]}</div>
+          {data.pairReview.operatorReason && (
+            <div className="text-xs mt-1">סיבה: {data.pairReview.operatorReason}</div>
+          )}
+          {data.pairReview.outcomeReason && (
+            <div className="text-xs mt-1">תוצאה: {data.pairReview.outcomeReason}</div>
+          )}
+          <div className="text-[11px] text-ink-faint mt-1">
+            עודכן {new Date(data.pairReview.reviewedAt).toLocaleString('he-IL')} · {data.pairReview.historyCount} החלטות קודמות
+          </div>
+        </div>
+      )}
+
+      {data.pairReview?.aiExplanation?.text && (
+        <div className="rounded-md bg-sky-50 border border-sky-100 p-3 text-xs">
+          <div className="font-semibold inline-flex items-center gap-1 mb-1">
+            <Sparkles className="h-3 w-3" /> פרשנות AI · ייעוץ בלבד
+          </div>
+          <div className="whitespace-pre-wrap leading-relaxed">{data.pairReview.aiExplanation.text}</div>
+          {(data.pairReview.aiExplanation.strengths?.length ?? 0) > 0 && (
+            <ul className="list-disc list-inside text-emerald-800 mt-1">
+              {data.pairReview.aiExplanation.strengths!.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          )}
+          {(data.pairReview.aiExplanation.concerns?.length ?? 0) > 0 && (
+            <ul className="list-disc list-inside text-red-800 mt-1">
+              {data.pairReview.aiExplanation.concerns!.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          )}
+          {(data.pairReview.aiExplanation.notMatchReasons?.length ?? 0) > 0 && (
+            <div className="mt-1.5">
+              <div className="font-semibold text-red-800">סיבות אי-התאמה (מתועד):</div>
+              <ul className="list-disc list-inside text-red-800">
+                {data.pairReview.aiExplanation.notMatchReasons!.map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+            </div>
+          )}
+          <div className="text-[11px] text-ink-faint mt-1">
+            {data.pairReview.aiExplanation.provider} · {data.pairReview.aiExplanation.generatedAt ? new Date(data.pairReview.aiExplanation.generatedAt).toLocaleString('he-IL') : ''}
+          </div>
+        </div>
+      )}
+
+      {data.existingSuggestion && (
+        <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 text-xs">
+          <div className="font-semibold mb-1">הצעה קיימת</div>
+          <div>סטטוס: {label('matchStatus', data.existingSuggestion.status)}</div>
+          {data.existingSuggestion.forcedOverride && <div>מסומנת כהצעה כפויה</div>}
+          {data.existingSuggestion.closeReason && <div>סיבת סגירה: {data.existingSuggestion.closeReason}</div>}
+          <Link
+            to={`/matches/${data.existingSuggestion.matchSuggestionId}`}
+            className="text-brand-700 hover:underline"
+          >
+            פתח את ההצעה
+          </Link>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2 pt-2">
+        <Button size="sm" variant="secondary" onClick={onMark}>סמן ידנית</Button>
+        {data.forceability === 'with_reason' && (
+          <Button size="sm" variant="secondary" onClick={onForce}>כפה עם נימוק</Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Manual pair-check dialog ────────────────────────────────
+
+function PairCheckDialog({
+  internalCandidateId,
+  onClose,
+}: {
+  internalCandidateId: string;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selected, setSelected] = useState<ExternalCandidate | null>(null);
+
+  // Debounce the term so we fire one request after typing settles, not per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const externals = useQuery({
+    queryKey: ['external-search', debouncedSearch],
+    queryFn: () => externalCandidatesApi.list({ search: debouncedSearch, limit: 25 }),
+    enabled: debouncedSearch.trim().length >= 2,
+  });
+
+  const result = useQuery({
+    queryKey: ['pair-check', internalCandidateId, selected?._id],
+    queryFn: () => compatibilityApi.pairCheck(internalCandidateId, {
+      externalCandidateId: selected!._id,
+      mode: 'strict',
+    }),
+    enabled: !!selected,
+  });
+
+  return (
+    <Dialog
+      open={true}
+      onClose={onClose}
+      title="בדיקה ידנית של זוג מועמדים"
+      description="בחר מועמד חיצוני מסוים כדי לבדוק תאימות. אם החסימה ניתנת לעקיפה, ניתן לכפות הצעה. אחרת תוצג הסיבה המדויקת."
+      secondaryAction={{ label: 'סגור', onClick: onClose }}
+    >
+      <div className="space-y-3 max-h-[70vh] overflow-y-auto -mx-1 px-1">
+        <Input
+          placeholder="חיפוש לפי שם, טלפון או מקור (לפחות 2 תווים)..."
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setSelected(null); }}
+        />
+        {externals.isLoading && search.length >= 2 && <LoadingSkeleton rows={3} />}
+        {externals.data && externals.data.data.length > 0 && !selected && (
+          <ul className="border border-border rounded-md max-h-48 overflow-y-auto divide-y divide-border bg-white">
+            {externals.data.data.map((ext) => (
+              <li key={ext._id}>
+                <button
+                  type="button"
+                  className="w-full text-start px-3 py-2 hover:bg-bg-hover text-sm"
+                  onClick={() => setSelected(ext)}
+                >
+                  <div className="font-medium">{ext.firstName ?? ''} {ext.lastName ?? ''}</div>
+                  <div className="text-xs text-ink-muted">
+                    {ext.age && <span>גיל {ext.age} · </span>}
+                    {ext.city && <span>{ext.city} · </span>}
+                    {ext.sectorGroup}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {externals.data && externals.data.data.length === 0 && search.length >= 2 && (
+          <EmptyState title="לא נמצאו מועמדים תואמים לחיפוש" />
+        )}
+        {selected && (
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold">
+                בדיקה: {selected.firstName ?? ''} {selected.lastName ?? ''}
+              </h3>
+            </CardHeader>
+            <CardBody>
+              {result.isLoading && <LoadingSkeleton rows={4} />}
+              {result.isError && <ErrorState description={(result.error as Error).message} onRetry={() => result.refetch()} />}
+              {result.data && <PairCheckResultPanel data={result.data.data} internalCandidateId={internalCandidateId} onClose={onClose} />}
+            </CardBody>
+          </Card>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+function PairCheckResultPanel({
+  data, internalCandidateId, onClose,
+}: {
+  data: PairCheckResult;
+  internalCandidateId: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const create = useMutation({
+    mutationFn: () => matchesApi.createManual({
+      internalCandidateId,
+      externalCandidateId: data.externalCandidateId,
+      mode: 'strict',
+    }),
+    onSuccess: () => {
+      toast.success('הצעה נוצרה');
+      qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+      qc.invalidateQueries({ queryKey: ['internal', internalCandidateId, 'suggestions'] });
+      onClose();
+    },
+    onError: (e) => toast.error('יצירת הצעה נכשלה', (e as Error).message),
+  });
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="font-medium">{data.explanation.primary}</div>
+      {data.engine && (
+        <div className="text-xs text-ink-muted">
+          ציון {data.engine.matchScore} · ביטחון {data.engine.confidenceScore} · סוג: {label('matchType', data.engine.matchType)}
+        </div>
+      )}
+      {data.engine && data.engine.blockers.length > 0 && (
+        <ul className="text-xs space-y-1">
+          {data.engine.blockers.map((b) => (
+            <li key={b.code} className="flex items-start gap-2">
+              {b.severity === 'hard_non_overridable' ? <Lock className="h-3 w-3 mt-0.5 text-red-700" /> : b.severity === 'hard_overridable' ? <ShieldAlert className="h-3 w-3 mt-0.5 text-amber-700" /> : <AlertTriangle className="h-3 w-3 mt-0.5 text-amber-600" />}
+              <span>{b.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.existingSuggestion && (
+        <div className="rounded-md bg-zinc-50 border border-zinc-200 px-2.5 py-2 text-xs">
+          קיימת הצעה ({label('matchStatus', data.existingSuggestion.status)}) · <Link className="text-brand-700 hover:underline" to={`/matches/${data.existingSuggestion.matchSuggestionId}`}>פתח</Link>
+        </div>
+      )}
+      {data.pairReview && (
+        <div className="rounded-md bg-purple-50 border border-purple-100 px-2.5 py-2 text-xs">
+          זיכרון תפעולי: {MANUAL_STATUS_LABEL[data.pairReview.manualStatus]}
+          {data.pairReview.operatorReason && ` — ${data.pairReview.operatorReason}`}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        {data.engine?.eligible && !data.existingSuggestion && (
+          <Button size="sm" onClick={() => create.mutate()} loading={create.isPending}>צור הצעה</Button>
+        )}
+        <Link
+          to={`/candidates/external/${data.externalCandidateId}`}
+          className="text-xs text-brand-700 hover:underline self-center"
+        >
+          פרופיל
+        </Link>
+      </div>
+      {!data.engine?.eligible && (
+        <div className="text-xs text-ink-muted flex items-center gap-1">
+          <Clock className="h-3 w-3" /> לא ניתן ליצור הצעה ישירות. ראה פירוט החסימות לעיל.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+function matchTypeTone(t: string): 'success' | 'brand' | 'warning' | 'danger' {
+  switch (t) {
+    case 'safe':     return 'success';
+    case 'balanced': return 'brand';
+    case 'creative': return 'warning';
+    default:         return 'danger';
+  }
+}
+
+function severityTone(s: string): 'danger' | 'warning' | 'neutral' {
+  switch (s) {
+    case 'hard_non_overridable': return 'danger';
+    case 'hard_overridable':     return 'warning';
+    default:                      return 'neutral';
+  }
+}

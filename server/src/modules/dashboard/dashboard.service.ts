@@ -32,7 +32,7 @@ import {
   type HighPotentialDraftRow,
   type DeferredRecheckRow,
 } from './dashboard.types.js';
-import { getSetting } from '../settings/settings.service.js';
+import { getSettingCached } from '../settings/settings.service.js';
 
 interface BuildQueueInput {
   ownership: 'mine' | 'team' | 'all';
@@ -65,11 +65,11 @@ export async function buildDashboardQueue(input: BuildQueueInput): Promise<Dashb
   // Thresholds are runtime-configurable via the Settings collection.
   // Falls back to the hardcoded defaults in dashboard.types when no
   // override is stored, so the queue keeps working out of the box.
-  const [awaitHours, highPotMinScore, deferredMinAgeHours] = await Promise.all([
-    getSetting('dashboard.awaiting_response_hours'),
-    getSetting('dashboard.high_potential_min_score'),
-    getSetting('dashboard.deferred_min_age_hours'),
-  ]);
+  const [awaitHours, highPotMinScore, deferredMinAgeHours] = (await Promise.all([
+    getSettingCached('dashboard.awaiting_response_hours'),
+    getSettingCached('dashboard.high_potential_min_score'),
+    getSettingCached('dashboard.deferred_min_age_hours'),
+  ])) as [number, number, number];
 
   const [
     needsReview,
@@ -103,6 +103,10 @@ export async function buildDashboardQueue(input: BuildQueueInput): Promise<Dashb
 
   return merged.slice(0, limit);
 }
+
+// Dashboard rows only need scalar fields + the response sub-objects. Exclude
+// the heavy scoring arrays/objects so we don't ship them over the wire per row.
+const DASHBOARD_SUGGESTION_PROJECTION = '-scoreBreakdown -blockers -penalties';
 
 // ── 1. Needs review ─────────────────────────────────────────
 async function queryNeedsReview(limit: number): Promise<NeedsReviewRow[]> {
@@ -145,6 +149,7 @@ async function queryAwaitingResponse(
       { sentSideBAt: { $lte: cutoff }, 'sideBResponse.status': 'pending' },
     ],
   })
+    .select(DASHBOARD_SUGGESTION_PROJECTION)
     .sort({ sentSideAAt: 1 })
     .limit(limit)
     .lean()
@@ -213,6 +218,7 @@ async function queryNewResponse(
       },
     ],
   })
+    .select(DASHBOARD_SUGGESTION_PROJECTION)
     .sort({ updatedAt: -1 })
     .limit(limit)
     .lean()
@@ -334,6 +340,7 @@ async function queryHighPotential(
     sentSideAAt: { $exists: false },
     sentSideBAt: { $exists: false },
   })
+    .select(DASHBOARD_SUGGESTION_PROJECTION)
     .sort({ matchScore: -1 })
     .limit(limit)
     .lean()
@@ -370,6 +377,7 @@ async function queryDeferredRecheck(
     deferredAt: { $lte: cutoff },
     status: { $ne: MatchSuggestionStatus.CLOSED },
   })
+    .select(DASHBOARD_SUGGESTION_PROJECTION)
     .sort({ deferredAt: 1 })
     .limit(limit)
     .lean()

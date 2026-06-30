@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, Inbox, MessageSquare, RefreshCw, Send, UserCheck, UserPlus } from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, Inbox, Info, MessageSquare, RefreshCw, Send, UserCheck, UserPlus, X } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Badge, Button, Card, CardBody, CardHeader, Divider, Textarea } from '@/components/ui/primitives';
+import { Badge, Button, Card, CardBody, CardHeader, Divider, IconButton, Textarea } from '@/components/ui/primitives';
 import { EmptyState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { conversationsApi } from '@/services/api/conversations';
@@ -20,6 +20,7 @@ export function ChatsPage() {
   const [searchParams] = useSearchParams();
   const urlConversation = searchParams.get('conversation');
   const [selected, setSelected] = useState<string | null>(urlConversation);
+  const [showContext, setShowContext] = useState(false);
 
   // Deep-link: open the conversation whose id is in ?conversation=
   useEffect(() => {
@@ -53,9 +54,9 @@ export function ChatsPage() {
   });
 
   return (
-    <div className="grid grid-cols-12 gap-4 h-[calc(100vh-9rem)]">
-      {/* Conversations list */}
-      <Card className="col-span-4 xl:col-span-3 flex flex-col">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-9rem)]">
+      {/* Conversations list — on mobile, shown only when no thread is open */}
+      <Card className={`lg:col-span-4 xl:col-span-3 flex-col ${selected ? 'hidden lg:flex' : 'flex'}`}>
         <CardHeader>
           <h3 className="text-sm font-semibold">שיחות</h3>
           <div className="mt-2 flex gap-1 rounded-md bg-bg-subtle border border-border p-0.5">
@@ -88,8 +89,8 @@ export function ChatsPage() {
         </div>
       </Card>
 
-      {/* Thread */}
-      <Card className="col-span-5 xl:col-span-6 flex flex-col">
+      {/* Thread — on mobile, shown only when a thread is selected */}
+      <Card className={`lg:col-span-5 xl:col-span-6 flex-col ${selected ? 'flex' : 'hidden lg:flex'}`}>
         {!selected ? (
           <EmptyState
             icon={<MessageSquare className="h-10 w-10 text-ink-faint" />}
@@ -100,7 +101,14 @@ export function ChatsPage() {
           <div className="p-4"><LoadingSkeleton rows={8} /></div>
         ) : (
           <>
-            {activeConv && <ThreadHeader conv={activeConv} chainLength={chain.data?.data.length ?? 0} />}
+            {activeConv && (
+              <ThreadHeader
+                conv={activeConv}
+                chainLength={chain.data?.data.length ?? 0}
+                onBack={() => setSelected(null)}
+                onShowContext={() => setShowContext(true)}
+              />
+            )}
             <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-bg-subtle/40">
               {(thread.data?.data ?? []).map((m) => <MessageBubble key={m._id} msg={m} />)}
             </div>
@@ -109,64 +117,89 @@ export function ChatsPage() {
         )}
       </Card>
 
-      {/* Context rail */}
-      <Card className="col-span-3 flex flex-col">
+      {/* Context rail — desktop column */}
+      <Card className="hidden lg:flex lg:col-span-3 flex-col">
         <CardHeader><h3 className="text-sm font-semibold">הקשר</h3></CardHeader>
         <CardBody>
-          {!activeConv ? (
-            <div className="text-sm text-ink-muted">בחר שיחה לצפייה בפרטי ההקשר</div>
-          ) : (
-            <div className="space-y-3 text-sm">
-              <div>
-                <div className="text-xs text-ink-muted">חשבון</div>
-                <div className="font-medium">{activeConv.accountDisplayName}</div>
-                <Badge tone={activeConv.channelRole === 'profiles_source' ? 'info' : 'purple'} className="mt-1">
-                  {label('channelRole', activeConv.channelRole)}
-                </Badge>
-              </div>
-              <Divider />
-              <div>
-                <div className="text-xs text-ink-muted">מטרה</div>
-                <div className="font-medium">{label('conversationPurpose', activeConv.purpose)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-ink-muted">נוצרה</div>
-                <div>{new Date(activeConv.createdAt).toLocaleString('he-IL')}</div>
-              </div>
-              {activeConv.internalCandidateId && (
-                <div>
-                  <div className="text-xs text-ink-muted">מועמד פנימי</div>
-                  <div className="font-mono text-xs">{activeConv.internalCandidateId.slice(-8)}</div>
-                </div>
-              )}
-              {activeConv.matchSuggestionId && (
-                <div>
-                  <div className="text-xs text-ink-muted">הצעת שידוך</div>
-                  <Link
-                    to={`/matches/${activeConv.matchSuggestionId}`}
-                    className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
-                  >
-                    פתח הצעה
-                    <span className="font-mono text-ink-faint">#{activeConv.matchSuggestionId.slice(-6)}</span>
-                  </Link>
-                </div>
-              )}
-              {activeConv.supersedesConversationId && (
-                <>
-                  <Divider />
-                  <div className="flex items-start gap-2 text-xs text-ink-muted">
-                    <ArrowLeftRight className="h-4 w-4 mt-0.5" />
-                    <div>
-                      שיחה זו ממשיכה ערוץ קודם שהוחלף
-                      {chain.data && <div className="mt-1">אורך שרשרת: {chain.data.data.length} שיחות</div>}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <ContextRail activeConv={activeConv} chain={chain.data?.data ?? null} />
         </CardBody>
       </Card>
+
+      {/* Context rail — mobile sheet */}
+      {showContext && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowContext(false)} />
+          <div className="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-2xl bg-bg-card border-t border-border">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-bg-card">
+              <h3 className="text-sm font-semibold">הקשר</h3>
+              <IconButton aria-label="סגור" onClick={() => setShowContext(false)}>
+                <X className="h-4 w-4" />
+              </IconButton>
+            </div>
+            <div className="p-5">
+              <ContextRail activeConv={activeConv} chain={chain.data?.data ?? null} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Context details for the active conversation — rendered both in the desktop
+// rail column and the mobile bottom-sheet.
+function ContextRail({ activeConv, chain }: { activeConv: Conversation | null; chain: Conversation[] | null }) {
+  if (!activeConv) {
+    return <div className="text-sm text-ink-muted">בחר שיחה לצפייה בפרטי ההקשר</div>;
+  }
+  return (
+    <div className="space-y-3 text-sm">
+      <div>
+        <div className="text-xs text-ink-muted">חשבון</div>
+        <div className="font-medium">{activeConv.accountDisplayName}</div>
+        <Badge tone={activeConv.channelRole === 'profiles_source' ? 'info' : 'purple'} className="mt-1">
+          {label('channelRole', activeConv.channelRole)}
+        </Badge>
+      </div>
+      <Divider />
+      <div>
+        <div className="text-xs text-ink-muted">מטרה</div>
+        <div className="font-medium">{label('conversationPurpose', activeConv.purpose)}</div>
+      </div>
+      <div>
+        <div className="text-xs text-ink-muted">נוצרה</div>
+        <div>{new Date(activeConv.createdAt).toLocaleString('he-IL')}</div>
+      </div>
+      {activeConv.internalCandidateId && (
+        <div>
+          <div className="text-xs text-ink-muted">מועמד פנימי</div>
+          <div className="font-mono text-xs">{activeConv.internalCandidateId.slice(-8)}</div>
+        </div>
+      )}
+      {activeConv.matchSuggestionId && (
+        <div>
+          <div className="text-xs text-ink-muted">הצעת שידוך</div>
+          <Link
+            to={`/matches/${activeConv.matchSuggestionId}`}
+            className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
+          >
+            פתח הצעה
+            <span className="font-mono text-ink-faint">#{activeConv.matchSuggestionId.slice(-6)}</span>
+          </Link>
+        </div>
+      )}
+      {activeConv.supersedesConversationId && (
+        <>
+          <Divider />
+          <div className="flex items-start gap-2 text-xs text-ink-muted">
+            <ArrowLeftRight className="h-4 w-4 mt-0.5" />
+            <div>
+              שיחה זו ממשיכה ערוץ קודם שהוחלף
+              {chain && <div className="mt-1">אורך שרשרת: {chain.length} שיחות</div>}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -196,14 +229,32 @@ function ConversationListItem({ conv, active, onClick }: { conv: Conversation; a
   );
 }
 
-function ThreadHeader({ conv, chainLength }: { conv: Conversation; chainLength: number }) {
+function ThreadHeader({
+  conv,
+  chainLength,
+  onBack,
+  onShowContext,
+}: {
+  conv: Conversation;
+  chainLength: number;
+  onBack?: () => void;
+  onShowContext?: () => void;
+}) {
   return (
-    <div className="px-5 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
-      <div>
-        <div className="font-semibold">{conv.participantName ?? 'ללא שם'}</div>
-        <div className="text-xs text-ink-muted">{conv.accountDisplayName} · {label('channelRole', conv.channelRole)}</div>
+    <div className="px-4 sm:px-5 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-2 min-w-0">
+        <IconButton className="lg:hidden shrink-0" aria-label="חזרה" onClick={onBack}>
+          <ArrowRight className="h-5 w-5 rtl:rotate-180" />
+        </IconButton>
+        <div className="min-w-0">
+          <div className="font-semibold truncate">{conv.participantName ?? 'ללא שם'}</div>
+          <div className="text-xs text-ink-muted truncate">{conv.accountDisplayName} · {label('channelRole', conv.channelRole)}</div>
+        </div>
       </div>
       <div className="flex items-center gap-2">
+        <IconButton className="lg:hidden" aria-label="הקשר" onClick={onShowContext}>
+          <Info className="h-5 w-5" />
+        </IconButton>
         {conv.matchSuggestionId && (
           <Link
             to={`/matches/${conv.matchSuggestionId}`}

@@ -18,23 +18,38 @@
 
 import makeWASocket, {
   type WASocket,
+  type WAMessageKey,
   fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
   DisconnectReason,
 } from '@whiskeysockets/baileys';
-import { Channel, type IChannel } from '../../../../models/index.js';
+import type { proto } from '@whiskeysockets/baileys';
+import { Channel, Message, type IChannel } from '../../../../models/index.js';
 import { ChannelStatus, WebhookStatus } from '@shadchanai/shared';
 import { BAILEYS } from '../../whatsapp.constants.js';
 import { logWhatsApp } from '../../whatsapp.logger.js';
 import { loadAuth, purgeSession } from './baileys.session.store.js';
 import { wireEvents, classifyDisconnect } from './baileys.events.js';
-import type { BaileysSessionState, BaileysChannelStatus } from '../../whatsapp.types.js';
+import type {
+  BaileysSessionState,
+  BaileysChannelStatus,
+  ChannelStatusPatch,
+  ChannelStatusPersister,
+} from '../../whatsapp.types.js';
 import { env } from '../../../../config/env.js';
 import {
   acquireChannelLock,
   heartbeatChannelLock,
   releaseChannelLock,
+  inspectChannelLocks,
+  recoverStaleChannelLocks,
+  HEARTBEAT_INTERVAL_MS,
   INSTANCE_ID,
+  type LockInfo,
 } from '../../instance.lock.js';
+import { createLogger } from '../../../../utils/logger.js';
+
+const log = createLogger('baileys.client');
 
 type PinoLike = Parameters<typeof makeWASocket>[0]['logger'];
 
@@ -195,6 +210,33 @@ export class BaileysClient {
 
   // ── Internals ─────────────────────────────────────────
 
+  /**
+   * Message store for Baileys' getMessage hook. Best-effort:
+   *   - inbound: return the stored raw proto (rawPayload.message)
+   *   - outbound: reconstruct a text message from the persisted body
+   *     (our outbound is text-only proposals)
+   * Returns undefined when we can't recover it (large/media payloads),
+   * which is the same as not providing the hook for that one message.
+   */
+  private async getStoredMessage(key: WAMessageKey): Promise<proto.IMessage | undefined> {
+    const id = key?.id;
+    if (!id) return undefined;
+    try {
+      const m = await Message.findOne({ externalMessageId: id })
+        .select('+rawPayload body')
+        .lean()
+        .exec();
+      if (!m) return undefined;
+      const raw = (m as { rawPayload?: { message?: proto.IMessage } }).rawPayload?.message;
+      if (raw) return raw;
+      const body = (m as { body?: string }).body;
+      if (body) return { conversation: body };
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async openSocket(): Promise<void> {
     try {
       const auth = await loadAuth(this.channel.channelId);
@@ -204,12 +246,23 @@ export class BaileysClient {
 
       const sock = makeWASocket({
         version,
-        auth: auth.state,
+        auth: {
+          creds: auth.state.creds,
+          // Cache signal keys in-memory to avoid a disk hit per lookup
+          // and reduce signal-store races during bursts of inbound.
+          keys: makeCacheableSignalKeyStore(auth.state.keys, silentLogger),
+        },
         logger: silentLogger,
         printQRInTerminal: false,
         browser: ['ShadchanAI', 'Chrome', '120.0'],
         markOnlineOnConnect: false,
         syncFullHistory: false,
+        // Required for reliable delivery: Baileys calls this to recover a
+        // message for retry-receipt resends (outbound) and poll decryption.
+        // Without it, an outbound proposal the recipient's device asks to
+        // retry is silently never resent, and some inbound messages stay
+        // stuck on "waiting for this message".
+        getMessage: (key) => this.getStoredMessage(key),
       });
 
       this.sock = sock;
@@ -314,6 +367,10 @@ export class BaileysClient {
         });
         this.setState('disconnected');
         this.shouldRun = false;
+        // Terminal transition: drop the lock so another process
+        // (or a follow-up start of the new replacement channel)
+        // doesn't have to wait for the stale window.
+        try { await releaseChannelLock(this.channel.channelId); } catch { /* best-effort */ }
         return;
       }
 
@@ -324,6 +381,7 @@ export class BaileysClient {
         });
         this.setState('disconnected');
         this.shouldRun = false;
+        try { await releaseChannelLock(this.channel.channelId); } catch { /* best-effort */ }
         return;
       }
 
@@ -361,18 +419,20 @@ export class BaileysClient {
 
   private async openCircuit(): Promise<void> {
     const attempts = this.reconnectAttempts;
+    this.clearHeartbeatTimer();
     try {
-      await Channel.updateOne({ channelId: this.channel.channelId }, {
-        $set: {
-          status: ChannelStatus.SUSPENDED,
-          connectionHealth: 'down',
-          statusReason: 'reconnect_circuit_open',
-          lastDisconnectAt: new Date(),
-        },
-      }).exec();
+      await updateChannelStatus(this.channel.channelId, {
+        status: ChannelStatus.SUSPENDED,
+        connectionHealth: 'down',
+        statusReason: 'reconnect_circuit_open',
+        lastDisconnectAt: new Date(),
+      });
     } catch { /* best-effort */ }
-    // eslint-disable-next-line no-console
-    console.error(JSON.stringify({ event: 'baileys_circuit_open', channelId: this.channel.channelId, attempts }));
+    // Reconnect circuit is terminal — drop the lock so the next
+    // operator-initiated start (which will run resetCircuit() too)
+    // doesn't trip channel_skipped_lock_held.
+    try { await releaseChannelLock(this.channel.channelId); } catch { /* best-effort */ }
+    log.error({ channelId: this.channel.channelId, attempts }, 'baileys_circuit_open');
   }
 
   private clearReconnectTimer(): void {
@@ -385,7 +445,16 @@ export class BaileysClient {
   private startHeartbeatTimer(): void {
     this.clearHeartbeatTimer();
     const channelId = this.channel.channelId;
-    this.heartbeatTimer = setInterval(() => { void heartbeatChannelLock(channelId); }, 20_000);
+    this.heartbeatTimer = setInterval(async () => {
+      // If we lost ownership while running (e.g., another instance
+      // force-released our lock), shut this client down rather than
+      // continuing to claim a session it no longer owns.
+      const stillOwned = await heartbeatChannelLock(channelId).catch(() => false);
+      if (!stillOwned) {
+        this.clearHeartbeatTimer();
+        try { await this.stop(); } catch { /* best-effort */ }
+      }
+    }, HEARTBEAT_INTERVAL_MS);
   }
 
   private clearHeartbeatTimer(): void {
@@ -436,45 +505,233 @@ export async function logoutChannelClient(channelId: string): Promise<void> {
   clients.delete(channelId);
 }
 
-/** Boot-time: start Baileys for every active/degraded channel.
- *  Skips replaced / disconnected / suspended channels — those must be
- *  explicitly reconnected by an admin. */
-export async function startAllChannels(): Promise<void> {
-  const channels = await Channel.find({
-    status: { $in: [ChannelStatus.ACTIVE, ChannelStatus.RATE_LIMITED] },
-  }).exec();
-  for (const ch of channels) {
-    try {
-      const locked = await acquireChannelLock(ch.channelId);
-      if (!locked) {
-        // eslint-disable-next-line no-console
-        console.warn(JSON.stringify({ event: 'channel_skipped_lock_held', channelId: ch.channelId, instanceId: INSTANCE_ID }));
-        continue;
-      }
-      await startChannelClient(ch);
-    } catch (err) {
-      logWhatsApp({
-        event: 'error',
-        channelId: ch.channelId,
-        channelRole: ch.role,
-        errorMessage: `startAll: ${(err as Error).message}`,
-      });
+// ── Boot-time auto-start ──────────────────────────────────
+
+export type StartChannelOutcome =
+  | { channelId: string; result: 'started';  reason: string; durationMs: number }
+  | { channelId: string; result: 'already_connected'; durationMs: number }
+  | { channelId: string; result: 'skipped_lock_held'; lockHolder: string | null; lockAgeMs: number | null; durationMs: number }
+  | { channelId: string; result: 'failed'; errorMessage: string; durationMs: number };
+
+export interface BootStartupReport {
+  instanceId: string;
+  totalConsidered: number;
+  started: number;
+  alreadyConnected: number;
+  skippedLockHeld: number;
+  failed: number;
+  durationMs: number;
+  outcomes: StartChannelOutcome[];
+}
+
+/**
+ * Try to start a single channel. Always either acquires the
+ * lock and runs the client, or returns a structured outcome
+ * describing why it didn't. Lock is released on every failure
+ * path so a transient error never leaks ownership.
+ */
+async function startOneChannel(channel: IChannel): Promise<StartChannelOutcome> {
+  const started = Date.now();
+  const channelId = channel.channelId;
+
+  // If a client is already registered & connected from an earlier
+  // call (or the operator started it via the API), don't re-acquire.
+  const existing = clients.get(channelId);
+  if (existing && existing.status.state === 'connected') {
+    return { channelId, result: 'already_connected', durationMs: Date.now() - started };
+  }
+
+  const acquire = await acquireChannelLock(channelId);
+  if (!acquire.acquired) {
+    return {
+      channelId,
+      result: 'skipped_lock_held',
+      lockHolder: acquire.previousOwner ?? null,
+      lockAgeMs: acquire.previousHeartbeatAt
+        ? Date.now() - acquire.previousHeartbeatAt.getTime()
+        : null,
+      durationMs: Date.now() - started,
+    };
+  }
+
+  // We hold the lock — release it on ANY failure path so the next
+  // boot or operator action isn't blocked.
+  try {
+    await startChannelClient(channel);
+    return { channelId, result: 'started', reason: acquire.reason, durationMs: Date.now() - started };
+  } catch (err) {
+    const errorMessage = (err as Error).message;
+    logWhatsApp({
+      event: 'error',
+      channelId,
+      channelRole: channel.role,
+      errorMessage: `startOneChannel: ${errorMessage}`,
+    });
+    try { await releaseChannelLock(channelId); } catch { /* best-effort */ }
+    // Drop the in-memory registry entry for this channel so a retry
+    // gets a fresh client object.
+    const stale = clients.get(channelId);
+    if (stale && stale.status.state !== 'connected') {
+      try { await stale.stop(); } catch { /* best-effort */ }
+      clients.delete(channelId);
     }
+    return { channelId, result: 'failed', errorMessage, durationMs: Date.now() - started };
   }
 }
 
-export async function stopAllChannels(): Promise<void> {
-  const ids = Array.from(clients.keys());
-  await Promise.allSettled(ids.map((id) => stopChannelClient(id)));
+/**
+ * Boot-time auto-start. Each channel is attempted independently
+ * and concurrently — one failure or lock-conflict never blocks
+ * the others. Returns a structured report the server entry point
+ * uses to emit a single readable startup summary.
+ *
+ * Skips replaced / disconnected / suspended channels; those need
+ * explicit operator action (POST /channels/:id/session/start or
+ * /reconnect).
+ */
+export async function startAllChannels(): Promise<BootStartupReport> {
+  const startedAt = Date.now();
+  // Opportunistic stale-lock cleanup. Locks from a previous crashed
+  // run don't survive across the STALE window anyway, but doing this
+  // on boot makes the report below describe REAL conflicts only.
+  await recoverStaleChannelLocks().catch(() => ({ recovered: 0 }));
+
+  const channels = await Channel.find({
+    status: { $in: [ChannelStatus.ACTIVE, ChannelStatus.RATE_LIMITED] },
+  }).exec();
+
+  const outcomes = await Promise.all(channels.map((ch) => startOneChannel(ch)));
+
+  const report: BootStartupReport = {
+    instanceId: INSTANCE_ID,
+    totalConsidered: channels.length,
+    started:           outcomes.filter((o) => o.result === 'started').length,
+    alreadyConnected:  outcomes.filter((o) => o.result === 'already_connected').length,
+    skippedLockHeld:   outcomes.filter((o) => o.result === 'skipped_lock_held').length,
+    failed:            outcomes.filter((o) => o.result === 'failed').length,
+    durationMs: Date.now() - startedAt,
+    outcomes,
+  };
+
+  log.info({ ...report }, 'baileys_startup_report');
+  return report;
 }
 
-// ── Helper: persist channel status changes ────────────────
+export interface StopAllReport {
+  instanceId: string;
+  total: number;
+  stopped: number;
+  failed: number;
+  durationMs: number;
+  failures: Array<{ channelId: string; errorMessage: string }>;
+}
 
-async function updateChannelStatus(
-  channelId: string,
-  patch: Partial<Pick<IChannel, 'status' | 'connectionHealth' | 'webhookStatus' | 'lastConnectedAt' | 'phoneNumber'>>,
-): Promise<void> {
-  await Channel.updateOne({ channelId }, { $set: patch }).exec();
+export async function stopAllChannels(): Promise<StopAllReport> {
+  const startedAt = Date.now();
+  const ids = Array.from(clients.keys());
+  const settled = await Promise.allSettled(ids.map((id) => stopChannelClient(id)));
+  const failures: Array<{ channelId: string; errorMessage: string }> = [];
+  let stopped = 0;
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') stopped += 1;
+    else failures.push({ channelId: ids[i]!, errorMessage: (r.reason as Error)?.message ?? 'unknown' });
+  });
+  const report: StopAllReport = {
+    instanceId: INSTANCE_ID,
+    total: ids.length,
+    stopped,
+    failed: failures.length,
+    durationMs: Date.now() - startedAt,
+    failures,
+  };
+  log.info({ ...report }, 'baileys_shutdown_report');
+  return report;
+}
+
+// ── Admin/diagnostic: visibility into the live registry ──
+
+export interface RegistrySnapshotEntry {
+  channelId: string;
+  hasLiveClient: true;
+  state: BaileysSessionState;
+  lastError?: string;
+  lastConnectedAt?: Date;
+}
+
+export function snapshotClientRegistry(): RegistrySnapshotEntry[] {
+  const out: RegistrySnapshotEntry[] = [];
+  for (const [channelId, client] of clients.entries()) {
+    const s = client.status;
+    out.push({
+      channelId,
+      hasLiveClient: true,
+      state: s.state,
+      lastError: s.lastError,
+      lastConnectedAt: s.lastConnectedAt,
+    });
+  }
+  return out;
+}
+
+/** Fast existence check without touching client state. */
+export function hasLiveClient(channelId: string): boolean {
+  return clients.has(channelId);
+}
+
+/** Combine the registry snapshot with persisted lock info — used
+ *  by the admin sessions overview. */
+export async function describeAllSessions(): Promise<Array<{
+  channelId: string;
+  hasLiveClient: boolean;
+  state: BaileysSessionState | null;
+  lastError?: string;
+  lastConnectedAt?: Date;
+  lock: LockInfo;
+}>> {
+  const allChannels = await Channel.find({}).select({ channelId: 1 }).lean().exec();
+  const channelIds = (allChannels as Array<{ channelId: string }>).map((c) => c.channelId);
+  const lockMap = await inspectChannelLocks(channelIds);
+  return channelIds.map((channelId) => {
+    const client = clients.get(channelId);
+    const s = client?.status;
+    return {
+      channelId,
+      hasLiveClient: !!client,
+      state: s?.state ?? null,
+      lastError: s?.lastError,
+      lastConnectedAt: s?.lastConnectedAt,
+      lock: lockMap.get(channelId) ?? {
+        channelId,
+        ownerInstanceId: null,
+        ownerHeartbeatAt: null,
+        ageMs: null,
+        isStale: false,
+        isOurs: false,
+      },
+    };
+  });
+}
+
+// ── Channel status persistence seam ───────────────────────
+//
+// The transport detects connection/status transitions but does NOT
+// own domain persistence. channel.manager registers a persister via
+// `setChannelStatusPersister` at import time; the client emits status
+// patches through it. Until one is registered we keep a no-op so the
+// socket layer is functional in isolation (e.g. focused unit tests).
+
+let channelStatusPersister: ChannelStatusPersister = async () => { /* no-op until registered */ };
+
+/** Registered by channel.manager to keep Channel-model writes in the
+ *  domain layer. Public so the manager can wire it without a circular
+ *  value import back into this module. */
+export function setChannelStatusPersister(persister: ChannelStatusPersister): void {
+  channelStatusPersister = persister;
+}
+
+/** Emit a channel status change to the registered domain persister. */
+async function updateChannelStatus(channelId: string, patch: ChannelStatusPatch): Promise<void> {
+  await channelStatusPersister(channelId, patch);
 }
 
 // ── Type alias used by error classifier ──────────────────

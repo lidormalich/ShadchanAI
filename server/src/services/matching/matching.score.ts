@@ -31,6 +31,9 @@ import {
   lifestyleCloseness,
   lifeStageCloseness,
   studyWorkCloseness,
+  regionCloseness,
+  childrenPreferenceCloseness,
+  careerPriorityCloseness,
 } from './matching.matrix.js';
 import type { AgeBandConfig } from './matching.constants.js';
 import {
@@ -292,14 +295,38 @@ function scoreLocation(
   const internalCity = internal.city?.toLowerCase().trim();
   const externalCity = external.city?.toLowerCase().trim();
 
+  // Same city always wins — exact-string identity is unambiguous.
+  if (internalCity && externalCity && internalCity === externalCity) {
+    return makeDimension(ScoringDimension.LOCATION, LOCATION.SAME_CITY_SCORE,
+      `Same city: ${internal.city}`);
+  }
+
+  // ── PRIMARY signal: region ──────────────────────────────
+  // City is a brittle exact match; region is a robust, commute-aware
+  // bucket. When both sides have a region we score off the region
+  // closeness matrix. Region distance NEVER disqualifies (location is
+  // a soft dimension) — willingness to relocate / openness lifts a
+  // floor so a far pair is dampened, not killed.
+  const regionClose = regionCloseness(internal.region, external.region);
+  if (regionClose !== undefined) {
+    let score = Math.round(regionClose * 100);
+    const eitherFlexible = Boolean(
+      internal.locationPreferences?.willingToRelocate
+      || external.locationPreferences?.willingToRelocate
+      || internal.openness.openToLongDistance
+      || external.openness?.openToLongDistance === true,
+    );
+    if (eitherFlexible) score = Math.max(score, LOCATION.RELOCATE_FLOOR);
+    const detail = internal.region === external.region
+      ? `Same region: ${internal.region}`
+      : `Region closeness: ${Math.round(regionClose * 100)}% (${internal.region} ↔ ${external.region})${eitherFlexible ? ' — flexible on distance' : ''}`;
+    return makeDimension(ScoringDimension.LOCATION, score, detail);
+  }
+
+  // ── Fallback: no region on at least one side → city logic ──
   if (!internalCity || !externalCity) {
     return makeDimension(ScoringDimension.LOCATION, LOCATION.MISSING_DATA_SCORE,
       'Location data incomplete — neutral score');
-  }
-
-  if (internalCity === externalCity) {
-    return makeDimension(ScoringDimension.LOCATION, LOCATION.SAME_CITY_SCORE,
-      `Same city: ${internal.city}`);
   }
 
   // BIDIRECTIONAL: check each side's city against the OTHER side's preferred cities
@@ -360,22 +387,70 @@ function scoreMutualExpectations(
 
   const hasForward = internal.softPreferences.length > 0;
   const hasReverse = (external.softPreferences?.length ?? 0) > 0;
+  const hasSoftPrefs = hasForward || hasReverse;
 
-  if (!hasForward && !hasReverse) {
+  // Direct shared-goals comparison (children-count + torah/career
+  // priority). Independent of stated soft-preferences — two people who
+  // both want a large torah-focused home align even if neither wrote
+  // an explicit preference. Folded in here rather than as a 9th
+  // weighted dimension, to preserve the 8-dimension engine contract.
+  const goals = scoreSharedGoals(internal, external);
+
+  if (!hasSoftPrefs && !goals.has) {
     return makeDimension(ScoringDimension.MUTUAL_EXPECTATIONS, 60,
-      'No soft preferences specified on either side — neutral score');
+      'No soft preferences or shared-goals data on either side — neutral score');
   }
 
-  const score = hasForward && hasReverse
+  const softScore = hasForward && hasReverse
     ? Math.min(forward, reverse)
     : (hasForward ? forward : reverse);
 
-  const detail =
-    hasForward && hasReverse ? `Soft preferences (both sides): forward ${forward}%, reverse ${reverse}% → ${score}%`
-    : hasForward ? `Soft preferences (internal → external): ${score}%`
-    : `Soft preferences (external → internal): ${score}%`;
+  let score: number;
+  let detail: string;
+  if (hasSoftPrefs && goals.has) {
+    // Blend: stated preferences lead (0.6), structured goals refine (0.4).
+    score = Math.round(softScore * 0.6 + goals.score * 0.4);
+    detail = `Soft preferences ${softScore}% + ${goals.detail} → ${score}%`;
+  } else if (hasSoftPrefs) {
+    score = softScore;
+    detail =
+      hasForward && hasReverse ? `Soft preferences (both sides): forward ${forward}%, reverse ${reverse}% → ${score}%`
+      : hasForward ? `Soft preferences (internal → external): ${score}%`
+      : `Soft preferences (external → internal): ${score}%`;
+  } else {
+    score = goals.score;
+    detail = goals.detail;
+  }
 
   return makeDimension(ScoringDimension.MUTUAL_EXPECTATIONS, Math.max(0, Math.min(100, score)), detail);
+}
+
+/**
+ * Direct candidate-to-candidate comparison of structured shared goals.
+ * Only the sub-fields present on BOTH sides contribute; returns has:false
+ * when there's nothing to compare so the caller stays backward-compatible.
+ */
+function scoreSharedGoals(
+  internal: MatchableInternal,
+  external: MatchableExternal,
+): { score: number; has: boolean; detail: string } {
+  const parts: number[] = [];
+  const labels: string[] = [];
+
+  const childClose = childrenPreferenceCloseness(internal.childrenPreference, external.childrenPreference);
+  if (childClose !== undefined) {
+    parts.push(childClose);
+    labels.push(`children ${Math.round(childClose * 100)}%`);
+  }
+  const careerClose = careerPriorityCloseness(internal.careerPriority, external.careerPriority);
+  if (careerClose !== undefined) {
+    parts.push(careerClose);
+    labels.push(`career ${Math.round(careerClose * 100)}%`);
+  }
+
+  if (parts.length === 0) return { score: 0, has: false, detail: '' };
+  const avg = parts.reduce((a, b) => a + b, 0) / parts.length;
+  return { score: Math.round(avg * 100), has: true, detail: `Shared goals (${labels.join(', ')})` };
 }
 
 function scoreSoftPrefs(
@@ -519,12 +594,16 @@ function getSubjectFieldsSnapshot(
   const fields: Record<string, unknown> = {
     gender: s.gender,
     city: s.city,
+    region: s.region,
+    ethnicity: s.ethnicity,
     sectorGroup: s.sectorGroup,
     subSector: s.subSector,
     lifestyleTone: s.lifestyleTone,
     personalStatus: s.personalStatus,
     lifeStage: s.lifeStage,
     studyWorkDirection: s.studyWorkDirection,
+    childrenPreference: s.childrenPreference,
+    careerPriority: s.careerPriority,
     height: s.height,
   };
   if ('age' in s && typeof s.age === 'number') {

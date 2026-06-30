@@ -6,6 +6,7 @@ import {
   MessageDeliveryStatus,
   MessageExtractionStatus,
   ExtractionMethod,
+  MessageIngestionDecision,
 } from '@shadchanai/shared';
 
 // ── Interface ─────────────────────────────────────────────
@@ -65,6 +66,17 @@ export interface IMessage extends Document {
     confidence?: number;
     failureReason?: string;
     matchedFields?: string[];
+    // Number of failed extraction attempts. The reconciler stops
+    // auto-retrying once this hits the cap; manual /run still works.
+    retryCount?: number;
+  };
+
+  // Ingestion routing verdict — persisted so operators can audit why a
+  // message did/didn't feed extraction (the filter reason, not only logs).
+  ingestion?: {
+    decision: MessageIngestionDecision;
+    effectiveRole?: string;
+    decidedAt: Date;
   };
 
   // timestamps
@@ -101,6 +113,20 @@ const extractionSchema = new Schema(
     confidence: { type: Number, min: 0, max: 1 },
     failureReason: { type: String },
     matchedFields: [{ type: String }],
+    retryCount: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
+const ingestionSchema = new Schema(
+  {
+    decision: {
+      type: String,
+      enum: Object.values(MessageIngestionDecision),
+      required: true,
+    },
+    effectiveRole: { type: String },
+    decidedAt: { type: Date, required: true },
   },
   { _id: false },
 );
@@ -168,6 +194,9 @@ const messageSchema = new Schema<IMessage>(
 
     // ── Profile extraction pipeline ───────────────────────
     extraction: { type: extractionSchema },
+
+    // ── Ingestion routing verdict ─────────────────────────
+    ingestion: { type: ingestionSchema },
   },
   {
     timestamps: true,
@@ -200,6 +229,12 @@ messageSchema.index({ createdAt: -1 });
 // profiles_source messages ever get an `extraction` subdoc.
 messageSchema.index(
   { 'extraction.status': 1, channelRole: 1, 'extraction.attemptedAt': 1 },
+  { sparse: true },
+);
+
+// Ingestion log: list filtered/accepted messages by decision, newest first.
+messageSchema.index(
+  { 'ingestion.decision': 1, 'ingestion.decidedAt': -1 },
   { sparse: true },
 );
 

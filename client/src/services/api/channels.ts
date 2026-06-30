@@ -19,6 +19,43 @@ export interface ChatDiscoveryResult {
   chats: DiscoveredChat[];
 }
 
+// ── Multi-account admin: sessions overview + lock administration ──
+
+export interface AdminSessionView {
+  channelId: string;
+  accountDisplayName: string;
+  role: string;
+  status: string;
+  connectionHealth: string;
+  lastInboundAt?: string;
+  lastOutboundAt?: string;
+  lastConnectedAt?: string;
+  lastDisconnectAt?: string;
+  hasLiveClient: boolean;
+  liveState: string | null;
+  lastError?: string;
+  lock: {
+    ownerInstanceId: string | null;
+    ownerHeartbeatAt: string | null;
+    ageMs: number | null;
+    isStale: boolean;
+    isOurs: boolean;
+  };
+}
+
+export interface AdminSessionsResponse {
+  instanceId: string;
+  sessions: AdminSessionView[];
+}
+
+export interface ForceReleaseLockResponse {
+  released: boolean;
+  previousOwner: string | null;
+  previousHeartbeatAt: string | null;
+  ageMs: number | null;
+  lock: AdminSessionView['lock'];
+}
+
 export const channelsApi = {
   list: (query: Record<string, unknown> = {}) =>
     api.get<Channel[]>('/channels', query),
@@ -65,4 +102,9 @@ export const channelsApi = {
   ),
   deleteChannel: (channelId: string) =>
     api.post<void>(`/channels/${channelId}/delete`, { confirmChannelId: channelId }),
+  // ── Multi-account admin ─────────────────────────────────
+  adminSessions: () =>
+    api.get<AdminSessionsResponse>('/channels/sessions/admin'),
+  forceReleaseLock: (channelId: string, body: { reason: string }) =>
+    api.post<ForceReleaseLockResponse>(`/channels/${channelId}/lock/release`, body),
 };

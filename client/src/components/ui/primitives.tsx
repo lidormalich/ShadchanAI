@@ -72,7 +72,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 export function IconButton({ className, ...props }: ButtonProps) {
   return (
     <Button
-      className={clsx('h-9 w-9 p-0', className)}
+      // Visual size stays 36px; below lg the tap target grows to ~44px.
+      // Ghost background is transparent, so the glyph appears unchanged.
+      className={clsx('h-9 w-9 p-0 max-lg:min-h-[44px] max-lg:min-w-[44px]', className)}
       variant={props.variant ?? 'ghost'}
       {...props}
     />
@@ -146,14 +148,17 @@ export function Badge({
   className,
   children,
   icon,
+  title,
 }: {
   tone?: BadgeTone;
   className?: string;
   children: ReactNode;
   icon?: ReactNode;
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={clsx(
         'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
         badgeTone[tone],

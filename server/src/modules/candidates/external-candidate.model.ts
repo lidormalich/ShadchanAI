@@ -12,6 +12,7 @@ import {
   AvailabilityStatus,
   ShareCardPhotoMode,
   AgeConfidence,
+  Region,
 } from '@shadchanai/shared';
 
 // ── Sub-schemas ───────────────────────────────────────────
@@ -31,14 +32,29 @@ const aiEnrichmentSchema = new Schema(
   { _id: false },
 );
 
+// ── Multi-chunk embedding schema ──────────────────────────
+// Identical structure to InternalCandidate — see that file for comments.
+// External profiles are often partial, so more chunks may be absent.
+
+const embeddingChunkSchema = new Schema(
+  {
+    vector:       { type: [Number], select: false },
+    textSnapshot: { type: String,   select: false },
+    embeddedAt:   { type: Date },
+  },
+  { _id: false },
+);
+
 const embeddingSchema = new Schema(
   {
-    vector: { type: [Number], select: false },
-    modelId: { type: String },
-    version: { type: String },
-    provider: { type: String },
+    modelId:    { type: String },
+    provider:   { type: String },
     dimensions: { type: Number },
-    updatedAt: { type: Date },
+    updatedAt:  { type: Date },
+    religious:    { type: embeddingChunkSchema },
+    expectations: { type: embeddingChunkSchema },
+    personality:  { type: embeddingChunkSchema },
+    background:   { type: embeddingChunkSchema },
   },
   { _id: false },
 );
@@ -99,6 +115,7 @@ export interface IExternalCandidate extends Document {
   gender?: Gender;
   age?: number;
   city?: string;
+  region?: Region;
   sectorGroup?: SectorGroup;
   subSector?: SubSector;
   lifestyleTone?: LifestyleTone;
@@ -191,14 +208,17 @@ export interface IExternalCandidate extends Document {
     model?: string;
   };
 
-  // embedding
+  // Multi-chunk embedding for semantic search.
+  // Vectors are select:false — use select('+embedding.*.vector') to load them.
   embedding?: {
-    vector?: number[];
-    modelId?: string;
-    version?: string;
-    provider?: string;
+    modelId?:    string;
+    provider?:   string;
     dimensions?: number;
-    updatedAt?: Date;
+    updatedAt?:  Date;
+    religious?:    { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
+    expectations?: { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
+    personality?:  { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
+    background?:   { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
   };
 
   // audit
@@ -206,6 +226,11 @@ export interface IExternalCandidate extends Document {
   // ownership — the shadchan currently responsible for this external candidate
   ownerUserId?: Types.ObjectId;
   archivedAt?: Date;
+  // Incremental match-scan change detection: hash of the engine-relevant
+  // fields at last scan. The scan re-scores a candidate's pairs only when
+  // this differs from the freshly-computed hash. See match-scan.service.
+  scoringHash?: string;
+  scoringHashAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -234,8 +259,9 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     firstName: { type: String, trim: true },
     lastName: { type: String, trim: true },
     gender: { type: String, enum: Object.values(Gender) },
-    age: { type: Number, min: 18, max: 120 },
+    age: { type: Number, min: 16, max: 120 },
     city: { type: String, trim: true },
+    region: { type: String, enum: Object.values(Region) },
     sectorGroup: { type: String, enum: Object.values(SectorGroup) },
     subSector: { type: String, enum: Object.values(SubSector) },
     lifestyleTone: { type: String, enum: Object.values(LifestyleTone) },
@@ -339,6 +365,10 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     // ── Ownership ─────────────────────────────────────────
     ownerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     archivedAt: { type: Date },
+
+    // ── Match-scan change detection ───────────────────────
+    scoringHash: { type: String },
+    scoringHashAt: { type: Date },
   },
   {
     timestamps: true,
@@ -349,6 +379,8 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
 // ── Indexes ─────────────────────────────────────────────
 
 externalCandidateSchema.index({ status: 1, gender: 1 });
+// Match-scan filter: { gender, status, availabilityStatus: { $in: [...] } }
+externalCandidateSchema.index({ status: 1, gender: 1, availabilityStatus: 1 });
 externalCandidateSchema.index({ status: 1, sectorGroup: 1 });
 externalCandidateSchema.index({ sourceType: 1, sourceExternalId: 1 }, { unique: true, sparse: true });
 externalCandidateSchema.index({ sourceChannelId: 1 }, { sparse: true });

@@ -4,24 +4,32 @@
 // No Mongoose Documents, no internal DB details.
 // ═══════════════════════════════════════════════════════════
 
-/** Standard API response envelope */
-export interface ApiResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  meta?: ApiMeta;
+/** Structured API error payload (matches the live server envelope) */
+export interface ApiError {
+  code: string;
+  message: string;
+  details?: unknown;
 }
 
 /** Pagination and metadata for list responses */
 export interface ApiMeta {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages: number;
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalPages?: number;
+  [key: string]: unknown;
+}
+
+/** Standard API response envelope */
+export interface ApiEnvelope<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: ApiError;
+  meta?: ApiMeta;
 }
 
 /** Paginated list request parameters */
-export interface PaginationParams {
+export interface PaginationQuery {
   page?: number;
   limit?: number;
   sort?: string;

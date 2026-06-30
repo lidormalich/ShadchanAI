@@ -10,7 +10,7 @@
 import type { WASocket, WAMessageUpdate } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import type { IChannel } from '../../../../models/index.js';
-import { handleInboundMessage, handleStatusUpdate } from '../../message.handler.js';
+import { ingestInboundMessage, handleStatusUpdate } from '../../message.handler.js';
 import { logWhatsApp, maskPhone } from '../../whatsapp.logger.js';
 import { mapInboundMessage, mapStatusUpdate } from './baileys.mapper.js';
 
@@ -59,9 +59,22 @@ export function wireEvents(sock: WASocket, ctx: EventBridgeContext): void {
         if (msg.key?.fromMe === true) continue;
 
         const normalized = mapInboundMessage(msg, channel);
-        if (!normalized) continue;
+        if (!normalized) {
+          // Visibility into anything we couldn't normalize (genuinely
+          // unsupported types, or messages missing an id/sender jid) so
+          // dropped messages are never fully silent.
+          logWhatsApp({
+            event: 'message_skipped_unsupported',
+            channelId: channel.channelId,
+            channelRole: channel.role,
+            externalMessageId: msg.key?.id ?? undefined,
+            participantPhoneMasked: maskPhone(msg.key?.remoteJid ?? undefined),
+            contentKey: msg.message ? Object.keys(msg.message)[0] ?? 'empty' : 'empty',
+          });
+          continue;
+        }
 
-        await handleInboundMessage(normalized);
+        await ingestInboundMessage(normalized);
       } catch (err) {
         logWhatsApp({
           event: 'error',

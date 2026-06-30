@@ -24,6 +24,13 @@ export const matchRouter = Router();
 matchRouter.use(requireAuth);
 
 matchRouter.get('/', validate({ query: ListMatchesQuerySchema }), ctrl.listHandler);
+
+// Incremental match scan. Registered BEFORE '/:id' so "scan" is not
+// captured by the ObjectId param route.
+matchRouter.post('/scan', ctrl.scanHandler);
+matchRouter.get('/scan/state', ctrl.scanStateHandler);
+matchRouter.get('/scan/results', ctrl.scanResultsHandler);
+
 matchRouter.get('/:id', validate({ params: IdParamSchema }), ctrl.getHandler);
 
 matchRouter.post('/evaluate', validate({ body: EvaluatePairSchema }), ctrl.evaluateHandler);

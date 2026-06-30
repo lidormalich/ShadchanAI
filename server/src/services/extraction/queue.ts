@@ -17,6 +17,9 @@
 import { MessageExtractionStatus, ExtractionMethod } from '@shadchanai/shared';
 import { Message } from '../../models/index.js';
 import { processMessageExtraction } from './orchestrator.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('extraction.queue');
 
 const MAX_CONCURRENCY = 3;
 
@@ -72,12 +75,7 @@ async function runOne(id: string): Promise<void> {
   } catch (err) {
     // Final safety net — orchestrator is already swallowing + persisting
     // most failures, but catch anything that escapes so the queue stays alive.
-    // eslint-disable-next-line no-console
-    console.error(JSON.stringify({
-      event: 'extraction_queue_error',
-      messageId: id,
-      error: (err as Error).message,
-    }));
+    log.error({ messageId: id, error: (err as Error).message }, 'extraction_queue_error');
   } finally {
     inFlight.delete(id);
     running -= 1;

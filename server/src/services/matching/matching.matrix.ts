@@ -18,6 +18,9 @@ import {
   LIFESTYLE_CLOSENESS,
   LIFE_STAGE_CLOSENESS,
   STUDY_WORK_CLOSENESS,
+  REGION_CLOSENESS,
+  CHILDREN_PREFERENCE_CLOSENESS,
+  CAREER_PRIORITY_CLOSENESS,
 } from './matching.constants.js';
 
 /**
@@ -102,4 +105,39 @@ export function studyWorkCloseness(
 ): ClosenessValue {
   if (!a || !b) return 0.5;
   return STUDY_WORK_CLOSENESS[a]?.[b] ?? 0.5;
+}
+
+/**
+ * Look up geographic closeness between two regions.
+ * Returns undefined when either region is missing, so the location
+ * scorer can fall back to city-based logic instead of assuming neutral.
+ */
+export function regionCloseness(
+  a: string | undefined,
+  b: string | undefined,
+): ClosenessValue | undefined {
+  if (!a || !b) return undefined;
+  return REGION_CLOSENESS[a]?.[b] ?? 0.3;
+}
+
+/**
+ * Look up closeness between two children-count aspirations.
+ */
+export function childrenPreferenceCloseness(
+  a: string | undefined,
+  b: string | undefined,
+): ClosenessValue | undefined {
+  if (!a || !b) return undefined;
+  return CHILDREN_PREFERENCE_CLOSENESS[a]?.[b] ?? 0.5;
+}
+
+/**
+ * Look up closeness between two torah-vs-career priorities.
+ */
+export function careerPriorityCloseness(
+  a: string | undefined,
+  b: string | undefined,
+): ClosenessValue | undefined {
+  if (!a || !b) return undefined;
+  return CAREER_PRIORITY_CLOSENESS[a]?.[b] ?? 0.5;
 }

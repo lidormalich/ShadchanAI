@@ -416,6 +416,27 @@ matchSuggestionSchema.index(
 matchSuggestionSchema.index({ createdAt: -1 });
 matchSuggestionSchema.index({ datingStartedAt: 1 }, { sparse: true });
 
+// Dashboard "high-potential drafts"
+matchSuggestionSchema.index({ status: 1, matchScore: -1, createdAt: -1, isDeferred: 1 });
+
+// Awaiting response — side A
+matchSuggestionSchema.index(
+  { status: 1, sentSideAAt: 1, 'sideAResponse.status': 1 },
+  { partialFilterExpression: { sentSideAAt: { $exists: true } } },
+);
+
+// Awaiting response — side B
+matchSuggestionSchema.index(
+  { status: 1, sentSideBAt: 1, 'sideBResponse.status': 1 },
+  { partialFilterExpression: { sentSideBAt: { $exists: true } } },
+);
+
+// Deferred recheck
+matchSuggestionSchema.index(
+  { isDeferred: 1, deferredAt: -1, status: 1 },
+  { partialFilterExpression: { isDeferred: true } },
+);
+
 export const MatchSuggestion = mongoose.model<IMatchSuggestion>(
   'MatchSuggestion',
   matchSuggestionSchema,

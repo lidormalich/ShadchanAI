@@ -50,7 +50,8 @@ export function NotificationsBell() {
   const q = useQuery({
     queryKey: ['notifications', 'recent'],
     queryFn: () => notificationsApi.list(30),
-    refetchInterval: 30_000,
+    refetchInterval: open ? 30_000 : false,
+    staleTime: 10_000,
   });
 
   // Realtime events (Phase 3) invalidate meaningful caches; we
@@ -111,7 +112,7 @@ export function NotificationsBell() {
       </IconButton>
 
       {open && (
-        <div className="absolute end-0 top-11 w-80 bg-white border border-border rounded-lg shadow-rise z-50 overflow-hidden">
+        <div className="absolute end-0 top-11 w-80 max-w-[calc(100vw-1rem)] bg-white border border-border rounded-lg shadow-rise z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-border flex items-center justify-between">
             <span className="text-sm font-semibold">התראות</span>
             <span className="text-[11px] text-ink-faint">{items.length} אחרונות</span>

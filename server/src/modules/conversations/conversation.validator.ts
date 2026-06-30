@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ChannelRole, ConversationPurpose } from '@shadchanai/shared';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
+import { optionalBooleanString } from '../../utils/zod-bool.js';
 
 const ObjectIdString = z.string().regex(/^[a-f\d]{24}$/i);
 
@@ -8,8 +9,8 @@ export const ListConversationsQuerySchema = PaginationQuerySchema.extend({
   channelId: z.string().optional(),
   channelRole: z.nativeEnum(ChannelRole).optional(),
   purpose: z.nativeEnum(ConversationPurpose).optional(),
-  needsAction: z.coerce.boolean().optional(),
-  hasUnread: z.coerce.boolean().optional(),
+  needsAction: optionalBooleanString(),
+  hasUnread: optionalBooleanString(),
   internalCandidateId: ObjectIdString.optional(),
   externalCandidateId: ObjectIdString.optional(),
   matchSuggestionId: ObjectIdString.optional(),

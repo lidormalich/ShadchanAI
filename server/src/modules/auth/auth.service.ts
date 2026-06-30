@@ -22,6 +22,9 @@ import { env } from '../../config/env.js';
 import { audit } from '../../services/audit.service.js';
 import { ForbiddenError, UnauthorizedError, ConflictError, NotFoundError } from '../../utils/errors.js';
 import type { LoginInput, RegisterInput } from './auth.validator.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('auth');
 
 const BCRYPT_COST = 12;
 
@@ -157,7 +160,7 @@ export async function bootstrapAdminIfNeeded(
     roles: ['admin'],
     isActive: true,
   });
-  console.log('[auth] Bootstrapped first admin:', user.email);
+  log.info({ email: user.email }, 'Bootstrapped first admin');
 
   await audit({
     entityType: AuditEntityType.USER,

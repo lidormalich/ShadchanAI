@@ -12,6 +12,9 @@
 import { Types } from 'mongoose';
 import { AIRequest } from '../../models/index.js';
 import type { AILogRecord } from './ai.types.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('ai');
 
 export async function logAIRequest(record: AILogRecord): Promise<void> {
   // Best-effort: never throw from here
@@ -35,14 +38,11 @@ export async function logAIRequest(record: AILogRecord): Promise<void> {
       relatedEntityId: record.relatedEntityId ? new Types.ObjectId(record.relatedEntityId) : undefined,
     });
   } catch (err) {
-    console.error('[ai.logger] Failed to persist AIRequest:', err);
+    log.error({ err }, 'Failed to persist AIRequest');
   }
 
-  // Structured console log for immediate visibility
-  const level = record.success ? 'info' : 'warn';
-  const logLine = {
-    level,
-    scope: 'ai',
+  // Structured log for immediate visibility
+  const fields = {
     requestType: record.requestType,
     provider: record.provider,
     model: record.model,
@@ -52,5 +52,9 @@ export async function logAIRequest(record: AILogRecord): Promise<void> {
     success: record.success,
     ...(record.errorMessage ? { error: record.errorMessage } : {}),
   };
-  console.log(JSON.stringify(logLine));
+  if (record.success) {
+    log.info(fields, 'ai_request');
+  } else {
+    log.warn(fields, 'ai_request');
+  }
 }

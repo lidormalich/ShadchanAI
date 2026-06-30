@@ -3,21 +3,12 @@
 // ═══════════════════════════════════════════════════════════
 
 import type { Response } from 'express';
+import type { ApiEnvelope, ApiMeta } from '@shadchanai/shared';
 
-export interface ResponseMeta {
-  page?: number;
-  limit?: number;
-  total?: number;
-  totalPages?: number;
-  [key: string]: unknown;
-}
+/** @deprecated use ApiMeta from @shadchanai/shared */
+export type ResponseMeta = ApiMeta;
 
-export interface ApiEnvelope<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: { code: string; message: string; details?: unknown };
-  meta?: ResponseMeta;
-}
+export type { ApiEnvelope, ApiMeta };
 
 export function ok<T>(res: Response, data: T, meta?: ResponseMeta, status = 200): void {
   const body: ApiEnvelope<T> = { success: true, data, meta };

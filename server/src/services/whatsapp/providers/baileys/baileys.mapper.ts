@@ -14,6 +14,7 @@ import {
   MessageContentType,
   MessageDeliveryStatus,
 } from '@shadchanai/shared';
+import { normalizeMessageContent } from '@whiskeysockets/baileys';
 import type { proto, WAMessageUpdate } from '@whiskeysockets/baileys';
 import type { IChannel } from '../../../../models/index.js';
 import type {
@@ -61,7 +62,11 @@ export function mapInboundMessage(
   const isGroup = fromJid.endsWith('@g.us');
   const senderJid = isGroup ? (msg.key?.participant ?? fromJid) : fromJid;
 
-  const { contentType, body, media } = extractContent(msg.message);
+  // Unwrap envelope wrappers (ephemeral / disappearing, view-once, edited,
+  // documentWithCaption, deviceSent) so a normal text/media message nested
+  // inside one is not mistaken for an unsupported type and silently dropped.
+  const content = normalizeMessageContent(msg.message);
+  const { contentType, body, media } = extractContent(content);
   if (!contentType) return null;
 
   const timestamp = parseTimestamp(msg.messageTimestamp);
@@ -80,7 +85,7 @@ export function mapInboundMessage(
     contentType: contentType as MessageContentType,
     body,
     media,
-    replyToExternalId: msg.message?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
+    replyToExternalId: content?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
     rawPayload: truncatePayload(msg as unknown as Record<string, unknown>),
   };
 }

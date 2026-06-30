@@ -24,6 +24,10 @@ interface FakeMatch {
   sentSideBAt?: Date;
   recommendedAction?: string;
   isDeferred?: boolean;
+  conversationIds: { sideA?: Types.ObjectId; sideB?: Types.ObjectId };
+  sendInFlightSideA?: Date;
+  sendInFlightSideB?: Date;
+  markModified: (path: string) => void;
   toObject: () => Record<string, unknown>;
   save: () => Promise<FakeMatch>;
 }
@@ -98,6 +102,21 @@ vi.mock('../../services/whatsapp/whatsapp.service.js', () => ({
 
 vi.mock('../../services/audit.service.js', () => ({
   audit: vi.fn(async (input: FakeAudit) => { store.audits.push(input); }),
+}));
+
+// ── Safe-mode gate: outbound enabled in tests ────────────
+// The real getSafeModeStatus reads the Setting model directly (not via
+// the mocked models/index), so without this mock Mongoose buffers the
+// query against a non-connected DB and the send path hangs to timeout.
+vi.mock('../../services/safe-mode/safe-mode.service.js', () => ({
+  getSafeModeStatus: vi.fn(async () => ({
+    outboundEnabled: true,
+    envEnabled: true,
+    settingEnabled: true,
+    reason: undefined,
+    requireExplicitMapping: false,
+  })),
+  assertOutboundAllowed: vi.fn(async () => {}),
 }));
 
 // ── Model mocks ──────────────────────────────────────────
@@ -269,6 +288,8 @@ function reset(): FakeMatch {
     status: 'approved',
     recommendedAction: 'send_side_a_first',
     isDeferred: false,
+    conversationIds: {},
+    markModified() {},
     toObject() { return { ...this, _id: String(this._id) }; },
     save: async function () { return this; },
   };

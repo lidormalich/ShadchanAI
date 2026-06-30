@@ -1,23 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Calendar, Mail, MapPin, Phone, Search, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, TBody, THead, Table, Td, Th, Tr, Tabs } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi, type FindMatchItem } from '@/services/api/matches';
-import { aiApi } from '@/services/api/ai';
+import { aiApi, buildCandidateBrief } from '@/services/api/ai';
 import { InternalCandidateForm } from '@/features/forms/InternalCandidateForm';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList';
+import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
-import { label } from '@/utils/labels';
+import { label, matchTypeTone } from '@/utils/labels';
+import { formatDate } from '@/utils/format';
 import type { MatchSuggestion, Conversation, InternalCandidate } from '@/types/domain';
 
 export function InternalCandidateDetailPage() {
@@ -46,7 +48,7 @@ export function InternalCandidateDetailPage() {
   });
 
   const summarize = useMutation({
-    mutationFn: async (doc: InternalCandidate) => aiApi.summarizeCandidate({ candidate: brief(doc) }),
+    mutationFn: async (doc: InternalCandidate) => aiApi.summarizeCandidate({ candidate: buildCandidateBrief(doc) }),
     onSuccess: (r) => {
       const d = r.data as { summary?: string; communicationStyle?: string; warnings?: string[] };
       toast.info('סיכום AI', [d.summary, d.communicationStyle, ...(d.warnings ?? [])].filter(Boolean).join('\n\n'));
@@ -79,7 +81,7 @@ export function InternalCandidateDetailPage() {
               {c.city && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{c.city}</span>}
               {c.phone && <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{c.phone}</span>}
               {c.email && <span className="inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{c.email}</span>}
-              <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{new Date(c.dateOfBirth).toLocaleDateString('he-IL')}</span>
+              <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{formatDate(c.dateOfBirth)}</span>
               <OwnerChip userId={c.ownerUserId} />
             </div>
           </div>
@@ -120,6 +122,11 @@ export function InternalCandidateDetailPage() {
                 content: <ProfileSections c={candidate.data.data} />,
               },
               {
+                id: 'compatibility',
+                label: 'התאמה',
+                content: <CompatibilityWorkspace internalCandidateId={c._id} />,
+              },
+              {
                 id: 'suggestions',
                 label: 'הצעות שידוך',
                 badge: <Badge tone="brand">{suggestions.data?.data.length ?? 0}</Badge>,
@@ -152,8 +159,8 @@ export function InternalCandidateDetailPage() {
               <MetricRow label="מהימנות מידע" value={c.dataReliabilityScore ?? '—'} />
               <MetricRow label="ציון מוכנות" value={c.readinessScore ?? '—'} />
               <Divider />
-              <MetricRow label="עודכן לאחרונה" value={c.lastActionAt ? new Date(c.lastActionAt).toLocaleDateString('he-IL') : '—'} />
-              <MetricRow label="אומת לאחרונה" value={c.lastVerifiedAt ? new Date(c.lastVerifiedAt).toLocaleDateString('he-IL') : '—'} />
+              <MetricRow label="עודכן לאחרונה" value={formatDate(c.lastActionAt)} />
+              <MetricRow label="אומת לאחרונה" value={formatDate(c.lastVerifiedAt)} />
             </CardBody>
           </Card>
           <TasksRail related={{ type: 'internal_candidate', id: c._id }} />
@@ -184,11 +191,19 @@ function FindMatchesDialog({
   internalCandidateId: string;
 }) {
   const qc = useQueryClient();
+  // No `limit` → the engine returns every eligible scored match. We load them
+  // into the list in chunks so a large pool doesn't render all at once.
   const q = useQuery({
     queryKey: ['find-matches', internalCandidateId, open],
-    queryFn: () => matchesApi.findForInternal(internalCandidateId, { limit: 25 }),
+    queryFn: () => matchesApi.findForInternal(internalCandidateId),
     enabled: open,
   });
+
+  const CHUNK = 10;
+  const [visibleCount, setVisibleCount] = useState(CHUNK);
+  const allMatches = q.data?.data ?? [];
+  // Reset the visible window whenever the dialog reopens or the result set changes.
+  useEffect(() => { setVisibleCount(CHUNK); }, [open, allMatches.length]);
 
   const createSuggestion = useMutation({
     mutationFn: (externalCandidateId: string) => matchesApi.createManual({
@@ -216,11 +231,11 @@ function FindMatchesDialog({
             <LoadingSkeleton rows={6} />
           ) : q.isError ? (
             <ErrorState description={(q.error as Error).message} onRetry={() => q.refetch()} />
-          ) : !q.data?.data.length ? (
+          ) : !allMatches.length ? (
             <EmptyState title="לא נמצאו התאמות זמינות" description="ייתכן שאין מועמדים חיצוניים פעילים העומדים בקריטריונים." />
           ) : (
             <ul className="space-y-2">
-              {q.data.data.map((m: FindMatchItem) => (
+              {allMatches.slice(0, visibleCount).map((m: FindMatchItem) => (
                 <li key={m.externalCandidateId} className="rounded-md border border-border bg-white p-3 flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -249,6 +264,18 @@ function FindMatchesDialog({
                   </div>
                 </li>
               ))}
+              {visibleCount < allMatches.length && (
+                <li className="pt-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => setVisibleCount((c) => c + CHUNK)}
+                  >
+                    {`הצג עוד (${allMatches.length - visibleCount})`}
+                  </Button>
+                </li>
+              )}
             </ul>
           )}
         </section>
@@ -267,7 +294,7 @@ function ProfileSections({ c }: { c: Awaited<ReturnType<typeof internalCandidate
     <div className="space-y-4">
       <Card>
         <CardHeader><h3 className="text-sm font-semibold">סגנון דתי ואישי</h3></CardHeader>
-        <CardBody className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <CardBody className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
           <Field label="מצב אישי" value={label('personalStatus', c.personalStatus)} />
           <Field label="ילדים" value={String(c.numberOfChildren)} />
           <Field label="שלב חיים" value={label('lifeStage', c.lifeStage)} />
@@ -279,7 +306,7 @@ function ProfileSections({ c }: { c: Awaited<ReturnType<typeof internalCandidate
 
       <Card>
         <CardHeader><h3 className="text-sm font-semibold">לימודים ועבודה</h3></CardHeader>
-        <CardBody className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <CardBody className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
           <Field label="כיוון לימודים/עבודה" value={label('studyWorkDirection', c.studyWorkDirection)} />
         </CardBody>
       </Card>
@@ -382,14 +409,3 @@ function MetricRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
-function brief(c: InternalCandidate) {
-  return {
-    id: c._id, firstName: c.firstName, lastName: c.lastName, gender: c.gender,
-    city: c.city, sectorGroup: c.sectorGroup, subSector: c.subSector,
-    lifestyleTone: c.lifestyleTone, personalStatus: c.personalStatus,
-    lifeStage: c.lifeStage, studyWorkDirection: c.studyWorkDirection,
-    about: c.about, whatSeeking: c.whatSeeking,
-    profileCompletion: c.profileCompletion,
-    missingCriticalFields: c.missingCriticalFields,
-  };
-}

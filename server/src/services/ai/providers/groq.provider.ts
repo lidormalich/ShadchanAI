@@ -28,9 +28,11 @@ class GroqProvider implements AIProviderClient {
         baseUrl: env.GROQ_BASE_URL,
         apiKey: env.GROQ_API_KEY,
         model: this.model,
-        maxRetries: AI.MAX_RETRIES,
+        // Fail fast → the fallback (OpenAI) engages quickly when Groq
+        // hangs or rate-limits. Tunable via GROQ_MAX_RETRIES/GROQ_TIMEOUT_MS.
+        maxRetries: env.GROQ_MAX_RETRIES,
         backoffBaseMs: AI.BACKOFF_BASE_MS,
-        timeoutMs: 30_000,
+        timeoutMs: env.GROQ_TIMEOUT_MS,
       });
     } else {
       this.client = null;

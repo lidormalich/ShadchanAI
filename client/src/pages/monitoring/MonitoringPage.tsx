@@ -22,19 +22,24 @@ import type { ReactNode } from 'react';
 import { Badge, Card, CardBody, CardHeader } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { monitoringApi, type MonitoringEvent, type MonitoringOverview } from '@/services/api/monitoring';
+import { statusTone } from '@/utils/labels';
+import { formatDateTime, formatTime } from '@/utils/format';
 
-const POLL_MS = 12_000;
+const POLL_MS = 30_000;
+const STALE_MS = 20_000;
 
 export function MonitoringPage() {
   const overview = useQuery({
     queryKey: ['monitoring', 'overview'],
     queryFn: () => monitoringApi.overview(24),
     refetchInterval: POLL_MS,
+    staleTime: STALE_MS,
   });
   const events = useQuery({
     queryKey: ['monitoring', 'events'],
     queryFn: () => monitoringApi.events(100),
     refetchInterval: POLL_MS,
+    staleTime: STALE_MS,
   });
 
   if (overview.isLoading && !overview.data) {
@@ -59,7 +64,7 @@ export function MonitoringPage() {
             <Activity className="h-5 w-5" /> ניטור מערכת
           </h2>
           <p className="text-xs text-ink-muted">
-            חלון {o.windowHours} שעות · רענון אוטומטי כל {POLL_MS / 1000} שניות · עודכן {new Date(o.generatedAt).toLocaleTimeString('he-IL')}
+            חלון {o.windowHours} שעות · רענון אוטומטי כל {POLL_MS / 1000} שניות · עודכן {formatTime(o.generatedAt)}
           </p>
         </div>
         <ActiveAlerts alerts={o.alerts} />
@@ -185,7 +190,7 @@ function SafeModePanel({ safeMode }: { safeMode: MonitoringOverview['safeMode'] 
           </Badge>
           {safeMode.reason && <span className="text-xs text-ink-muted">{safeMode.reason}</span>}
         </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-ink-muted">env ENABLE_OUTBOUND_MESSAGES</span>
             <Badge tone={safeMode.envEnabled ? 'success' : 'neutral'}>{String(safeMode.envEnabled)}</Badge>
@@ -221,6 +226,7 @@ function SystemHealth({ sessions }: { sessions: MonitoringOverview['whatsappSess
         {sessions.length === 0 ? (
           <EmptyState title="אין ערוצים רשומים" description="הוסף ערוץ ב-/channels." />
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-ink-muted">
@@ -245,23 +251,17 @@ function SystemHealth({ sessions }: { sessions: MonitoringOverview['whatsappSess
                     </Badge>
                   </td>
                   <td className="py-1 text-xs text-ink-muted">
-                    {s.lastActivityAt ? new Date(s.lastActivityAt).toLocaleString('he-IL') : '—'}
+                    {formatDateTime(s.lastActivityAt)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </CardBody>
     </Card>
   );
-}
-
-function statusTone(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
-  if (status === 'active') return 'success';
-  if (status === 'rate_limited') return 'warning';
-  if (status === 'disconnected' || status === 'suspended' || status === 'replaced') return 'danger';
-  return 'neutral';
 }
 
 function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
@@ -327,12 +327,12 @@ function EventStream({ events, loading }: { events: MonitoringEvent[]; loading: 
             <div>
               <span className="font-mono font-semibold">{e.type}</span>
               {e.entityId && <span className="ms-2 font-mono text-ink-faint">#{e.entityId.slice(-6)}</span>}
-              {e.type === 'ERROR' && e.metadata?.kind != null && (
-                <span className="ms-2 text-danger">{String(e.metadata.kind)}</span>
+              {e.type === 'ERROR' && e.metadata?.['kind'] != null && (
+                <span className="ms-2 text-danger">{String(e.metadata['kind'])}</span>
               )}
             </div>
             <div className="text-[10px] text-ink-faint">
-              {new Date(e.timestamp).toLocaleString('he-IL')}
+              {formatDateTime(e.timestamp)}
             </div>
           </div>
         </li>

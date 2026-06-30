@@ -104,6 +104,10 @@ export interface ExplainMatchInput {
   strengths: string[];
   attentionPoints: string[];
   scoreBreakdown: Array<{ dimension: string; score: number; detail: string }>;
+  // When false the engine hard-blocked the pair; blockers carries the
+  // deterministic reasons. The prompt uses these to ground notMatchReasons.
+  eligible?: boolean;
+  blockers?: Array<{ code: string; message: string; overridable?: string }>;
 }
 
 export interface ExplainMatchOutput {
@@ -112,6 +116,9 @@ export interface ExplainMatchOutput {
   concerns: string[];
   nuance: string;
   recommendedApproach: string;
+  // Concrete, specific reasons this pair is NOT a good match. Populated
+  // when the pair is ineligible or low-scoring; empty for strong matches.
+  notMatchReasons: string[];
 }
 
 export interface GenerateMessageInput {

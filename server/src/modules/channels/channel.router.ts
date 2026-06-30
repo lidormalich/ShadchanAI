@@ -8,6 +8,7 @@ import {
   ChannelIdParamSchema,
   AssignChatRoleSchema,
   DeleteChannelSchema,
+  ForceReleaseLockSchema,
 } from './channel.validator.js';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
@@ -17,6 +18,9 @@ channelRouter.use(requireAuth);
 
 channelRouter.get('/', validate({ query: ListChannelsQuerySchema }), ctrl.listHandler);
 channelRouter.get('/health', ctrl.healthHandler);
+// Multi-account admin overview: per-channel session + lock state.
+// Operators use this to diagnose channel_skipped_lock_held situations.
+channelRouter.get('/sessions/admin', ctrl.adminSessionsHandler);
 channelRouter.get('/:channelId', validate({ params: ChannelIdParamSchema }), ctrl.getHandler);
 channelRouter.get('/:channelId/chain', validate({ params: ChannelIdParamSchema }), ctrl.chainHandler);
 
@@ -30,6 +34,16 @@ channelRouter.post('/:channelId/session/start',  validate({ params: ChannelIdPar
 channelRouter.get ('/:channelId/session/status', validate({ params: ChannelIdParamSchema }), ctrl.sessionStatusHandler);
 channelRouter.post('/:channelId/session/stop',   validate({ params: ChannelIdParamSchema }), ctrl.sessionStopHandler);
 channelRouter.post('/:channelId/session/logout', validate({ params: ChannelIdParamSchema }), ctrl.sessionLogoutHandler);
+
+// Admin override: forcibly release a channel's persisted lock.
+// Refused while a live in-process Baileys client still holds the
+// channel — operator must stop/logout first. Reason is required and
+// every call is audited.
+channelRouter.post(
+  '/:channelId/lock/release',
+  validate({ params: ChannelIdParamSchema, body: ForceReleaseLockSchema }),
+  ctrl.adminForceReleaseLockHandler,
+);
 
 // ── Pre-pilot discovery + mapping + safe delete ──────────
 channelRouter.get('/:channelId/chats', validate({ params: ChannelIdParamSchema }), ctrl.listChatsHandler);

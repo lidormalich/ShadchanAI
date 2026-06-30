@@ -282,6 +282,14 @@ async function finalize(
   message: IMessage,
   outcome: Omit<ExtractionOutcome, 'matchResult'> & { matchResult?: MatchResult['strength'] },
 ): Promise<ExtractionOutcome> {
+  // Track failed attempts so the reconciler can stop auto-retrying a
+  // message that keeps failing (e.g. AI provider persistently down for
+  // one malformed body). A non-failure outcome preserves the count but
+  // does not increment it.
+  const priorRetries = message.extraction?.retryCount ?? 0;
+  const retryCount =
+    outcome.status === MessageExtractionStatus.FAILED ? priorRetries + 1 : priorRetries;
+
   message.extraction = {
     status: outcome.status,
     method: outcome.method,
@@ -291,6 +299,7 @@ async function finalize(
     confidence: outcome.confidence,
     failureReason: outcome.failureReason,
     matchedFields: outcome.matchedFields,
+    retryCount,
   };
   await message.save();
 

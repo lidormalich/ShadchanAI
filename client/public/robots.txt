@@ -1,0 +1,30 @@
+# robots.txt — שדכןAI
+# מערכת זו היא ממשק ניהול פרטי. ברירת המחדל: לאפשר לזחלני LLM להבין את המוצר
+# דרך llms.txt, אך לחסום אינדוקס של מסכי האפליקציה עצמם.
+# אם יש לך עמוד נחיתה ציבורי, התאם את הכללים בהתאם.
+
+User-agent: *
+Allow: /$
+Allow: /llms.txt
+Allow: /og-image.png
+Allow: /favicon.svg
+Disallow: /
+
+# בוטים של מנועי בינה מלאכותית (GEO) — הפניה לקובץ ההקשר
+User-agent: GPTBot
+Allow: /llms.txt
+Disallow: /
+
+User-agent: ClaudeBot
+Allow: /llms.txt
+Disallow: /
+
+User-agent: PerplexityBot
+Allow: /llms.txt
+Disallow: /
+
+User-agent: Google-Extended
+Allow: /llms.txt
+Disallow: /
+
+Sitemap: https://shadchan-ai.app/sitemap.xml

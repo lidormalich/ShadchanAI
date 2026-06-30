@@ -143,6 +143,32 @@ const SECTOR_GROUP: Record<string, string> = {
   other: 'אחר',
 };
 
+const REGION: Record<string, string> = {
+  north: 'צפון',
+  haifa_krayot: 'חיפה והקריות',
+  sharon: 'השרון',
+  gush_dan: 'גוש דן',
+  jerusalem: 'ירושלים והסביבה',
+  shfela: 'שפלה',
+  south: 'דרום',
+  yosh: 'יהודה ושומרון',
+};
+
+const CHILDREN_PREFERENCE: Record<string, string> = {
+  large_family: 'משפחה גדולה',
+  balanced: 'מאוזן',
+  small_family: 'משפחה קטנה',
+  flexible: 'גמיש',
+  undecided: 'טרם הוחלט',
+};
+
+const CAREER_PRIORITY: Record<string, string> = {
+  torah_focused: 'עדיפות לתורה',
+  balanced: 'תורה ועבודה מאוזן',
+  career_focused: 'עדיפות לקריירה',
+  flexible: 'גמיש',
+};
+
 const SCORING_DIMENSION: Record<string, string> = {
   age: 'גיל',
   sector: 'מגזר',
@@ -302,6 +328,9 @@ const LOOKUPS: Record<string, Record<string, string>> = {
   channelRole: CHANNEL_ROLE,
   channelStatus: CHANNEL_STATUS,
   sectorGroup: SECTOR_GROUP,
+  region: REGION,
+  childrenPreference: CHILDREN_PREFERENCE,
+  careerPriority: CAREER_PRIORITY,
   scoringDimension: SCORING_DIMENSION,
   taskStatus: TASK_STATUS,
   taskType: TASK_TYPE,
@@ -330,4 +359,25 @@ const LOOKUPS: Record<string, Record<string, string>> = {
 export function label(kind: keyof typeof LOOKUPS, value: string | undefined | null): string {
   if (!value) return '—';
   return LOOKUPS[kind]?.[value] ?? value;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Enum-to-Badge-tone helpers. Tones must stay within the
+// BadgeTone union exposed by components/ui/primitives.
+// ═══════════════════════════════════════════════════════════
+
+/** Channel status → badge tone. */
+export function statusTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' {
+  if (status === 'active') return 'success';
+  if (status === 'rate_limited') return 'warning';
+  if (status === 'disconnected' || status === 'suspended' || status === 'replaced') return 'danger';
+  return 'neutral';
+}
+
+/** Match type → badge tone. */
+export function matchTypeTone(type: string): 'success' | 'brand' | 'warning' | 'danger' {
+  if (type === 'safe') return 'success';
+  if (type === 'balanced') return 'brand';
+  if (type === 'risky') return 'danger';
+  return 'warning';
 }

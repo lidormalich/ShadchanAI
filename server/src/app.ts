@@ -15,6 +15,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import express, { type Express } from 'express';
+import { resolve as resolvePath } from 'node:path';
 
 import { errorMiddleware } from './middleware/error.middleware.js';
 import { optionalAuth } from './middleware/auth.middleware.js';
@@ -33,6 +34,8 @@ import { authRouter } from './modules/auth/auth.router.js';
 import { internalCandidateRouter } from './modules/candidates/internal-candidate.router.js';
 import { externalCandidateRouter } from './modules/candidates/external-candidate.router.js';
 import { matchRouter } from './modules/matches/match.router.js';
+import { pairReviewRouter } from './modules/pair-reviews/pair-review.router.js';
+import { rejectionReasonRouter } from './modules/rejection-reasons/rejection-reason.router.js';
 import { conversationRouter } from './modules/conversations/conversation.router.js';
 import { channelRouter } from './modules/channels/channel.router.js';
 import { taskRouter } from './modules/tasks/task.router.js';
@@ -77,17 +80,24 @@ export function buildApp(): Express {
   // ── 7. Request logger ─────────────────────────────────
   app.use(requestLogger);
 
-  // ── 8. Default rate limiter for all /api routes (exceptions
+  // ── 8a. Health check BEFORE the rate limiter ──────────
+  // Railway's healthcheck polls /api/health; if it sat behind the
+  // default limiter a traffic burst could 429 the probe and trigger a
+  // restart loop. Health must always answer.
+  app.use('/api', healthRouter);
+
+  // ── 8b. Default rate limiter for all /api routes (exceptions
   //       below override with stricter limits) ─────────────
   app.use('/api', defaultRateLimiter);
 
   // ── 9. Routers ────────────────────────────────────────
-  app.use('/api', healthRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/ai', aiRateLimiter, aiRouter);
   app.use('/api/candidates/internal', internalCandidateRouter);
   app.use('/api/candidates/external', externalCandidateRouter);
   app.use('/api/matches', matchRouter);
+  app.use('/api/pair-reviews', pairReviewRouter);
+  app.use('/api/rejection-reasons', rejectionReasonRouter);
   app.use('/api/conversations', conversationRouter);
   app.use('/api/channels', channelRouter);
   app.use('/api/tasks', taskRouter);
@@ -107,6 +117,23 @@ export function buildApp(): Express {
   // Start the notifications feed subscription as part of app bootstrap
   // so events are captured even before the first /api/notifications GET.
   ensureNotificationsStarted();
+
+  // ── 9b. Static client SPA (production single-origin) ──
+  // When CLIENT_DIST_DIR is set, serve the built client from the same
+  // origin as the API. The client calls a hardcoded relative `/api`, so
+  // same-origin hosting is required in production. Unset in local dev
+  // (Vite serves the client and proxies /api).
+  if (env.CLIENT_DIST_DIR) {
+    const clientDir = resolvePath(env.CLIENT_DIST_DIR);
+    app.use(express.static(clientDir, { index: false }));
+    // SPA fallback: any non-API GET returns index.html so client-side
+    // routing works on deep links / refresh. API 404s are handled below.
+    // The lookahead excludes both "/api/..." and a bare "/api" so a
+    // mistyped API path returns a JSON 404, not index.html with a 200.
+    app.get(/^(?!\/api(\/|$)).*/, (_req, res) => {
+      res.sendFile(resolvePath(clientDir, 'index.html'));
+    });
+  }
 
   // ── 10. 404 ────────────────────────────────────────────
   app.use((_req, res) => {

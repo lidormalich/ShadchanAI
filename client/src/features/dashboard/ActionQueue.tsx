@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useMemo } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -83,9 +84,9 @@ export function ActionQueue({
   );
 }
 
-function Row({ row }: { row: DashboardRow }) {
+const Row = React.memo(function Row({ row }: { row: DashboardRow }) {
   const c = CATEGORY[row.type];
-  const age = humanAge(row.at);
+  const age = useMemo(() => humanAge(row.at), [row.at]);
 
   return (
     <div className="flex items-start gap-3 p-4">
@@ -107,7 +108,7 @@ function Row({ row }: { row: DashboardRow }) {
       <RowPrimaryAction row={row} />
     </div>
   );
-}
+}, (prev, next) => prev.row.id === next.row.id && prev.row.type === next.row.type);
 
 function RowMetaExtras({ row }: { row: DashboardRow }) {
   if (row.type === 'awaiting_response' || row.type === 'high_potential_draft') {

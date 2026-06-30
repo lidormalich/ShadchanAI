@@ -66,12 +66,31 @@ import {
 import { cacheGet, cacheSet, hashKey } from './ai.cache.js';
 import { logAIRequest } from './ai.logger.js';
 import { groqProvider } from './providers/groq.provider.js';
-import { fallbackProvider } from './providers/fallback.provider.js';
+import { openaiProvider } from './providers/openai.provider.js';
 import { embeddingsProvider } from './providers/embeddings.provider.js';
 
 import * as tools from './ai.tools.js';
 import { env } from '../../config/env.js';
 import { BusinessRuleError } from '../../utils/errors.js';
+import { createLogger } from '../../utils/logger.js';
+import { getSettingStringCached } from '../../modules/settings/settings.service.js';
+
+const log = createLogger('ai');
+
+// Resolve which engine is primary. The `ai.engine` setting (operator-set in
+// the UI) overrides the AI_ENGINE env default; the other engine auto-serves
+// as the fallback. On any settings read error we fall back to the env value.
+async function resolveEngines(): Promise<{ primary: AIProviderClient; secondary: AIProviderClient }> {
+  let engine: string = env.AI_ENGINE;
+  try {
+    engine = await getSettingStringCached('ai.engine');
+  } catch {
+    // keep the env default
+  }
+  return engine === 'openai'
+    ? { primary: openaiProvider, secondary: groqProvider }
+    : { primary: groqProvider, secondary: openaiProvider };
+}
 
 // ══════════════════════════════════════════════════════════
 // Core orchestrator (private)
@@ -108,10 +127,12 @@ export async function executeWithFallback<T>(
     }
   }
 
+  const { primary: primaryProvider, secondary: secondaryProvider } = await resolveEngines();
+
   const started = Date.now();
   let retryCount = 0;
   let fallbackUsed = false;
-  let provider: AIProviderClient = groqProvider;
+  let provider: AIProviderClient = primaryProvider;
   let lastError: string | undefined;
   let result: T | undefined;
   let inputTokens: number | undefined;
@@ -120,10 +141,10 @@ export async function executeWithFallback<T>(
 
   const inputHash = cacheKey ?? hashKey(requestType, buildPrompt(false));
 
-  // ── 2. Try primary provider (Groq) ────────────────────
-  if (groqProvider.isAvailable()) {
+  // ── 2. Try the primary engine (AI_ENGINE) ─────────────
+  if (primaryProvider.isAvailable()) {
     try {
-      const response = await groqProvider.chat(buildPrompt(false), { jsonMode: true });
+      const response = await primaryProvider.chat(buildPrompt(false), { jsonMode: true });
       const parsed = parseAndValidate(response.content, schema);
       if (parsed.ok && parsed.data !== undefined) {
         result = parsed.data;
@@ -135,7 +156,7 @@ export async function executeWithFallback<T>(
         retryCount = 1;
         lastError = parsed.error;
         try {
-          const retry = await groqProvider.chat(buildPrompt(true), { jsonMode: true });
+          const retry = await primaryProvider.chat(buildPrompt(true), { jsonMode: true });
           const reparsed = parseAndValidate(retry.content, schema);
           if (reparsed.ok && reparsed.data !== undefined) {
             result = reparsed.data;
@@ -147,22 +168,26 @@ export async function executeWithFallback<T>(
             lastError = reparsed.error;
           }
         } catch (e) {
-          lastError = `Groq retry failed: ${(e as Error).message}`;
+          lastError = `${primaryProvider.name} retry failed: ${(e as Error).message}`;
         }
       }
     } catch (e) {
-      lastError = `Groq request failed: ${(e as Error).message}`;
+      lastError = `${primaryProvider.name} request failed: ${(e as Error).message}`;
     }
   } else {
-    lastError = 'Groq provider not configured';
+    lastError = `${primaryProvider.name} provider not configured`;
   }
 
-  // ── 4. Fallback if primary failed or validation failed ─
-  if (result === undefined && fallbackProvider.isAvailable()) {
+  // ── 4. Fallback to the other engine if the primary failed ─
+  if (result === undefined && secondaryProvider.isAvailable()) {
+    log.warn(
+      { primary: primaryProvider.name, fallback: secondaryProvider.name, reason: lastError },
+      'primary AI failed — falling back',
+    );
     fallbackUsed = true;
-    provider = fallbackProvider;
+    provider = secondaryProvider;
     try {
-      const response = await fallbackProvider.chat(buildPrompt(false), { jsonMode: true });
+      const response = await secondaryProvider.chat(buildPrompt(false), { jsonMode: true });
       const parsed = parseAndValidate(response.content, schema);
       if (parsed.ok && parsed.data !== undefined) {
         result = parsed.data;
@@ -188,7 +213,7 @@ export async function executeWithFallback<T>(
     inputHash,
     success: result !== undefined,
     fallbackUsed,
-    fallbackProvider: fallbackUsed ? fallbackProvider.name : undefined,
+    fallbackProvider: fallbackUsed ? secondaryProvider.name : undefined,
     retryCount,
     latencyMs,
     inputTokens,

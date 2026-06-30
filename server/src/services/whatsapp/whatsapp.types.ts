@@ -79,6 +79,28 @@ export interface ChannelHealthUpdate {
   lastHealthCheckAt?: Date;
 }
 
+// ── Channel status persistence seam ──────────────────────
+//
+// The Baileys transport (providers/baileys/baileys.client) detects
+// connection/status transitions but must NOT own domain persistence.
+// It emits a status patch through this callback; channel.manager
+// supplies the implementation that writes it to the Channel model.
+
+export interface ChannelStatusPatch {
+  status?: 'active' | 'rate_limited' | 'suspended' | 'disconnected' | 'replaced';
+  connectionHealth?: 'healthy' | 'degraded' | 'down';
+  webhookStatus?: 'verified' | 'pending' | 'failed';
+  lastConnectedAt?: Date;
+  lastDisconnectAt?: Date;
+  phoneNumber?: string;
+  statusReason?: string;
+}
+
+export type ChannelStatusPersister = (
+  channelId: string,
+  patch: ChannelStatusPatch,
+) => Promise<void>;
+
 // ── Baileys session status (reported to admins / UI) ─────
 
 export type BaileysSessionState =

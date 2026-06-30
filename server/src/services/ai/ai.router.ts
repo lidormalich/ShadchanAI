@@ -20,6 +20,7 @@ import {
   embedText,
   AIServiceError,
 } from './ai.service.js';
+import { extractProfileFromText } from '../extraction/profile.extractor.js';
 
 import {
   ExplainMatchInputSchema,
@@ -113,6 +114,39 @@ aiRouter.post('/ask', (req, res) => {
   void runHandler(req, res, AskAIInputSchema, (input, userId) =>
     askAI({ ...(input as AskAIInput), userId: (input as AskAIInput).userId ?? userId }),
   );
+});
+
+// Extract candidate fields from a free-text profile card (one smart
+// service for both internal & external intake forms — each form maps
+// the returned superset to its own shape). `target` is advisory only:
+// it tags the AI audit log with the entity type.
+aiRouter.post('/extract-profile', async (req, res) => {
+  const { text, target } = req.body as { text?: unknown; target?: unknown };
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    sendError(res, 400, 'text is required and must be a non-empty string');
+    return;
+  }
+  if (text.length > 8000) {
+    sendError(res, 400, 'text is too long (max 8000 characters)');
+    return;
+  }
+
+  const relatedEntityType = target === 'external' ? 'external_candidate' : 'internal_candidate';
+  const userId = (req as Request & { user?: { id?: string } }).user?.id;
+  try {
+    const result = await extractProfileFromText(text, { userId, relatedEntityType });
+    sendSuccess(res, result.profile, {
+      provider: result.providerUsed,
+      fallbackUsed: result.fallbackUsed,
+      latencyMs: result.latencyMs,
+    });
+  } catch (err) {
+    if (err instanceof AIServiceError) {
+      sendError(res, 502, err.message, err.info);
+    } else {
+      sendError(res, 500, (err as Error).message);
+    }
+  }
 });
 
 aiRouter.post('/embed', async (req, res) => {

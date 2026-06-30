@@ -239,20 +239,44 @@ export async function findMatchingInternals(
     .lean()
     .exec();
 
+  // Batch the per-internal context lookups into two queries (avoids N+1).
+  const internalIds = internals.map((i) => i._id);
+
+  const activeSuggestions = await MatchSuggestion.find({
+    internalCandidateId: { $in: internalIds },
+    status: { $nin: ['closed', 'expired'] },
+  }).select('internalCandidateId externalCandidateId').lean().exec();
+
+  const declineSuggestions = await MatchSuggestion.find({
+    internalCandidateId: { $in: internalIds },
+    status: { $in: ['declined_side_a', 'declined_side_b'] },
+  }).select('internalCandidateId externalCandidateId closedAt').lean().exec();
+
+  // Group results per internal candidate, keyed by String(internalCandidateId).
+  const activeByInternal = new Map<string, typeof activeSuggestions>();
+  for (const s of activeSuggestions) {
+    const key = String(s.internalCandidateId);
+    const list = activeByInternal.get(key);
+    if (list) list.push(s);
+    else activeByInternal.set(key, [s]);
+  }
+  const declinesByInternal = new Map<string, typeof declineSuggestions>();
+  for (const d of declineSuggestions) {
+    const key = String(d.internalCandidateId);
+    const list = declinesByInternal.get(key);
+    if (list) list.push(d);
+    else declinesByInternal.set(key, [d]);
+  }
+
   const results: unknown[] = [];
 
   for (const internal of internals) {
     // Context for this internal (active matches + recent declines)
-    const active = await MatchSuggestion.find({
-      internalCandidateId: internal._id,
-      status: { $nin: ['closed', 'expired'] },
-    }).select('externalCandidateId').lean().exec();
+    const internalKey = String(internal._id);
+    const active = activeByInternal.get(internalKey) ?? [];
 
     const activeMatchExternalIds = new Set<string>(active.map((s) => String(s.externalCandidateId)));
-    const declines = await MatchSuggestion.find({
-      internalCandidateId: internal._id,
-      status: { $in: ['declined_side_a', 'declined_side_b'] },
-    }).select('externalCandidateId closedAt').lean().exec();
+    const declines = declinesByInternal.get(internalKey) ?? [];
     const recentDeclines = new Map<string, Date>();
     for (const d of declines) {
       if (d.closedAt) recentDeclines.set(String(d.externalCandidateId), d.closedAt);

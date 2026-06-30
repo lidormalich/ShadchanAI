@@ -3,6 +3,48 @@
 // (the subset the UI consumes). Enum values re-exported from shared.
 // ═══════════════════════════════════════════════════════════
 
+import type {
+  Gender,
+  SectorGroup,
+  SubSector,
+  LifestyleTone,
+  ReligiousStyle,
+  PersonalStatus,
+  LifeStage,
+  ReadinessForMarriage,
+  StudyWorkDirection,
+  Region,
+  ChildrenPreference,
+  CareerPriority,
+  CandidateStatus,
+  ExternalCandidateStatus,
+  ExternalSourceType,
+  AvailabilityStatus,
+  ClosureReason,
+  MatchSuggestionStatus,
+  MatchType,
+  RiskLevel,
+  SourceMode,
+  RecommendedAction,
+  SendStrategy,
+  ChannelRole,
+  ChannelProvider,
+  ChannelStatus,
+  WebhookStatus,
+  ConversationPurpose,
+  MessageDirection,
+  MessageContentType,
+  MessageDeliveryStatus,
+  TaskStatus,
+  TaskPriority,
+  TaskType,
+  NoteEntityType,
+  NoteVisibility,
+  ShareCardPhotoMode,
+  AgeConfidence,
+  ScoringDimension,
+} from '@shadchanai/shared';
+
 export type {
   Gender,
   SectorGroup,
@@ -50,7 +92,7 @@ export interface InternalCandidate {
   _id: string;
   firstName: string;
   lastName: string;
-  gender: string;
+  gender: Gender;
   dateOfBirth: string;
   hebrewName?: string;
   phone?: string;
@@ -58,16 +100,26 @@ export interface InternalCandidate {
   photoUrl?: string;
   photoApproved?: boolean;
   city?: string;
+  region?: Region;
   neighborhood?: string;
-  sectorGroup: string;
-  subSector?: string;
-  lifestyleTone?: string;
-  religiousStyle?: string;
-  personalStatus: string;
+  ethnicity?: string;
+  familyBackground?: string;
+  characterTraits?: string[];
+  characterNotes?: string;
+  lifeGoals?: {
+    childrenPreference?: ChildrenPreference;
+    careerPriority?: CareerPriority;
+    homeVision?: string;
+  };
+  sectorGroup: SectorGroup;
+  subSector?: SubSector;
+  lifestyleTone?: LifestyleTone;
+  religiousStyle?: ReligiousStyle;
+  personalStatus: PersonalStatus;
   numberOfChildren: number;
-  lifeStage?: string;
-  readinessForMarriage: string;
-  studyWorkDirection?: string;
+  lifeStage?: LifeStage;
+  readinessForMarriage: ReadinessForMarriage;
+  studyWorkDirection?: StudyWorkDirection;
   about?: string;
   whatSeeking?: string;
   referenceName?: string;
@@ -87,12 +139,12 @@ export interface InternalCandidate {
   readinessScore?: number;
   lastVerifiedAt?: string;
   lastActionAt?: string;
-  status: string;
+  status: CandidateStatus;
   datingPartnerCandidateId?: string;
   datingStartedAt?: string;
   datingSourceMatchId?: string;
   deferredSuggestionsCount: number;
-  closureReason?: string;
+  closureReason?: ClosureReason;
   closureNote?: string;
   closedAt?: string;
   archivedAt?: string;
@@ -104,7 +156,7 @@ export interface InternalCandidate {
 // ── External Candidate ───────────────────────────────────
 export interface ExternalCandidate {
   _id: string;
-  sourceType: string;
+  sourceType: ExternalSourceType;
   sourceName?: string;
   sourceMatchmakerName?: string;
   sourceChannelId?: string;
@@ -112,15 +164,16 @@ export interface ExternalCandidate {
   lastSourceUpdateAt?: string;
   firstName?: string;
   lastName?: string;
-  gender?: string;
+  gender?: Gender;
   age?: number;
   city?: string;
-  sectorGroup?: string;
-  subSector?: string;
-  lifestyleTone?: string;
-  personalStatus?: string;
-  lifeStage?: string;
-  studyWorkDirection?: string;
+  region?: Region;
+  sectorGroup?: SectorGroup;
+  subSector?: SubSector;
+  lifestyleTone?: LifestyleTone;
+  personalStatus?: PersonalStatus;
+  lifeStage?: LifeStage;
+  studyWorkDirection?: StudyWorkDirection;
   height?: number;
   about?: string;
   whatSeeking?: string;
@@ -130,15 +183,15 @@ export interface ExternalCandidate {
     title?: string;
     summary?: string;
     visibleFields?: string[];
-    photoMode?: string;
+    photoMode?: ShareCardPhotoMode;
     approvedForShare: boolean;
     lastReviewedAt?: string;
   };
-  availabilityStatus: string;
-  status: string;
+  availabilityStatus: AvailabilityStatus;
+  status: ExternalCandidateStatus;
   ageReliability?: {
     reportedAgeAt?: string;
-    ageConfidence?: string;
+    ageConfidence?: AgeConfidence;
     approximateBirthYear?: number;
   };
   // Bidirectional preferences (OPTIONAL — set when source provides them)
@@ -165,7 +218,7 @@ export interface ExternalCandidate {
 
 // ── Match Suggestion ─────────────────────────────────────
 export interface ScoreDimensionView {
-  dimension: string;
+  dimension: ScoringDimension;
   score: number;
   weight: number;
   weightedScore: number;
@@ -177,20 +230,20 @@ export interface MatchSuggestion {
   internalCandidateId: string;
   externalCandidateId: string;
   eligible: boolean;
-  status: string;
+  status: MatchSuggestionStatus;
   matchScore: number;
   confidenceScore: number;
-  matchType: string;
-  riskLevel: string;
+  matchType: MatchType;
+  riskLevel: RiskLevel;
   scoreBreakdown: ScoreDimensionView[];
   hardBlockers: string[];
   strengths: string[];
   attentionPoints: string[];
   overrideReasons: string[];
   flexibilityOverrideApplied: boolean;
-  recommendedAction: string;
-  sendStrategy: string;
-  sourceMode: string;
+  recommendedAction: RecommendedAction;
+  sendStrategy: SendStrategy;
+  sourceMode: SourceMode;
   penalties: {
     historyPenalty: number;
     stalePenalty: number;
@@ -243,7 +296,7 @@ export interface BlockedMatchItem {
   lastName?: string;
   city?: string;
   age?: number;
-  sectorGroup?: string;
+  sectorGroup?: SectorGroup;
   blockers: BlockerReason[];
   aggregateOverridable: 'none' | 'with_reason';
 }
@@ -252,14 +305,14 @@ export interface BlockedMatchItem {
 export interface Conversation {
   _id: string;
   channelId: string;
-  channelRole: string;
+  channelRole: ChannelRole;
   accountDisplayName: string;
   participantName?: string;
   participantPhone?: string;
   internalCandidateId?: string;
   externalCandidateId?: string;
   matchSuggestionId?: string;
-  purpose: string;
+  purpose: ConversationPurpose;
   // Pre-pilot per-conversation role override. The authoritative
   // gate the ingestion pipeline reads.
   assignedRole?: 'profiles_source' | 'match_sending' | 'ignore';
@@ -281,14 +334,14 @@ export interface Message {
   _id: string;
   conversationId: string;
   channelId: string;
-  channelRole: string;
+  channelRole: ChannelRole;
   accountDisplayName: string;
-  direction: string;
-  contentType: string;
+  direction: MessageDirection;
+  contentType: MessageContentType;
   body?: string;
   mediaCaption?: string;
   mediaMimeType?: string;
-  deliveryStatus: string;
+  deliveryStatus: MessageDeliveryStatus;
   sentAt?: string;
   deliveredAt?: string;
   readAt?: string;
@@ -311,15 +364,15 @@ export interface Message {
 // ── Channel ──────────────────────────────────────────────
 export interface Channel {
   channelId: string;
-  role: string;
+  role: ChannelRole;
   accountDisplayName: string;
   phoneNumber: string;
-  provider: string;
+  provider: ChannelProvider;
   providerSessionId?: string;
-  status: string;
+  status: ChannelStatus;
   statusReason?: string;
   connectionHealth: 'healthy' | 'degraded' | 'down';
-  webhookStatus: string;
+  webhookStatus: WebhookStatus;
   lastConnectedAt?: string;
   lastInboundAt?: string;
   lastOutboundAt?: string;
@@ -340,7 +393,7 @@ export interface BaileysChannelStatus {
 // ── Task ─────────────────────────────────────────────────
 export interface Task {
   _id: string;
-  type: string;
+  type: TaskType;
   title: string;
   description?: string;
   internalCandidateId?: string;
@@ -349,9 +402,9 @@ export interface Task {
   conversationId?: string;
   ownerUserId: string;
   assignedTo?: string;
-  priority: string;
+  priority: TaskPriority;
   dueAt?: string;
-  status: string;
+  status: TaskStatus;
   completedAt?: string;
   completedBy?: string;
   completionNote?: string;
@@ -362,12 +415,12 @@ export interface Task {
 // ── Note ─────────────────────────────────────────────────
 export interface Note {
   _id: string;
-  entityType: string;
+  entityType: NoteEntityType;
   entityId: string;
   body: string;
   authorUserId: string;
   mentions: string[];
-  visibility: string;
+  visibility: NoteVisibility;
   pinned: boolean;
   createdAt: string;
   updatedAt: string;
@@ -395,5 +448,5 @@ export interface SendPreview {
   blockers: string[];
   internalCandidateReadiness: ReadinessDetails;
   externalCandidateAvailable: boolean;
-  engineRecommendedAction: string;
+  engineRecommendedAction: RecommendedAction;
 }

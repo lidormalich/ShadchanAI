@@ -1,7 +1,10 @@
-# ShadchanAI — Architecture Plan
+# ShadchanAI — Architecture
 
 > Matchmaking management system for religious communities (Dati Leumi and Haredi/Dati).
 > All services run inside a single Node.js monorepo. No external microservices.
+>
+> This document describes the **current, implemented** architecture. The
+> server, client, and shared workspaces are all built and running.
 
 ---
 
@@ -41,122 +44,109 @@
 
 ---
 
-## 2. Folder Structure Plan
+## 2. Folder Structure
+
+The monorepo is built and live. Three npm workspaces: `client/`, `server/`, `shared/`.
 
 ```
 ShadchanAI/
-├── client/                          # React frontend (Vite)
-│   ├── public/
+├── client/                          # React 18 + Vite frontend
 │   ├── src/
-│   │   ├── components/              # Shared UI components
-│   │   ├── pages/                   # Route-level pages
-│   │   ├── hooks/                   # Custom React hooks
-│   │   ├── services/                # API client functions
-│   │   ├── store/                   # State management
-│   │   ├── types/                   # Shared frontend types
-│   │   ├── utils/                   # Frontend utilities
-│   │   ├── App.tsx
+│   │   ├── components/              # Reusable, domain-agnostic UI
+│   │   │   ├── ui/                  # Primitives (Dialog, Drawer, Toast, Pagination, primitives.tsx)
+│   │   │   ├── domain/             # Cross-page domain widgets (MatchCard, KpiCard, banners…)
+│   │   │   ├── states/            # Empty/loading/error states
+│   │   │   └── ErrorBoundary.tsx
+│   │   ├── features/               # Feature-scoped UI + hooks (the main composition unit)
+│   │   │   │                        #   auth, ai, dashboard, matching, compatibility,
+│   │   │   │                        #   notes, tasks, users, ownership, safe-mode,
+│   │   │   │                        #   realtime, notifications, history, search, forms
+│   │   ├── pages/                   # Route-level pages mounted by the router
+│   │   │   │                        #   candidates/, matches/, channels/, chats/,
+│   │   │   │                        #   review/, tasks/, insights/, monitoring/,
+│   │   │   │                        #   settings/, DashboardPage, NotFoundPage
+│   │   │   ├── layouts/             # AppShell, Sidebar, Topbar
+│   │   ├── services/api/            # Typed fetch wrappers, ONE file per backend module
+│   │   │   ├── client.ts            #   shared fetch + envelope/error handling
+│   │   │   └── *.ts                 #   matches, candidates, channels, settings, ai, …
+│   │   ├── hooks/                   # Generic hooks (useMediaQuery, …)
+│   │   ├── types/                   # Frontend-local types (api.ts, domain.ts)
+│   │   ├── utils/                   # Frontend helpers (labels.ts, …)
+│   │   ├── App.tsx                  # Router + QueryClientProvider + AuthProvider
 │   │   └── main.tsx
 │   ├── index.html
-│   ├── tsconfig.json
 │   └── vite.config.ts
+│
+│   # NOTE: there is no `store/` folder. Server state lives in
+│   # @tanstack/react-query; cross-cutting UI state uses React Context
+│   # (AuthContext, Toast region). No Redux/Zustand.
 │
 ├── server/                          # Express backend
 │   ├── src/
-│   │   ├── modules/                 # Domain modules (CRUD + routes)
-│   │   │   ├── candidates/
-│   │   │   │   ├── candidate.model.ts
-│   │   │   │   ├── candidate.router.ts
-│   │   │   │   ├── candidate.service.ts
-│   │   │   │   ├── candidate.types.ts
-│   │   │   │   └── candidate.validator.ts
-│   │   │   ├── matches/
-│   │   │   │   ├── match.model.ts
-│   │   │   │   ├── match.router.ts
-│   │   │   │   ├── match.service.ts
-│   │   │   │   ├── match.types.ts
-│   │   │   │   └── match.validator.ts
-│   │   │   ├── users/
-│   │   │   │   ├── user.model.ts
-│   │   │   │   ├── user.router.ts
-│   │   │   │   ├── user.service.ts
-│   │   │   │   ├── user.types.ts
-│   │   │   │   └── user.validator.ts
-│   │   │   └── families/              # (FUTURE — not in initial build)
-│   │   │       ├── family.model.ts
-│   │   │       ├── family.router.ts
-│   │   │       ├── family.service.ts
-│   │   │       ├── family.types.ts
-│   │   │       └── family.validator.ts
+│   │   ├── modules/                 # Domain modules — router → controller → service → model
+│   │   │   ├── candidates/         #   split into internal-candidate.* and external-candidate.*
+│   │   │   ├── matches/            #   match.* + pair-score.model, match-suggestion.model
+│   │   │   ├── pair-reviews/  rejection-reasons/  conversations/  channels/
+│   │   │   ├── chat-mappings/  tasks/  notes/  extraction/  audit/  users/
+│   │   │   ├── auth/  health/  realtime/  dashboard/  search/  notifications/
+│   │   │   ├── insights/  settings/  monitoring/  safe-mode/  ai/ (ai-request.model)
+│   │   │   #  Typical module files: *.router.ts, *.controller.ts, *.service.ts,
+│   │   │   #  *.model.ts, *.validator.ts (+ *.test.ts where covered).
+│   │   │   #  Validators export both Zod schemas AND inferred input types,
+│   │   │   #  so a separate *.types.ts is usually unnecessary.
 │   │   │
-│   │   ├── services/                # Cross-cutting services
-│   │   │   ├── ai/                  # AI integration layer
-│   │   │   │   ├── ai.service.ts
-│   │   │   │   ├── ai.router.ts
-│   │   │   │   ├── ai.types.ts
-│   │   │   │   ├── ai.validators.ts
-│   │   │   │   ├── ai.cache.ts
-│   │   │   │   ├── ai.logger.ts
-│   │   │   │   ├── providers/
-│   │   │   │   │   ├── groq.provider.ts
-│   │   │   │   │   ├── fallback.provider.ts
-│   │   │   │   │   └── embeddings.provider.ts
-│   │   │   │   └── prompts/
-│   │   │   │       ├── matching.prompt.ts
-│   │   │   │       ├── summary.prompt.ts
-│   │   │   │       └── intent.prompt.ts
-│   │   │   │
-│   │   │   ├── matching/            # Matching engine
-│   │   │   │   ├── matching.engine.ts
-│   │   │   │   ├── matching.rules.ts
-│   │   │   │   ├── matching.score.ts
-│   │   │   │   └── matching.types.ts
-│   │   │   │
-│   │   │   ├── whatsapp/            # WhatsApp integration
-│   │   │   │   ├── channel.manager.ts
-│   │   │   │   ├── message.handler.ts
-│   │   │   │   └── webhook.controller.ts
-│   │   │   │
-│   │   │   └── tasks/               # Background tasks
-│   │   │       ├── task.scheduler.ts
-│   │   │       └── task.registry.ts
+│   │   ├── services/                # Cross-cutting services consumed by modules
+│   │   │   ├── ai/                  # ai.service, ai.router, ai.types, ai.validators,
+│   │   │   │   │                    #   ai.cache, ai.logger, ai.prompts, ai.tools
+│   │   │   │   └── providers/       #   groq.provider, fallback.provider,
+│   │   │   │                        #   embeddings.provider, _openai-compatible
+│   │   │   ├── matching/            # Deterministic engine: matching.engine, matching.rules,
+│   │   │   │                        #   matching.score, matching.penalties, matching.matrix,
+│   │   │   │                        #   matching.constants, matching.types, matchable.mapper,
+│   │   │   │                        #   match-scan.service
+│   │   │   ├── whatsapp/            # Baileys-based: whatsapp.service, channel.manager,
+│   │   │   │   │                    #   message.handler, conversation.linker,
+│   │   │   │   │                    #   response.classifier, chat-discovery, send.rate-limiter,
+│   │   │   │   │                    #   instance.lock, whatsapp.logger
+│   │   │   │   └── providers/baileys/  # baileys.client, .events, .mapper, .session.store
+│   │   │   ├── extraction/          # Profile extraction: orchestrator, ai.extractor,
+│   │   │   │                        #   regex.extractor, internal.extractor, candidate.matcher,
+│   │   │   │                        #   templates, queue
+│   │   │   ├── compatibility/       # compatibility.service, explanation.builder
+│   │   │   ├── embedding/           # embedding.service/provider/types, profile.serializer,
+│   │   │   │                        #   similarity.service
+│   │   │   ├── jobs/                # job.scheduler, jobs (background scheduling)
+│   │   │   ├── monitoring/          # metrics.service
+│   │   │   ├── notifications/       # notifications.service
+│   │   │   ├── realtime/            # realtime.service (SSE/event stream)
+│   │   │   ├── safe-mode/           # safe-mode.service (global send guard)
+│   │   │   └── audit.service.ts     # audit log writer
 │   │   │
-│   │   ├── middleware/              # Express middleware
-│   │   │   ├── auth.middleware.ts
-│   │   │   ├── error.middleware.ts
-│   │   │   ├── rateLimiter.middleware.ts
-│   │   │   └── validate.middleware.ts
-│   │   │
-│   │   ├── utils/                   # Shared utilities
-│   │   │   ├── logger.ts
-│   │   │   ├── errors.ts
-│   │   │   ├── response.ts
-│   │   │   └── helpers.ts
-│   │   │
-│   │   ├── config/                  # Configuration
-│   │   │   ├── env.ts
-│   │   │   ├── db.ts
-│   │   │   └── constants.ts
-│   │   │
-│   │   ├── app.ts                   # Express app setup
-│   │   └── server.ts                # Entry point
+│   │   ├── middleware/              # auth, error, permissions, rateLimiter,
+│   │   │                            #   requestLogger, security, validate
+│   │   ├── utils/                   # errors, response (envelope), pagination,
+│   │   │                            #   ownership(.assert), phone, zod-bool
+│   │   ├── config/                  # env (Zod-validated), db, constants, boot-checks
+│   │   ├── scripts/                 # one-off maintenance scripts (backfills)
+│   │   ├── models/index.ts          # central model registration barrel
+│   │   ├── app.ts                   # Express app assembly (middleware + router mounting)
+│   │   └── server.ts                # process entry point / bootstrap
 │   │
-│   ├── tsconfig.json
 │   └── package.json
 │
-├── shared/                          # Types shared between client & server
-│   └── types/                       # DTOs, shared enums, API-safe interfaces ONLY
-│       ├── candidate.dto.ts         # No internal DB/model details
-│       ├── match.dto.ts
-│       ├── enums.ts                 # Shared enums (sector, matchType, etc.)
-│       └── api.types.ts             # Request/response shapes
+├── shared/                          # @shadchanai/shared — types shared by client & server
+│   └── types/
+│       ├── enums.ts                 # MatchType, RiskLevel, ScoringDimension, sectors, …
+│       ├── api.types.ts             # ApiEnvelope, ApiMeta, request/response shapes
+│       └── index.ts                 # barrel re-export
 │
 ├── .env.example
-├── .gitignore
-├── package.json                     # Root package.json (workspaces)
-├── tsconfig.base.json
-└── ARCHITECTURE.md                  # This file
+├── package.json                     # root workspace config
+└── ARCHITECTURE.md                  # this file
 ```
+
+> The lists above are representative, not exhaustive — modules and services are
+> added over time. The invariant is the layering, not the exact file set.
 
 ---
 
@@ -164,30 +154,45 @@ ShadchanAI/
 
 ### Modules (`server/src/modules/`)
 
-Each module owns one domain entity end-to-end:
+Each module owns one domain entity end-to-end and is structured as a four-layer
+pipeline: **router → controller → service → model**.
 
 | File | Responsibility |
 |---|---|
-| `*.model.ts` | Mongoose schema and model definition |
-| `*.router.ts` | Express routes — maps HTTP verbs to service calls |
-| `*.service.ts` | Business logic — the only layer that touches the model |
-| `*.types.ts` | TypeScript interfaces for the entity |
-| `*.validator.ts` | Zod schemas for request validation |
+| `*.router.ts` | Declares Express routes. Mounts `requireAuth`/`validate` middleware and points each verb at a controller handler. No business logic. |
+| `*.controller.ts` | HTTP adapter. Reads validated `req` data, enforces auth/ownership (`ensureUser`, `hasRole`), calls the service, and writes the response via the `ok/created/noContent` envelope helpers. Wraps everything in `try/catch → next(e)`. Holds no business logic and does not touch models. |
+| `*.service.ts` | Business logic — the only layer that reads/writes the model. Stateless functions, HTTP-agnostic (no `req`/`res`). |
+| `*.model.ts` | Mongoose schema + model definition. |
+| `*.validator.ts` | Zod schemas for body/params/query, plus the inferred TypeScript input types the controller consumes. |
 
-**Rule:** Routers never call models directly. Always go through the service.
+**Rules (intended invariants the codebase converges on):**
+- Routers never reach into services or models — they only wire middleware to controllers.
+- Controllers are thin: validate context, delegate to a service, shape the response. They must not query models directly or embed business rules.
+- Services are the sole gateway to the model layer and the only place business logic lives.
+
+> Where a module's logic is trivial, the controller may be a single delegating
+> line — that is fine, but the layering still holds. (Historically a few
+> controllers reached straight into models/queries; that pattern is being
+> migrated back behind services and is not the target architecture.)
 
 ### Services (`server/src/services/`)
 
-Cross-cutting capabilities that multiple modules consume:
+Cross-cutting capabilities that multiple modules consume. Unlike modules, these
+are not 1:1 with a route group — modules' controllers/services call into them.
 
 | Service | Responsibility |
 |---|---|
-| `ai/` | LLM calls, prompt management, caching, intent parsing |
-| `matching/` | Deterministic matching rules + scoring engine |
-| `whatsapp/` | Dual-account messaging (by role: profiles_source / match_sending), webhook handling, channel routing |
-| `tasks/` | Scheduled background jobs (reminders, batch scoring) |
+| `ai/` | LLM orchestration: prompt building, provider selection + fallback, output validation, caching, logging. Advisory only (see Guardrails). |
+| `matching/` | Deterministic matching: hard rules, 8-dimension scoring, penalties, confidence, matchType classification, and the incremental bulk `match-scan` service. No LLM. |
+| `whatsapp/` | Baileys socket integration: dual-account send (by role), inbound message handling, conversation linking, response classification, chat discovery, send rate-limiting, instance locking. |
+| `extraction/` | Turning free-text/WhatsApp content into structured candidate data (regex + AI extractors behind an orchestrator/queue). |
+| `compatibility/` | Builds the human-readable compatibility explanation/workspace data from engine output. |
+| `embedding/` | Vector embeddings + similarity for semantic candidate search. |
+| `jobs/` | Background job scheduling. |
+| `monitoring/`, `notifications/`, `realtime/`, `safe-mode/` | Metrics, in-app notifications, the realtime event stream (SSE), and the global send-guard ("safe mode"). |
 
-**Rule:** Services never import from each other circularly. Dependencies flow downward: `modules → services → utils/config`.
+**Rule:** Dependencies flow downward — `modules → services → utils/config` — and
+services avoid circular imports between each other.
 
 ### Middleware (`server/src/middleware/`)
 
@@ -206,10 +211,17 @@ Stateless helpers with zero domain knowledge:
 
 | Util | Responsibility |
 |---|---|
-| `logger.ts` | Structured logging (pino or winston) |
-| `errors.ts` | Custom error classes (`AppError`, `NotFoundError`, `ValidationError`) |
-| `response.ts` | Standard response envelope (`{ success, data, error }`) |
-| `helpers.ts` | Date formatting, string normalization, etc. |
+| `errors.ts` | Custom error classes the error middleware maps to HTTP responses |
+| `response.ts` | Standard response envelope helpers (`ok`, `created`, `noContent` → `{ success, data, meta }` / `{ success, error }`) |
+| `pagination.ts` | Standard list pagination (page/limit/sort) shared by services |
+| `ownership.ts`, `ownership.assert.ts` | Owner-scoping helpers for record-level access control |
+| `phone.ts`, `zod-bool.ts` | Phone normalization; Zod coercion for boolean query params |
+
+> There is currently **no single central logger module** in `utils/`. Logging is
+> handled by `requestLogger.middleware.ts` for per-request lines and by
+> purpose-built loggers inside the services that need them (e.g.
+> `services/ai/ai.logger.ts`, `services/whatsapp/whatsapp.logger.ts`). A
+> consolidated logger is a known gap (see §9).
 
 ### Config (`server/src/config/`)
 
@@ -217,7 +229,8 @@ Stateless helpers with zero domain knowledge:
 |---|---|
 | `env.ts` | Loads and validates environment variables (Zod) |
 | `db.ts` | MongoDB connection setup |
-| `constants.ts` | App-wide constants (enums, limits, defaults) |
+| `constants.ts` | App-wide constants (limits, defaults) |
+| `boot-checks.ts` | Startup sanity checks run during bootstrap |
 
 ---
 
@@ -227,68 +240,88 @@ Stateless helpers with zero domain knowledge:
 
 ```
 User (browser)
-  → React page calls API client
-    → Express router receives request
-      → validate.middleware checks Zod schema
-        → module.service executes business logic
-          → module.model reads/writes MongoDB
-        → service returns data
-      → response.ts wraps in envelope
-    → JSON response sent
-  → React updates UI
+  → React page/feature calls a React Query hook
+    → hook calls services/api/<module>.ts → services/api/client.ts (fetch)
+      → Express router receives request
+        → auth + validate.middleware (Zod) run
+          → module.controller reads validated data, enforces auth/ownership
+            → module.service executes business logic
+              → module.model reads/writes MongoDB
+            → service returns data
+          → controller wraps it via ok()/created() envelope helper
+        → JSON response sent
+      → client.ts unwraps the envelope (throws ApiError on failure)
+  → React Query caches/updates; component re-renders
 ```
+
+**Client state model:** there is no global store. Server data is owned by
+`@tanstack/react-query` (queries/mutations keyed per resource), and the small
+amount of cross-cutting UI state lives in React Context (`AuthContext`, the
+toast region). Mutations invalidate the relevant query keys to refresh views.
 
 ### Flow B: Matching Request
 
 ```
 User clicks "Find matches for candidate X"
-  → POST /api/matches/find { candidateId }
-    → match.router → match.service
-      → match.service calls matching.engine.findMatches(candidate, mode, matchType)
-        → matching.engine loads candidate from DB
-        → matching.rules filters candidates (hard rules: gender, explicit user constraints)
-        → matching.score scores remaining candidates (8 weighted dimensions)
-        → matching.engine classifies matchType + computes confidenceScore
-        → matching.engine returns sorted scored list
-      → match.service optionally calls ai.service for enrichment/summary
-      → match.service saves top matches to DB
-    → returns ranked match list
-  → React renders match cards with scores + AI notes
+  → POST /api/matches/... { internalCandidateId, mode }
+    → match.router → match.controller → match.service
+      → match.service loads the candidate + eligible pool, maps them to
+        Matchable shapes (matchable.mapper), then for each pair calls the engine
+        → matching.engine.evaluatePair(internal, external, context, weights):
+            1. matching.rules  — hard eligibility (gender, active match, explicit blockers)
+            2. matching.score  — 8 weighted dimensions (uses matching.matrix for sector closeness)
+            3. matching.penalties — actionability adjustments
+            4. confidence       — data-completeness score
+            5. classification   — matchType + riskLevel + recommendedAction
+        → engine returns a full MatchResult per pair (blocked pairs included, flagged ineligible)
+      → match.service ranks/persists results (PairScore cache, draft suggestions)
+    → returns ranked match list (envelope)
+  → React renders MatchCards with matchScore, confidenceScore, matchType, riskLevel
+
+Bulk path: services/matching/match-scan.service runs the same engine across
+many pairs incrementally (scoringHash delta detection + PairScore cache),
+auto-drafting suggestions above configurable Settings thresholds.
 ```
 
 ### Flow C: AI Assistant Query
 
 ```
 User types "Who would be a good match for David?"
-  → POST /api/ai/ask { message, context }
-    → ai.router → ai.service.processQuery(message)
-      → ai.service calls intent prompt → determines intent: "find_match"
-      → ai.service reads candidate "David" from DB (read-only)
-      → ai.service builds context prompt with David's profile
-      → ai.service calls groq.provider (or fallback)
-      → ai.service validates response format
-      → ai.service logs the interaction
-    → returns { answer, suggestedActions }
-  → React renders AI response with clickable action suggestions
-    → User clicks suggestion → triggers Flow B (human-initiated)
+  → POST /api/ai/ask  (behind the stricter aiRateLimiter)
+    → ai.router → ai.service
+      → ai.service builds a prompt (pure function in ai.prompts)
+      → fetches any needed read-only context via ai.tools (never raw model writes)
+      → checks ai.cache (keyed by prompt hash)
+      → calls the primary provider (groq); on invalid/failed output it
+        retries once with a strict prompt, then falls back to the secondary provider
+      → validates the structured output (Zod) before returning
+      → logs metadata via ai.logger (provider/model/fallback/retry/latency)
+    → returns { data, metadata } (envelope)
+  → React renders the answer with any suggested actions
+    → User clicks a suggestion → triggers Flow B (human-initiated)
 ```
 
 **Key point:** The AI suggests, the user (or Shadchan) decides. AI never triggers writes.
 
 ### Flow D: WhatsApp Inbound Message
 
+> **Transport note:** the system uses **Baileys (a persistent WhatsApp socket
+> session), not the Meta Cloud API webhook**. There is no inbound HTTP endpoint
+> for WhatsApp and no webhook signature verification — inbound messages arrive as
+> socket events from the Baileys client and are normalized by the provider mapper.
+
 ```
-WhatsApp Cloud API sends webhook
-  → POST /api/whatsapp/webhook
-    → webhook.controller verifies signature
-      → message.handler.process(payload)
-        → extracts channelId (NOT phone number)
-        → channel.manager identifies channelRole from originating account
-        → message.handler stores message in DB: { channelId, channelRole, accountDisplayName }
-        → message.handler optionally triggers AI summary
-      → returns 200 OK (must respond fast)
-  → Background: AI processes and prepares response draft
-  → Shadchan reviews draft → approves → sends via channel.manager (routed by channelRole)
+Baileys socket emits an inbound message event
+  → baileys.events → baileys.mapper normalizes it (extracts a stable channel/session id, NOT a phone number for routing)
+    → message.handler (idempotent — unique externalMessageId, replay-safe):
+        1. channel.manager resolves the Channel (and channelRole) by provider session id
+        2. conversation.linker finds/creates the Conversation
+        3. inserts the Message { channelId, channelRole, direction:'inbound', body, … }
+           (raw payload stored with select:false; duplicates become a no-op)
+        4. publishes a realtime event for live UI updates
+        5. enqueues profile extraction; optionally runs AI classification
+           and applies inbound responses to a pending MatchSuggestion
+  → Shadchan reviews any draft → approves → sends via channel.manager (routed by channelRole)
 ```
 
 ---
@@ -523,9 +556,19 @@ involved in scoring, filtering, or classification. AI's role in the matching flo
 
 | File | What it does |
 |---|---|
-| `channel.manager.ts` | Manages dual WhatsApp Business accounts, routes messages by channelId |
-| `message.handler.ts` | Processes inbound messages, stores them, triggers downstream logic |
-| `webhook.controller.ts` | Express controller for WhatsApp webhook verification and payload reception |
+| `whatsapp.service.ts` | Public facade for the WhatsApp layer (connect, send, status) |
+| `channel.manager.ts` | Manages the dual WhatsApp accounts, resolves a Channel/`channelRole` by provider session id, routes sends |
+| `message.handler.ts` | Idempotent, replay-safe inbound persistence; fans out to extraction, realtime, classification |
+| `conversation.linker.ts` | Finds or creates the Conversation a message belongs to |
+| `response.classifier.ts` | Classifies inbound replies (e.g. interested/declined) to advance a suggestion |
+| `chat-discovery.service.ts` | Discovers existing chats on a connected account |
+| `send.rate-limiter.ts` | Throttles outbound sends per account |
+| `instance.lock.ts` | Ensures a single active socket instance per session |
+| `providers/baileys/*` | Baileys client, event handling, payload mapper, and session store |
+
+> The earlier plan named a `webhook.controller.ts`; that no longer exists. The
+> system moved from Meta Cloud API webhooks to a Baileys socket, so inbound
+> traffic is event-driven rather than HTTP.
 
 ### Dual Account Logic — Split by Role, NOT by Sector
 
@@ -570,33 +613,33 @@ All WhatsApp storage and routing uses three fields:
 - Each WhatsApp conversation has a `channelId` (WhatsApp's unique conversation identifier)
 - The candidate record stores `whatsappChannelId`, not a phone number
 - All message queries filter by `channelId` + `channelRole`
-- Phone numbers only appear transiently in webhook payloads and are immediately mapped to channelId
+- Phone numbers only appear transiently in raw socket payloads (masked in logs) and are mapped to channelId before any storage or routing
 
 ### Message Storage Flow
 
 ```
-Webhook receives message
-  → webhook.controller extracts: channelId, messageBody, timestamp, mediaUrls
-  → message.handler:
-      1. Finds or creates conversation record by channelId
-      2. Stores message in messages collection:
-         { channelId, channelRole, accountDisplayName, direction: 'inbound', body, timestamp, metadata }
-      3. Updates conversation.lastMessageAt
-      4. Emits event: 'message:received' (for real-time UI updates via WebSocket)
-      5. Optionally queues AI summary if conversation is long
-  → Returns 200 to WhatsApp (within 5 seconds — hard requirement)
+Baileys socket delivers a normalized inbound message
+  → message.handler (idempotent):
+      1. Resolves the Channel/channelRole by provider session id
+      2. Finds or creates the conversation (conversation.linker)
+      3. Stores the message: { channelId, channelRole, direction:'inbound', body,
+         timestamp, externalMessageId (unique), raw payload select:false }
+         — a replayed event de-dupes to a single row
+      4. Publishes a realtime event for live UI updates
+      5. Enqueues profile extraction; optionally classifies the reply
 ```
 
 ### Outbound Flow
 
 ```
-Shadchan composes message in UI (or approves AI draft)
-  → POST /api/whatsapp/send { channelId, channelRole, body }
-    → message.handler validates content
-    → channel.manager resolves account from channelRole
-    → channel.manager calls WhatsApp Cloud API
-    → message.handler stores: { channelId, channelRole, accountDisplayName, direction: 'outbound', body, timestamp }
-    → returns confirmation
+Shadchan composes a message in the UI (or approves an AI draft)
+  → POST /api/channels/... send { channelId, channelRole, body }
+    → channel.controller → channel.service
+      → safe-mode check (global send guard) and send.rate-limiter
+      → channel.manager resolves the account from channelRole
+      → Baileys client sends over the live socket
+      → message.handler stores { channelId, channelRole, direction:'outbound', body, timestamp }
+    → returns confirmation (envelope)
 ```
 
 ---
@@ -616,54 +659,42 @@ Shadchan composes message in UI (or approves AI draft)
 
 ---
 
-## 9. Identified Gaps
+## 9. Known Gaps & Intended Invariants
 
-### Missing Folders / Files (to create in next steps)
+The system is built and running end-to-end (server, client, and shared workspace
+all exist). This section is no longer a build plan — it records the
+architectural **rules the codebase is meant to converge on** and the **gaps**
+still being closed.
 
-| What | Priority | Notes |
-|---|---|---|
-| Entire `server/` directory | P0 | Nothing exists yet — project was just initialized |
-| Entire `client/` directory | P0 | Frontend does not exist |
-| `shared/types/` | P1 | Needed before any module work |
-| `.env.example` | P0 | Document required environment variables |
-| `.gitignore` | P0 | Must exclude node_modules, dist, .env |
-| `package.json` (root) | P0 | Workspace configuration |
-| Database schemas | P1 | Mongoose models for all entities |
-| Auth system | P1 | JWT-based auth is not yet designed in detail |
+### Intended invariants (the rules that keep the layering honest)
 
-### Missing Abstractions
-
-| Abstraction | Why it's needed |
+| Invariant | What it means in practice |
 |---|---|
-| **Base service class** | Shared CRUD methods (`getById`, `getAll`, `create`, `update`, `delete`) to reduce repetition across modules |
-| **Response envelope** | Consistent `{ success: boolean, data?: T, error?: string }` across all endpoints |
-| **Event bus** | In-process event emitter for decoupled communication (e.g., `message:received` → trigger summary, `match:created` → log) |
-| **Provider interface** | Formal TypeScript interface that all AI providers must implement |
-| **Pagination helper** | Standard pagination for list endpoints (`page`, `limit`, `sort`, `filter`) |
+| **Layering: router → controller → service → model** | Routers only wire middleware to controllers; controllers stay thin (validate context, delegate, shape the envelope); services own all business logic and are the only callers of models. |
+| **Services own DB access** | Controllers must not query models directly. A few legacy controllers historically reached into queries; those are being migrated back behind services. |
+| **AI is advisory-only** | The AI layer reads context (via `ai.tools`) and returns validated text/structured output. It never writes business entities or triggers actions. |
+| **Matching is deterministic** | The engine (`rules → score → penalties → confidence → classify`) is the single source of truth. No LLM in the scoring path. |
+| **WhatsApp routes by channelId / channelRole** | Never store or route by raw phone number; both accounts are split by role (`profiles_source` / `match_sending`), not by sector. |
+| **Standard response envelope** | Every endpoint returns `{ success, data, meta }` or `{ success, error }` via the shared `ok/created/noContent` helpers, and the client unwraps it centrally in `client.ts`. |
 
-### Risks in Current State
+### Current gaps (in progress)
+
+| Gap | Notes |
+|---|---|
+| **Thin test coverage** | Tests exist for the highest-risk paths (matching, regex extraction, WhatsApp handlers/mapper, rate-limiter, ownership, audit) but coverage is uneven across modules. |
+| **No central logger** | Logging is split between `requestLogger.middleware` and per-service loggers (`ai.logger`, `whatsapp.logger`). A single structured logger in `utils/` is intended but not yet present. |
+| **Controllers bypassing services** | A handful of controllers still touch queries/models directly; the target is for every controller to delegate to a service. |
+| **Shared layer is types-only** | `@shadchanai/shared` intentionally exports only enums and API/DTO shapes — no runtime/business logic is shared across workspaces. |
+
+### Standing risks to keep in mind
 
 | Risk | Mitigation |
 |---|---|
-| **No code exists** | This architecture doc ensures structured implementation from day one |
-| **Scope creep from AI features** | Guardrails above enforce AI-as-advisor pattern. Strict interface boundaries. |
-| **WhatsApp webhook latency** | Must respond to WhatsApp within 5s. Message processing should be async after the 200 response. |
-| **Sector closeness complexity** | Sector/subSector compatibility is scored via a closeness matrix, not blocked. The matrix must be maintained and tuned over time. |
-| **Hebrew/RTL content** | Frontend must handle RTL text. AI prompts may include Hebrew. Ensure UTF-8 throughout. |
-| **Data privacy** | Candidate personal data is sensitive. Need encryption at rest, access logging, and role-based access. |
-
-### Things to Create in Next Steps (Ordered)
-
-1. **Step 1:** Initialize project — `package.json`, `tsconfig`, `.gitignore`, `.env.example`
-2. **Step 2:** Server skeleton — Express app, config, middleware, error handling, DB connection
-3. **Step 3:** Shared types — DTOs, shared enums, API-safe interfaces (no DB internals)
-4. **Step 4:** Candidate module — full CRUD as the reference module
-5. **Step 5:** Matching engine — rules + scoring (no AI dependency)
-6. **Step 6:** AI layer — providers, prompts, caching, logging
-7. **Step 7:** Match module — integrates matching engine + optional AI enrichment
-8. **Step 8:** WhatsApp layer — webhook, channel manager, message handler
-9. **Step 9:** Client skeleton — React app, routing, API client
-10. **Step 10:** Client pages — candidates list, match view, AI assistant chat
+| **Scope creep from AI features** | The advisory-only guardrail and the deterministic engine boundary keep AI out of decisions. |
+| **WhatsApp socket reliability** | Baileys runs a long-lived socket; `instance.lock` enforces a single active session and inbound handling is idempotent/replay-safe. |
+| **Sector closeness complexity** | Sector/subSector is scored via a closeness matrix, never hard-blocked. The matrix must be maintained and tuned over time. |
+| **Hebrew / RTL content** | UI and AI prompts are Hebrew-first; UTF-8 and RTL handling must hold throughout. |
+| **Data privacy** | Candidate data is sensitive; ownership scoping, role checks, and audit logging are the current controls. |
 
 ---
 
@@ -679,7 +710,9 @@ Shadchan composes message in UI (or approves AI draft)
 | AI provider | Groq (primary), with fallback support |
 | Frontend | React 18+ with Vite |
 | Styling | Tailwind CSS (RTL-compatible) |
-| Auth | JWT (jsonwebtoken) |
-| Logging | Pino |
+| Auth | JWT (jsonwebtoken); dev `X-Dev-User` fallback |
+| Client server-state | @tanstack/react-query (no global store) |
+| WhatsApp transport | Baileys socket session (not Meta Cloud API webhooks) |
+| Logging | per-request + per-service loggers (no single central logger yet) |
 | Testing | Vitest |
 | Package management | npm workspaces |

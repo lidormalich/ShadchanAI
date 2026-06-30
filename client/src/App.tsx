@@ -1,27 +1,45 @@
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { AppShell } from './layouts/AppShell';
-import { DashboardPage } from './pages/DashboardPage';
-import { InternalCandidatesListPage } from './pages/candidates/InternalCandidatesListPage';
-import { InternalCandidateDetailPage } from './pages/candidates/InternalCandidateDetailPage';
-import { ExternalCandidatesListPage } from './pages/candidates/ExternalCandidatesListPage';
-import { MatchesPipelinePage } from './pages/matches/MatchesPipelinePage';
-import { MatchDetailPage } from './pages/matches/MatchDetailPage';
-import { ChatsPage } from './pages/chats/ChatsPage';
-import { ChannelsPage } from './pages/channels/ChannelsPage';
-import { ChannelMappingsPage } from './pages/channels/ChannelMappingsPage';
-import { ReviewQueuePage } from './pages/review/ReviewQueuePage';
-import { TasksPage } from './pages/tasks/TasksPage';
-import { InsightsPage } from './pages/insights/InsightsPage';
-import { MonitoringPage } from './pages/monitoring/MonitoringPage';
-import { SettingsPage } from './pages/settings/SettingsPage';
-import { NotFoundPage } from './pages/NotFoundPage';
 import { LoginPage } from './features/auth/LoginPage';
 import { AuthProvider, useAuth } from './features/auth/AuthContext';
 import { ToastRegion } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { RouteError } from './components/RouteError';
 import { Spinner } from './components/ui/primitives';
+
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const InternalCandidatesListPage = lazy(() =>
+  import('./pages/candidates/InternalCandidatesListPage').then((m) => ({ default: m.InternalCandidatesListPage })),
+);
+const InternalCandidateDetailPage = lazy(() =>
+  import('./pages/candidates/InternalCandidateDetailPage').then((m) => ({ default: m.InternalCandidateDetailPage })),
+);
+const ExternalCandidatesListPage = lazy(() =>
+  import('./pages/candidates/ExternalCandidatesListPage').then((m) => ({ default: m.ExternalCandidatesListPage })),
+);
+const MatchesPipelinePage = lazy(() =>
+  import('./pages/matches/MatchesPipelinePage').then((m) => ({ default: m.MatchesPipelinePage })),
+);
+const MatchDetailPage = lazy(() =>
+  import('./pages/matches/MatchDetailPage').then((m) => ({ default: m.MatchDetailPage })),
+);
+const ChatsPage = lazy(() => import('./pages/chats/ChatsPage').then((m) => ({ default: m.ChatsPage })));
+const ChannelsPage = lazy(() => import('./pages/channels/ChannelsPage').then((m) => ({ default: m.ChannelsPage })));
+const ChannelMappingsPage = lazy(() =>
+  import('./pages/channels/ChannelMappingsPage').then((m) => ({ default: m.ChannelMappingsPage })),
+);
+const ReviewQueuePage = lazy(() =>
+  import('./pages/review/ReviewQueuePage').then((m) => ({ default: m.ReviewQueuePage })),
+);
+const TasksPage = lazy(() => import('./pages/tasks/TasksPage').then((m) => ({ default: m.TasksPage })));
+const InsightsPage = lazy(() => import('./pages/insights/InsightsPage').then((m) => ({ default: m.InsightsPage })));
+const MonitoringPage = lazy(() =>
+  import('./pages/monitoring/MonitoringPage').then((m) => ({ default: m.MonitoringPage })),
+);
+const SettingsPage = lazy(() => import('./pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,29 +64,50 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function lazyPage(element: ReactNode) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[50vh] flex items-center justify-center">
+          <Spinner className="h-8 w-8 text-brand" />
+        </div>
+      }
+    >
+      {element}
+    </Suspense>
+  );
+}
+
+// Each page route carries its own `errorElement`, so a crash inside a
+// page renders the error in the AppShell's <Outlet/> slot (shell stays
+// mounted, operator can navigate away) instead of bubbling to the
+// top-level <ErrorBoundary> which would blank the whole app.
+const appChildren = [
+  { index: true, element: lazyPage(<DashboardPage />) },
+  { path: 'candidates/internal', element: lazyPage(<InternalCandidatesListPage />) },
+  { path: 'candidates/internal/:id', element: lazyPage(<InternalCandidateDetailPage />) },
+  { path: 'candidates/external', element: lazyPage(<ExternalCandidatesListPage />) },
+  { path: 'matches', element: lazyPage(<MatchesPipelinePage />) },
+  { path: 'matches/:id', element: lazyPage(<MatchDetailPage />) },
+  { path: 'chats', element: lazyPage(<ChatsPage />) },
+  { path: 'channels', element: lazyPage(<ChannelsPage />) },
+  { path: 'channels/mappings', element: lazyPage(<ChannelMappingsPage />) },
+  { path: 'review', element: lazyPage(<ReviewQueuePage />) },
+  { path: 'tasks', element: lazyPage(<TasksPage />) },
+  { path: 'insights', element: lazyPage(<InsightsPage />) },
+  { path: 'monitoring', element: lazyPage(<MonitoringPage />) },
+  { path: 'settings', element: lazyPage(<SettingsPage />) },
+  { path: 'settings/:section', element: lazyPage(<SettingsPage />) },
+  { path: '*', element: lazyPage(<NotFoundPage />) },
+].map((r) => ({ ...r, errorElement: <RouteError /> }));
+
 const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
+  { path: '/login', element: <LoginPage />, errorElement: <RouteError /> },
   {
     path: '/',
     element: <RequireAuth><AppShell /></RequireAuth>,
-    children: [
-      { index: true, element: <DashboardPage /> },
-      { path: 'candidates/internal', element: <InternalCandidatesListPage /> },
-      { path: 'candidates/internal/:id', element: <InternalCandidateDetailPage /> },
-      { path: 'candidates/external', element: <ExternalCandidatesListPage /> },
-      { path: 'matches', element: <MatchesPipelinePage /> },
-      { path: 'matches/:id', element: <MatchDetailPage /> },
-      { path: 'chats', element: <ChatsPage /> },
-      { path: 'channels', element: <ChannelsPage /> },
-      { path: 'channels/mappings', element: <ChannelMappingsPage /> },
-      { path: 'review', element: <ReviewQueuePage /> },
-      { path: 'tasks', element: <TasksPage /> },
-      { path: 'insights', element: <InsightsPage /> },
-      { path: 'monitoring', element: <MonitoringPage /> },
-      { path: 'settings', element: <SettingsPage /> },
-      { path: 'settings/:section', element: <SettingsPage /> },
-      { path: '*', element: <NotFoundPage /> },
-    ],
+    errorElement: <RouteError />,
+    children: appChildren,
   },
 ]);
 

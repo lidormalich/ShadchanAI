@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { MatchSuggestionStatus, MatchType, SourceMode } from '@shadchanai/shared';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
+import { optionalBooleanString } from '../../utils/zod-bool.js';
 
 const ObjectIdString = z.string().regex(/^[a-f\d]{24}$/i);
 
@@ -13,9 +14,13 @@ export const ListMatchesQuerySchema = PaginationQuerySchema.extend({
   matchType: z.nativeEnum(MatchType).optional(),
   internalCandidateId: ObjectIdString.optional(),
   externalCandidateId: ObjectIdString.optional(),
-  isDeferred: z.coerce.boolean().optional(),
+  isDeferred: optionalBooleanString(),
   minScore: z.coerce.number().int().min(0).max(100).optional(),
   ownership: z.enum(['mine', 'team', 'all']).optional(),
+  // The pipeline board is a kanban that loads ALL active suggestions at
+  // once (grouped client-side into stages), so it needs a higher cap than
+  // the default 100-row pagination limit.
+  limit: z.coerce.number().int().positive().max(500).default(25),
 });
 
 export type ListMatchesQuery = z.infer<typeof ListMatchesQuerySchema>;

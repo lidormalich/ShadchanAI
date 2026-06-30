@@ -4,11 +4,13 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import * as svc from './match.service.js';
+import * as scanSvc from '../../services/matching/match-scan.service.js';
 import { getValidatedQuery, getValidatedParams } from '../../middleware/validate.middleware.js';
 import { ok, created } from '../../utils/response.js';
 import { ensureUser, canApproveMatches } from '../../middleware/permissions.js';
 import type { ListMatchesQuery } from './match.validator.js';
 import type { SourceMode } from '@shadchanai/shared';
+import type { ScoreDirection, PairScoreBucket } from './pair-score.model.js';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -45,7 +47,9 @@ export async function findForInternalHandler(req: Request, res: Response, next: 
     ensureUser(req.user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const mode = ((req.query['mode'] as SourceMode | undefined) ?? 'strict') as SourceMode;
-    const limit = req.query['limit'] ? Number(req.query['limit']) : 20;
+    // No `limit` query param → return every eligible scored match; the client
+    // paginates client-side. Callers can still pass `limit` to cap the response.
+    const limit = req.query['limit'] ? Number(req.query['limit']) : undefined;
     const items = await svc.findMatchesForInternal(id, mode, limit);
     ok(res, items);
   } catch (e) { next(e); }
@@ -84,6 +88,47 @@ export async function createManualHandler(req: Request, res: Response, next: Nex
     };
     const doc = await svc.createManualSuggestion(internalCandidateId, externalCandidateId, mode, user.id);
     created(res, doc);
+  } catch (e) { next(e); }
+}
+
+// ── Incremental scan ─────────────────────────────────────
+
+export async function scanHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    const rawMode = (req.body?.mode ?? 'missing') as string;
+    const mode = (['missing', 'incremental', 'full'].includes(rawMode) ? rawMode : 'missing') as 'missing' | 'incremental' | 'full';
+    const result = await scanSvc.startScan({
+      trigger: 'manual',
+      performedBy: user.id,
+      mode,
+      createSuggestion: svc.createManualSuggestion,
+    });
+    ok(res, result);
+  } catch (e) { next(e); }
+}
+
+export async function scanStateHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    ok(res, await scanSvc.getScanState());
+  } catch (e) { next(e); }
+}
+
+export async function scanResultsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const q = req.query;
+    const items = await scanSvc.listScanResults({
+      direction: q['direction'] as ScoreDirection | undefined,
+      eligibleOnly: q['eligibleOnly'] === 'true',
+      autoCreated: q['autoCreated'] === undefined ? undefined : q['autoCreated'] === 'true',
+      bucket: q['bucket'] as PairScoreBucket | undefined,
+      minScore: q['minScore'] !== undefined ? Number(q['minScore']) : undefined,
+      limit: q['limit'] !== undefined ? Number(q['limit']) : undefined,
+    });
+    ok(res, items);
   } catch (e) { next(e); }
 }
 

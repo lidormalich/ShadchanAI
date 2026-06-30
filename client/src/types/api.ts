@@ -1,33 +1,16 @@
 // ═══════════════════════════════════════════════════════════
 // Frontend types for the backend API envelope + shared DTOs.
-// Mirrors server/src/utils/response.ts.
+// Envelope/meta/pagination types are sourced from @shadchanai/shared
+// (the single source of truth) and re-exported here for stable imports.
 // ═══════════════════════════════════════════════════════════
 
-export interface ApiMeta {
-  page?: number;
-  limit?: number;
-  total?: number;
-  totalPages?: number;
-  [key: string]: unknown;
-}
+export type { ApiEnvelope, ApiMeta, PaginationQuery } from '@shadchanai/shared';
 
-export interface ApiEnvelope<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: { code: string; message: string; details?: unknown };
-  meta?: ApiMeta;
-}
+import type { ApiMeta } from '@shadchanai/shared';
 
 export interface PageResponse<T> {
   items: T[];
   meta: ApiMeta;
-}
-
-export interface PaginationQuery {
-  page?: number;
-  limit?: number;
-  sort?: string;
-  order?: 'asc' | 'desc';
 }
 
 export class ApiError extends Error {

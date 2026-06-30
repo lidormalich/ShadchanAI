@@ -19,7 +19,17 @@ const TYPE_LABEL: Record<SearchResult['type'], string> = {
   task: 'משימה',
 };
 
-export function TopbarSearch() {
+export function TopbarSearch({
+  variant = 'inline',
+  autoFocus = false,
+  onResultNavigate,
+}: {
+  /** `inline` = desktop topbar field (hidden on mobile); `overlay` = full-width mobile field. */
+  variant?: 'inline' | 'overlay';
+  autoFocus?: boolean;
+  /** Called after navigating to a result — lets the mobile overlay close itself. */
+  onResultNavigate?: () => void;
+} = {}) {
   const [raw, setRaw] = useState('');
   const [debounced, setDebounced] = useState('');
   const [open, setOpen] = useState(false);
@@ -56,12 +66,20 @@ export function TopbarSearch() {
     setOpen(false);
     setRaw('');
     navigate(r.route);
+    onResultNavigate?.();
   };
 
+  // `inline` keeps the desktop-only fixed-width field; `overlay` fills the
+  // mobile search panel. The input + dropdown markup is identical.
+  const wrapClass = variant === 'overlay'
+    ? 'relative w-full'
+    : 'w-80 relative hidden lg:block';
+
   return (
-    <div ref={wrapRef} className="w-80 relative hidden lg:block">
+    <div ref={wrapRef} className={wrapClass}>
       <Search className="absolute top-1/2 -translate-y-1/2 start-3 h-4 w-4 text-ink-faint" />
       <Input
+        autoFocus={autoFocus}
         placeholder="חיפוש מועמדים, הצעות, שיחות…"
         className="ps-9"
         value={raw}

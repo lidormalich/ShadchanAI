@@ -60,15 +60,15 @@ export function TasksPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-3">
-            <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Select className="w-full sm:w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">כל הסטטוסים</option>
               <option value="open">פתוחות</option>
               <option value="in_progress">בטיפול</option>
               <option value="completed">הושלמו</option>
               <option value="deferred">נדחו</option>
             </Select>
-            <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <Select className="w-full sm:w-auto" value={priority} onChange={(e) => setPriority(e.target.value)}>
               <option value="">כל העדיפויות</option>
               <option value="urgent">דחוף</option>
               <option value="high">גבוהה</option>

@@ -1,5 +1,6 @@
 import { clsx } from 'clsx';
 import { AlertTriangle, Shield, Sparkles, Star } from 'lucide-react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Card } from '../ui/primitives';
 import type { MatchSuggestion } from '@/types/domain';
@@ -11,12 +12,15 @@ const matchTypeMeta: Record<string, { icon: React.ReactNode; tone: 'success' | '
   risky: { icon: <AlertTriangle className="h-3.5 w-3.5" />, tone: 'danger', label: 'מסוכן' },
 };
 
-export function MatchCard({ match, compact }: { match: MatchSuggestion; compact?: boolean }) {
+export const MatchCard = React.memo(function MatchCard({ match, compact }: { match: MatchSuggestion; compact?: boolean }) {
   const meta = matchTypeMeta[match.matchType] ?? matchTypeMeta['balanced']!;
-  const scoreTone = match.matchScore >= 80 ? 'text-success'
-    : match.matchScore >= 60 ? 'text-brand-700'
-    : match.matchScore >= 40 ? 'text-warning'
-    : 'text-danger';
+  const scoreTone = useMemo(
+    () => match.matchScore >= 80 ? 'text-success'
+      : match.matchScore >= 60 ? 'text-brand-700'
+      : match.matchScore >= 40 ? 'text-warning'
+      : 'text-danger',
+    [match.matchScore],
+  );
 
   return (
     <Link to={`/matches/${match._id}`} className="block">
@@ -47,4 +51,16 @@ export function MatchCard({ match, compact }: { match: MatchSuggestion; compact?
       </Card>
     </Link>
   );
-}
+}, (prev, next) =>
+  prev.compact === next.compact &&
+  prev.match._id === next.match._id &&
+  prev.match.matchType === next.match.matchType &&
+  prev.match.matchScore === next.match.matchScore &&
+  prev.match.confidenceScore === next.match.confidenceScore &&
+  prev.match.isDeferred === next.match.isDeferred &&
+  prev.match.riskLevel === next.match.riskLevel &&
+  prev.match.flexibilityOverrideApplied === next.match.flexibilityOverrideApplied &&
+  prev.match.internalCandidateId === next.match.internalCandidateId &&
+  prev.match.externalCandidateId === next.match.externalCandidateId &&
+  prev.match.strengths === next.match.strengths,
+);

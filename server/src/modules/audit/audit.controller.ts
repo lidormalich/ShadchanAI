@@ -6,39 +6,17 @@
 // ═══════════════════════════════════════════════════════════
 
 import type { Request, Response, NextFunction } from 'express';
-import { Types } from 'mongoose';
-import { AuditLog } from '../../models/index.js';
+import * as svc from './audit.service.js';
 import { getValidatedQuery } from '../../middleware/validate.middleware.js';
 import { ok } from '../../utils/response.js';
 import { ensureUser } from '../../middleware/permissions.js';
-import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
 import type { ListAuditLogsQuery } from './audit.validator.js';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     ensureUser(req.user);
     const q = getValidatedQuery<ListAuditLogsQuery>(req);
-    const { skip, limit } = toSkipLimit(q);
-    const sort = buildSort(q, 'createdAt');
-
-    const filter: Record<string, unknown> = {
-      entityType: q.entityType,
-      entityId: new Types.ObjectId(q.entityId),
-    };
-    if (q.actionType) filter['actionType'] = q.actionType;
-
-    const [items, total] = await Promise.all([
-      AuditLog.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        // trim heavy snapshot payloads for timeline display
-        .select('entityType entityId actionType performedBy metadata createdAt')
-        .lean()
-        .exec(),
-      AuditLog.countDocuments(filter).exec(),
-    ]);
-
-    ok(res, items, makeMeta(q.page, q.limit, total));
+    const { items, meta } = await svc.listAuditLogs(q);
+    ok(res, items, meta);
   } catch (e) { next(e); }
 }

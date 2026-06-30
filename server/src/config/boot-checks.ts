@@ -20,6 +20,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { env } from './env.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('boot');
 
 type CheckLevel = 'fatal' | 'warn';
 interface CheckResult {
@@ -93,15 +96,15 @@ export async function runBootChecks(): Promise<void> {
   const warns = results.filter((r) => r.level === 'warn');
 
   for (const w of warns) {
-    console.warn(`[boot] ⚠  ${w.name}: ${w.message}`);
+    log.warn({ check: w.name }, w.message);
   }
   for (const f of fatal) {
-    console.error(`[boot] ✖  ${f.name}: ${f.message}`);
+    log.error({ check: f.name }, f.message);
   }
   if (fatal.length > 0) {
-    console.error(`[boot] ${fatal.length} fatal check(s) failed — refusing to start.`);
+    log.error({ fatalCount: fatal.length }, 'fatal check(s) failed — refusing to start.');
     process.exit(1);
   }
 
-  console.log(`[boot] checks passed (${warns.length} warning(s))`);
+  log.info({ warnings: warns.length }, 'checks passed');
 }

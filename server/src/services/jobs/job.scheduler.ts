@@ -13,6 +13,10 @@
 //   - Stopped gracefully via stop().
 // ═══════════════════════════════════════════════════════════
 
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('job');
+
 export interface JobDef {
   name: string;
   /** How often to run, in ms. */
@@ -61,7 +65,7 @@ async function tick(): Promise<void> {
       job.lastError = undefined;
     } catch (err) {
       job.lastError = (err as Error).message;
-      console.error(`[job] '${job.name}' failed:`, err);
+      log.error({ job: job.name, err }, 'job failed');
     }
     job.lastRunAt = new Date();
     job.lastDurationMs = Date.now() - start;

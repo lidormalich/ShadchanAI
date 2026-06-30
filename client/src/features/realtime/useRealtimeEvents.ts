@@ -25,6 +25,30 @@ interface RealtimeEnvelope<T = unknown> {
   payload: T;
 }
 
+// SSE bursts during busy periods would otherwise fire an invalidation
+// per event (each at least the dashboard queue). To avoid cache thrash
+// we buffer the distinct query keys touched within a window and flush a
+// single invalidation pass per distinct key once the window settles.
+//
+// Keys are serialized to JSON so the Set dedupes structurally; the
+// original arrays are recovered with JSON.parse at flush time.
+const INVALIDATE_DEBOUNCE_MS = 1500;
+const pendingKeys = new Set<string>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function enqueue(qc: ReturnType<typeof useQueryClient>, queryKey: readonly unknown[]): void {
+  pendingKeys.add(JSON.stringify(queryKey));
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    const keys = [...pendingKeys];
+    pendingKeys.clear();
+    for (const serialized of keys) {
+      qc.invalidateQueries({ queryKey: JSON.parse(serialized) as unknown[] });
+    }
+  }, INVALIDATE_DEBOUNCE_MS);
+}
+
 export function useRealtimeEvents(enabled = true): void {
   const qc = useQueryClient();
 
@@ -65,6 +89,13 @@ export function useRealtimeEvents(enabled = true): void {
       es?.removeEventListener('match.updated', handle);
       es?.removeEventListener('channel.updated', handle);
       es?.close();
+      // Cancel any pending flush so no invalidation fires after the
+      // EventSource is closed and the component is gone.
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      pendingKeys.clear();
     };
   }, [enabled, qc]);
 }
@@ -74,36 +105,39 @@ function dispatch(evt: RealtimeEnvelope, qc: ReturnType<typeof useQueryClient>):
   // queue in some way — so we always invalidate it. Cost is small
   // (one extra list query) and it keeps the operator's starting
   // surface honest without a polling fallback.
-  qc.invalidateQueries({ queryKey: ['dashboard', 'queue'] });
+  //
+  // Invalidations are buffered + debounced (see enqueue) so bursts of
+  // events collapse into one invalidation per distinct key.
+  enqueue(qc, ['dashboard', 'queue']);
 
   switch (evt.type) {
     case 'conversation.updated': {
       const p = evt.payload as { conversationId?: string };
-      qc.invalidateQueries({ queryKey: ['conversations'] });
+      enqueue(qc, ['conversations']);
       if (p.conversationId) {
-        qc.invalidateQueries({ queryKey: ['messages', p.conversationId] });
+        enqueue(qc, ['messages', p.conversationId]);
       }
       return;
     }
     case 'extraction.needs_review': {
-      qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
+      enqueue(qc, ['extraction', 'review-queue']);
       return;
     }
     case 'match.updated': {
       const p = evt.payload as { matchId?: string };
-      qc.invalidateQueries({ queryKey: ['matches'] });
+      enqueue(qc, ['matches']);
       if (p.matchId) {
-        qc.invalidateQueries({ queryKey: ['match', p.matchId] });
-        qc.invalidateQueries({ queryKey: ['match', p.matchId, 'send-preview'] });
+        enqueue(qc, ['match', p.matchId]);
+        enqueue(qc, ['match', p.matchId, 'send-preview']);
       }
       return;
     }
     case 'channel.updated': {
       const p = evt.payload as { channelId?: string };
-      qc.invalidateQueries({ queryKey: ['channels'] });
+      enqueue(qc, ['channels']);
       if (p.channelId) {
-        qc.invalidateQueries({ queryKey: ['channel', p.channelId] });
-        qc.invalidateQueries({ queryKey: ['channel', p.channelId, 'session-status'] });
+        enqueue(qc, ['channel', p.channelId]);
+        enqueue(qc, ['channel', p.channelId, 'session-status']);
       }
       return;
     }

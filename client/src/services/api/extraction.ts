@@ -46,11 +46,34 @@ export interface ReviewQueueItem {
 
 export type ExtractedProfileInput = ReviewQueueItem['extractedFields'];
 
+export type IngestionDecision =
+  | 'accepted'
+  | 'ignored_assigned_ignore'
+  | 'ignored_match_sending'
+  | 'ignored_unmapped';
+
+export interface IngestionLogItem {
+  messageId: string;
+  conversationId: string;
+  channelId: string;
+  accountDisplayName: string;
+  body?: string;
+  createdAt: string;
+  ingestion?: {
+    decision: IngestionDecision;
+    effectiveRole?: string;
+    decidedAt: string;
+  };
+  extractionStatus?: string;
+}
+
 export const extractionApi = {
   run: (messageId: string) =>
     api.post<ExtractionOutcome>(`/extraction/messages/${messageId}/run`),
   reviewQueue: (limit = 50) =>
     api.get<ReviewQueueItem[]>('/extraction/review-queue', { limit }),
+  ingestionLog: (decision: IngestionDecision | 'ignored' | 'all' = 'ignored', limit = 100) =>
+    api.get<IngestionLogItem[]>('/extraction/ingestion-log', { decision, limit }),
   approve: (messageId: string, profile?: ExtractedProfileInput) =>
     api.post<{ candidateId: string; messageId: string }>(
       `/extraction/messages/${messageId}/approve`,

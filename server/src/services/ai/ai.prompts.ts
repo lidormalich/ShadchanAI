@@ -53,8 +53,11 @@ export function buildExplainMatchPrompt(input: ExplainMatchInput, strictRetry = 
   "strengths": string[] (key compatibility points, 2-6 items),
   "concerns": string[] (potential issues worth noting, 0-6 items),
   "nuance": string (optional deeper insight, may be empty string),
-  "recommendedApproach": string (how the Shadchan should approach this match, 1-2 sentences)
+  "recommendedApproach": string (how the Shadchan should approach this match, 1-2 sentences),
+  "notMatchReasons": string[] (concrete, specific reasons this pair is NOT a good match — 0-8 items)
 }`.trim();
+
+  const eligible = input.eligible !== false;
 
   const system = `${CORE_CONSTRAINTS}
 
@@ -66,6 +69,20 @@ life-stage, flexibility) and classified it as ${input.matchType}.
 Your job is to translate the structured signals into a short,
 respectful narrative — NOT to re-score or override the engine.
 
+LANGUAGE: Write ALL natural-language fields in Hebrew.
+
+notMatchReasons RULES (this is the "למה לא מתאים" array):
+- This pair is ${eligible ? 'ELIGIBLE but may still be weak' : 'INELIGIBLE (hard-blocked)'}.
+- If the pair is ineligible OR the match score is low (< 55), populate
+  notMatchReasons with the concrete reasons it is not a good match.
+- Ground EVERY reason in the provided data: the engine "blockers"
+  (deterministic — these are the real, primary reasons) and the
+  lowest-scoring dimensions in scoreBreakdown. Do NOT invent reasons.
+- Each item: one short, specific Hebrew sentence (e.g. a real gap in
+  age / sector / lifestyle / status). Order most-decisive first.
+- If the match is strong (eligible and score >= 55 with no notable
+  gaps), return an EMPTY notMatchReasons array.
+
 Respect religious community sensibilities. Use neutral, professional
 language suitable for a Shadchan reviewing the match.
 
@@ -76,6 +93,7 @@ ${schema}${strictRetry ? '\n\nSTRICT MODE: Previous response was invalid. Return
     internal: input.internal,
     external: input.external,
     engineScoring: {
+      eligible,
       matchScore: input.matchScore,
       confidenceScore: input.confidenceScore,
       matchType: input.matchType,
@@ -83,6 +101,7 @@ ${schema}${strictRetry ? '\n\nSTRICT MODE: Previous response was invalid. Return
       strengths: input.strengths,
       attentionPoints: input.attentionPoints,
       scoreBreakdown: input.scoreBreakdown,
+      blockers: input.blockers ?? [],
     },
   }, null, 2);
 

@@ -8,6 +8,9 @@
 // ═══════════════════════════════════════════════════════════
 
 import type { NextFunction, Request, Response } from 'express';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('http');
 
 const SKIP_PATHS = new Set(['/api/health', '/api/readiness']);
 
@@ -17,10 +20,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
   if (SKIP_PATHS.has(path)) return next();
 
   res.on('finish', () => {
-    const line = {
-      scope: 'http',
-      level: res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
-      ts: new Date().toISOString(),
+    const fields = {
       method: req.method,
       path,
       status: res.statusCode,
@@ -28,8 +28,9 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
       requestId: req.id,
       userId: req.user?.id,
     };
-    // eslint-disable-next-line no-console
-    console.log(JSON.stringify(line));
+    const level: 'error' | 'warn' | 'info' =
+      res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+    log[level](fields, 'request');
   });
 
   next();

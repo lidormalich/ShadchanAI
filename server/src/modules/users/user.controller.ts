@@ -5,25 +5,13 @@
 // ═══════════════════════════════════════════════════════════
 
 import type { Request, Response, NextFunction } from 'express';
-import { User } from '../../models/index.js';
+import * as svc from './user.service.js';
 import { ensureUser } from '../../middleware/permissions.js';
 import { ok } from '../../utils/response.js';
 
 export async function listHandler(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     ensureUser(_req.user);
-    const users = await User.find({ isActive: true })
-      .select('_id name email roles isActive')
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
-    ok(res, users.map((u) => ({
-      id: String(u._id),
-      name: u.name,
-      email: u.email,
-      roles: u.roles,
-      isActive: u.isActive,
-    })));
+    ok(res, await svc.listActiveUsers());
   } catch (e) { next(e); }
 }

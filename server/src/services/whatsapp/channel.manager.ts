@@ -25,9 +25,34 @@ import type {
   ConnectChannelInput,
   ReplaceChannelInput,
   ChannelHealthUpdate,
+  ChannelStatusPatch,
 } from './whatsapp.types.js';
 import { logWhatsApp } from './whatsapp.logger.js';
-import { getChannelClient, startChannelClient } from './providers/baileys/baileys.client.js';
+import {
+  getChannelClient,
+  startChannelClient,
+  setChannelStatusPersister,
+} from './providers/baileys/baileys.client.js';
+
+// ── Transport → domain status persistence ────────────────
+//
+// The Baileys transport detects connection/status transitions but
+// must not write to the Channel model itself. It emits status patches
+// through this persister, which is the single place that owns the
+// Channel.updateOne for transport-driven status changes. Routing is
+// always by channelId — never raw phone.
+
+export async function persistChannelStatus(
+  channelId: string,
+  patch: ChannelStatusPatch,
+): Promise<void> {
+  await Channel.updateOne({ channelId }, { $set: patch }).exec();
+}
+
+// Wire the seam at module load so any client created via
+// startChannelClient (boot or operator-initiated) persists through
+// the domain layer.
+setChannelStatusPersister(persistChannelStatus);
 
 // ── Utilities ────────────────────────────────────────────
 

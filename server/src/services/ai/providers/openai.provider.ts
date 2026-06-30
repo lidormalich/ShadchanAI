@@ -1,15 +1,13 @@
 // ═══════════════════════════════════════════════════════════
-// ShadchanAI — Fallback Provider (Secondary)
+// ShadchanAI — OpenAI Provider (first-class paid engine)
 //
-// A second stable low-cost provider used when Groq:
-//   - fails with a provider error
-//   - produces unvalidated output after retry
-//   - is unavailable (rate-limited, unconfigured)
+// A dedicated OpenAI engine, selectable as the primary via AI_ENGINE,
+// or used automatically as the fallback when Groq is the primary.
 //
-// Default: OpenAI gpt-4o-mini (reliable, cheap, OpenAI-compatible).
-// Configurable via FALLBACK_PROVIDER / FALLBACK_BASE_URL / FALLBACK_MODEL.
-//
-// The same OpenAI-compatible shape lets us reuse the base client.
+// Keyed by OPENAI_API_KEY (alias: OPENAI). Falls back to the legacy
+// FALLBACK_API_KEY so existing setups keep working without edits.
+// Model is OPENAI_MODEL (default gpt-4o-mini). Fail-fast timeout/retries
+// keep it from hanging for minutes.
 // ═══════════════════════════════════════════════════════════
 
 import { AIProvider } from '@shadchanai/shared';
@@ -23,26 +21,24 @@ import { env } from '../../../config/env.js';
 import { AI } from '../../../config/constants.js';
 import { OpenAICompatibleClient } from './_openai-compatible.js';
 
-class FallbackProvider implements AIProviderClient {
-  readonly name: AIProvider;
+class OpenAIProvider implements AIProviderClient {
+  readonly name = AIProvider.OPENAI;
   readonly model: string;
   private readonly client: OpenAICompatibleClient | null;
 
   constructor() {
-    // Map env string to AIProvider enum
-    this.name = env.FALLBACK_PROVIDER === 'anthropic'
-      ? AIProvider.ANTHROPIC
-      : AIProvider.OPENAI;
-    this.model = env.FALLBACK_MODEL;
-
-    if (env.FALLBACK_API_KEY) {
+    this.model = env.OPENAI_MODEL;
+    // Dedicated key first, then the `OPENAI` alias, then the legacy
+    // fallback key for backward compatibility.
+    const apiKey = env.OPENAI_API_KEY || env.OPENAI || env.FALLBACK_API_KEY;
+    if (apiKey) {
       this.client = new OpenAICompatibleClient({
-        baseUrl: env.FALLBACK_BASE_URL,
-        apiKey: env.FALLBACK_API_KEY,
+        baseUrl: env.OPENAI_BASE_URL,
+        apiKey,
         model: this.model,
-        maxRetries: AI.MAX_RETRIES,
+        maxRetries: env.OPENAI_MAX_RETRIES,
         backoffBaseMs: AI.BACKOFF_BASE_MS,
-        timeoutMs: 45_000, // fallback gets a bit more patience
+        timeoutMs: env.OPENAI_TIMEOUT_MS,
       });
     } else {
       this.client = null;
@@ -55,10 +51,10 @@ class FallbackProvider implements AIProviderClient {
 
   async chat(messages: ChatMessage[], options?: ProviderChatOptions): Promise<ProviderChatResponse> {
     if (!this.client) {
-      throw new Error('Fallback provider is not configured (FALLBACK_API_KEY missing)');
+      throw new Error('OpenAI provider is not configured (OPENAI_API_KEY missing)');
     }
     return this.client.chatCompletion(messages, options);
   }
 }
 
-export const fallbackProvider: AIProviderClient = new FallbackProvider();
+export const openaiProvider: AIProviderClient = new OpenAIProvider();

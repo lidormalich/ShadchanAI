@@ -124,6 +124,26 @@ export async function sessionLogoutHandler(req: Request, res: Response, next: Ne
   } catch (e) { next(e); }
 }
 
+// ── Multi-account admin: sessions overview + lock administration ──
+
+export async function adminSessionsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    ok(res, await svc.getAdminSessions());
+  } catch (e) { next(e); }
+}
+
+export async function adminForceReleaseLockHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    const { reason } = req.body as { reason: string };
+    ok(res, await svc.adminForceReleaseLock(channelId, reason, user.id));
+  } catch (e) { next(e); }
+}
+
 export async function listChatsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     ensureUser(req.user);

@@ -135,6 +135,10 @@ export async function disconnect(
   performedBy: string,
 ): Promise<ChannelView> {
   const before = await channelMgr.findById(channelId);
+  // Tear down the live socket FIRST. Otherwise an orphaned Baileys connection
+  // keeps emitting inbound messages.upsert events into a channel we've flipped
+  // to DISCONNECTED, and the status-gated handler lookup silently drops them.
+  await stopChannelClient(channelId);
   const doc = await channelMgr.disconnect(channelId, reason);
   await audit({
     entityType: AuditEntityType.CHANNEL,
@@ -219,8 +223,15 @@ import {
   stopChannelClient,
   logoutChannelClient,
   getChannelClient,
+  describeAllSessions,
 } from '../../services/whatsapp/providers/baileys/baileys.client.js';
 import type { BaileysChannelStatus } from '../../services/whatsapp/whatsapp.types.js';
+import {
+  forceReleaseChannelLock,
+  inspectChannelLock,
+  INSTANCE_ID,
+  type LockInfo,
+} from '../../services/whatsapp/instance.lock.js';
 
 // In-memory lock to prevent two operators (or two tabs) from
 // concurrently initiating a pairing on the same channel. Single-
@@ -411,4 +422,132 @@ export async function deleteChannelSafely(channelId: string, performedBy: string
     status: 'deleted',
     transition: 'delete',
   });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Admin: multi-account session visibility + lock administration
+// ═══════════════════════════════════════════════════════════
+
+export interface AdminSessionView {
+  channelId: string;
+  accountDisplayName: string;
+  role: string;
+  status: string;
+  connectionHealth: string;
+  lastInboundAt?: Date;
+  lastOutboundAt?: Date;
+  lastConnectedAt?: Date;
+  lastDisconnectAt?: Date;
+  // Live in-process Baileys client (this server instance only).
+  hasLiveClient: boolean;
+  liveState: string | null;
+  lastError?: string;
+  // Persisted DB lock — the cross-process truth.
+  lock: {
+    ownerInstanceId: string | null;
+    ownerHeartbeatAt: Date | null;
+    ageMs: number | null;
+    isStale: boolean;
+    isOurs: boolean;
+  };
+}
+
+export interface AdminSessionsResponse {
+  instanceId: string;
+  sessions: AdminSessionView[];
+}
+
+/** Operator-facing snapshot of every channel's session+lock state.
+ *  Combines DB rows, in-process client registry, and persisted lock
+ *  ownership into one denormalized list — purpose-built for the
+ *  admin "Sessions" UI. */
+export async function getAdminSessions(): Promise<AdminSessionsResponse> {
+  const [channels, liveSnapshot] = await Promise.all([
+    Channel.find({}).sort({ createdAt: 1 }).exec(),
+    describeAllSessions(),
+  ]);
+  const liveByChannel = new Map(liveSnapshot.map((s) => [s.channelId, s]));
+
+  const sessions: AdminSessionView[] = channels.map((ch) => {
+    const live = liveByChannel.get(ch.channelId);
+    return {
+      channelId: ch.channelId,
+      accountDisplayName: ch.accountDisplayName,
+      role: ch.role,
+      status: ch.status,
+      connectionHealth: ch.connectionHealth,
+      lastInboundAt: ch.lastInboundAt,
+      lastOutboundAt: ch.lastOutboundAt,
+      lastConnectedAt: ch.lastConnectedAt,
+      lastDisconnectAt: ch.lastDisconnectAt,
+      hasLiveClient: !!live?.hasLiveClient,
+      liveState: live?.state ?? null,
+      lastError: live?.lastError,
+      lock: live?.lock
+        ? {
+          ownerInstanceId: live.lock.ownerInstanceId,
+          ownerHeartbeatAt: live.lock.ownerHeartbeatAt,
+          ageMs: live.lock.ageMs,
+          isStale: live.lock.isStale,
+          isOurs: live.lock.isOurs,
+        }
+        : {
+          ownerInstanceId: null,
+          ownerHeartbeatAt: null,
+          ageMs: null,
+          isStale: false,
+          isOurs: false,
+        },
+    };
+  });
+
+  return { instanceId: INSTANCE_ID, sessions };
+}
+
+/** Operator-issued force-release of a channel lock. Refuses when a
+ *  live in-process Baileys client is still running for this id —
+ *  in that case the operator should logout/stop first. */
+export async function adminForceReleaseLock(
+  channelId: string,
+  reason: string,
+  performedBy: string,
+): Promise<{
+  released: boolean;
+  previousOwner: string | null;
+  previousHeartbeatAt: Date | null;
+  ageMs: number | null;
+  lock: LockInfo;
+}> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+
+  if (getChannelClient(channelId)) {
+    throw new BusinessRuleError(
+      'A live Baileys session is still running for this channel. Stop or logout the session first.',
+      { code: 'session_still_running' },
+    );
+  }
+
+  const result = await forceReleaseChannelLock(channelId, reason, performedBy);
+  const after = await inspectChannelLock(channelId);
+
+  await audit({
+    entityType: AuditEntityType.CHANNEL,
+    entityId: String(ch._id),
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    metadata: {
+      scope: 'lock_force_released',
+      reason,
+      previousOwner: result.previousOwner,
+      previousHeartbeatAgeMs: result.ageMs,
+    },
+  });
+
+  publishRealtimeEvent('channel.updated', {
+    channelId,
+    transition: 'lock_force_released',
+  });
+
+  return { ...result, lock: after };
 }

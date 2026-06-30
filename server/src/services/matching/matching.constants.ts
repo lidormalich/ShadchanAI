@@ -30,6 +30,17 @@ export const MATCH_TYPE_THRESHOLDS = {
   // Below creative thresholds → risky
 } as const;
 
+// ── Suitable / weak bucket thresholds ─────────────────────
+//
+// Used by the compatibility board (suitable vs weak bucket) and the
+// match-scan PairScore bucketing. Centralized here so the two consumers
+// can never disagree on what "suitable" means.
+
+/** Minimum engine matchScore for a pair to be considered "suitable" */
+export const SUITABLE_SCORE_MIN = 70;
+/** Minimum engine confidenceScore for a pair to be considered "suitable" */
+export const SUITABLE_CONFIDENCE_MIN = 60;
+
 // ── Mode-specific filters ─────────────────────────────────
 
 export const MODE_CONFIG = {
@@ -206,7 +217,51 @@ export const LOCATION = {
    *  confidence-score deduction for missing city, not from inflating
    *  this dimension's score. */
   MISSING_DATA_SCORE: 35,
+  /** When either side is willing to relocate / open to distance, region
+   *  distance never tanks the score below this floor (city/distance is
+   *  never a disqualifier — it's a soft preference). */
+  RELOCATE_FLOOR: 55,
 } as const;
+
+// ── Region closeness matrix (8×8, symmetric) ──────────────
+//
+// Coarse Israeli-geography adjacency: 1.0 = same region, lower =
+// farther / harder to commute. Region is the PRIMARY location
+// signal; same-city still scores a perfect 100 on top of this.
+// Values are commute-intuition, NOT exact km — they only need to
+// rank "how far apart" for the soft location dimension.
+//
+//   north · haifa_krayot · sharon · gush_dan · jerusalem · shfela · south · yosh
+
+export const REGION_CLOSENESS: Record<string, Record<string, ClosenessValue>> = {
+  north:        { north: 1.0,  haifa_krayot: 0.7,  sharon: 0.4,  gush_dan: 0.3,  jerusalem: 0.2,  shfela: 0.2,  south: 0.15, yosh: 0.2  },
+  haifa_krayot: { north: 0.7,  haifa_krayot: 1.0,  sharon: 0.6,  gush_dan: 0.45, jerusalem: 0.25, shfela: 0.3,  south: 0.2,  yosh: 0.25 },
+  sharon:       { north: 0.4,  haifa_krayot: 0.6,  sharon: 1.0,  gush_dan: 0.75, jerusalem: 0.4,  shfela: 0.5,  south: 0.3,  yosh: 0.45 },
+  gush_dan:     { north: 0.3,  haifa_krayot: 0.45, sharon: 0.75, gush_dan: 1.0,  jerusalem: 0.5,  shfela: 0.7,  south: 0.4,  yosh: 0.5  },
+  jerusalem:    { north: 0.2,  haifa_krayot: 0.25, sharon: 0.4,  gush_dan: 0.5,  jerusalem: 1.0,  shfela: 0.55, south: 0.4,  yosh: 0.65 },
+  shfela:       { north: 0.2,  haifa_krayot: 0.3,  sharon: 0.5,  gush_dan: 0.7,  jerusalem: 0.55, shfela: 1.0,  south: 0.55, yosh: 0.45 },
+  south:        { north: 0.15, haifa_krayot: 0.2,  sharon: 0.3,  gush_dan: 0.4,  jerusalem: 0.4,  shfela: 0.55, south: 1.0,  yosh: 0.3  },
+  yosh:         { north: 0.2,  haifa_krayot: 0.25, sharon: 0.45, gush_dan: 0.5,  jerusalem: 0.65, shfela: 0.45, south: 0.3,  yosh: 1.0  },
+};
+
+// ── Shared-goals closeness (fold into mutual_expectations) ─
+// Direct candidate-to-candidate comparison of structured goals.
+// flexible/undecided on either side → high (no friction).
+
+export const CHILDREN_PREFERENCE_CLOSENESS: Record<string, Record<string, ClosenessValue>> = {
+  large_family: { large_family: 1.0,  balanced: 0.6, small_family: 0.2, flexible: 0.8, undecided: 0.7 },
+  balanced:     { large_family: 0.6,  balanced: 1.0, small_family: 0.6, flexible: 0.85, undecided: 0.7 },
+  small_family: { large_family: 0.2,  balanced: 0.6, small_family: 1.0, flexible: 0.8, undecided: 0.7 },
+  flexible:     { large_family: 0.8,  balanced: 0.85, small_family: 0.8, flexible: 1.0, undecided: 0.85 },
+  undecided:    { large_family: 0.7,  balanced: 0.7, small_family: 0.7, flexible: 0.85, undecided: 0.7 },
+};
+
+export const CAREER_PRIORITY_CLOSENESS: Record<string, Record<string, ClosenessValue>> = {
+  torah_focused:  { torah_focused: 1.0, balanced: 0.6, career_focused: 0.2, flexible: 0.8 },
+  balanced:       { torah_focused: 0.6, balanced: 1.0, career_focused: 0.6, flexible: 0.85 },
+  career_focused: { torah_focused: 0.2, balanced: 0.6, career_focused: 1.0, flexible: 0.8 },
+  flexible:       { torah_focused: 0.8, balanced: 0.85, career_focused: 0.8, flexible: 1.0 },
+};
 
 // ── Life-stage compatibility ──────────────────────────────
 

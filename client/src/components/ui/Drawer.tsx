@@ -13,7 +13,8 @@ export interface DrawerProps {
   children: ReactNode;
 }
 
-const widthClass = { md: 'w-[520px]', lg: 'w-[720px]', xl: 'w-[900px]' };
+// Full-width on phones; fixed desktop widths from sm+.
+const widthClass = { md: 'w-full sm:w-[520px]', lg: 'w-full sm:w-[720px]', xl: 'w-full sm:w-[900px]' };
 
 export function Drawer({ open, onClose, title, subtitle, width = 'lg', footer, children }: DrawerProps) {
   useEffect(() => {
@@ -47,7 +48,7 @@ export function Drawer({ open, onClose, title, subtitle, width = 'lg', footer, c
         aria-modal="true"
       >
         {(title || subtitle) && (
-          <header className="flex items-start justify-between gap-3 p-5 border-b border-border">
+          <header className="flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-border">
             <div className="min-w-0">
               {title && <h2 className="text-lg font-semibold text-ink">{title}</h2>}
               {subtitle && <p className="text-sm text-ink-muted mt-0.5">{subtitle}</p>}

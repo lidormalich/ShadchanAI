@@ -17,19 +17,34 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Inbox, RefreshCw, X } from 'lucide-react';
+import { Check, Filter, Inbox, RefreshCw, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
-import { extractionApi, type ExtractedProfileInput, type ReviewQueueItem } from '@/services/api/extraction';
+import {
+  extractionApi,
+  type ExtractedProfileInput,
+  type IngestionDecision,
+  type IngestionLogItem,
+  type ReviewQueueItem,
+} from '@/services/api/extraction';
 import { label } from '@/utils/labels';
+
+// Hebrew labels + tone for each ingestion routing verdict.
+const INGESTION_LABEL: Record<IngestionDecision, { text: string; tone: 'success' | 'neutral' | 'warning' | 'danger' }> = {
+  accepted: { text: 'נקלטה לחילוץ', tone: 'success' },
+  ignored_assigned_ignore: { text: 'סוננה — צ׳אט מסומן "התעלם"', tone: 'neutral' },
+  ignored_match_sending: { text: 'סוננה — צ׳אט שליחה', tone: 'neutral' },
+  ignored_unmapped: { text: 'סוננה — צ׳אט לא ממופה', tone: 'warning' },
+};
 
 export function ReviewQueuePage() {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const focusMessageId = searchParams.get('messageId');
+  const [tab, setTab] = useState<'review' | 'filtered'>('review');
 
   const queue = useQuery({
     queryKey: ['extraction', 'review-queue'],
@@ -65,15 +80,33 @@ export function ReviewQueuePage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">תור סקירה</h2>
-          <p className="text-sm text-ink-muted">הודעות פרופיל שה-AI לא היה בטוח בהן — אשר, דחה או הרץ מחדש.</p>
+          <h2 className="text-lg font-semibold">{tab === 'review' ? 'תור סקירה' : 'הודעות שסוננו'}</h2>
+          <p className="text-sm text-ink-muted">
+            {tab === 'review'
+              ? 'הודעות פרופיל שה-AI לא היה בטוח בהן — אשר, דחה או הרץ מחדש.'
+              : 'הודעות שהגיעו אך לא נכנסו לחילוץ — וסיבת הסינון. אפשר לאלץ עיבוד מחדש.'}
+          </p>
         </div>
-        <Button variant="secondary" onClick={() => queue.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
-          רענן
-        </Button>
+        {tab === 'review' && (
+          <Button variant="secondary" onClick={() => queue.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+            רענן
+          </Button>
+        )}
       </div>
 
-      {queue.isError ? (
+      {/* Tab switcher */}
+      <div className="flex gap-1 border-b border-border">
+        <TabButton active={tab === 'review'} onClick={() => setTab('review')} icon={<Inbox className="h-4 w-4" />}>
+          תור סקירה
+        </TabButton>
+        <TabButton active={tab === 'filtered'} onClick={() => setTab('filtered')} icon={<Filter className="h-4 w-4" />}>
+          הודעות שסוננו
+        </TabButton>
+      </div>
+
+      {tab === 'filtered' ? (
+        <FilteredMessagesSection />
+      ) : queue.isError ? (
         <ErrorState description={(queue.error as Error).message} onRetry={() => queue.refetch()} />
       ) : queue.isLoading ? (
         <LoadingSkeleton rows={6} />
@@ -99,6 +132,129 @@ export function ReviewQueuePage() {
         </div>
       )}
     </div>
+  );
+}
+
+function TabButton({ active, onClick, icon, children }: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+        active ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+// ── Filtered (ignored) messages: the ingestion blind-spot view ──
+// Lists inbound messages that arrived but did NOT feed the extraction
+// pipeline, with the reason. Operators can force a reprocess (e.g. after
+// mapping the chat) via the same /run endpoint the review queue uses.
+function FilteredMessagesSection() {
+  const qc = useQueryClient();
+  const [decision, setDecision] = useState<IngestionDecision | 'ignored' | 'all'>('ignored');
+
+  const log = useQuery({
+    queryKey: ['extraction', 'ingestion-log', decision],
+    queryFn: () => extractionApi.ingestionLog(decision, 100),
+  });
+
+  const reprocess = useMutation({
+    mutationFn: (id: string) => extractionApi.run(id),
+    onSuccess: (res) => {
+      toast.success('עובד מחדש', `סטטוס חילוץ: ${res.data.status}`);
+      qc.invalidateQueries({ queryKey: ['extraction', 'ingestion-log'] });
+      qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
+    },
+    onError: (e: Error) => toast.error('העיבוד נכשל', e.message),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <Select
+          value={decision}
+          onChange={(e) => setDecision(e.target.value as IngestionDecision | 'ignored' | 'all')}
+          className="max-w-xs"
+        >
+          <option value="ignored">כל ההודעות שסוננו</option>
+          <option value="ignored_unmapped">צ׳אט לא ממופה</option>
+          <option value="ignored_assigned_ignore">צ׳אט מסומן "התעלם"</option>
+          <option value="ignored_match_sending">צ׳אט שליחה</option>
+          <option value="all">הכול (כולל שנקלטו)</option>
+        </Select>
+        <Button variant="secondary" onClick={() => log.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+          רענן
+        </Button>
+      </div>
+
+      {log.isError ? (
+        <ErrorState description={(log.error as Error).message} onRetry={() => log.refetch()} />
+      ) : log.isLoading ? (
+        <LoadingSkeleton rows={6} />
+      ) : !log.data?.data.length ? (
+        <EmptyState
+          icon={<Filter className="h-10 w-10 text-ink-faint" />}
+          title="אין הודעות שסוננו"
+          description="כל ההודעות שהגיעו נקלטו, או שעדיין אין נתוני סינון."
+        />
+      ) : (
+        <div className="space-y-2">
+          {log.data.data.map((item) => (
+            <FilteredCard
+              key={item.messageId}
+              item={item}
+              onReprocess={() => reprocess.mutate(item.messageId)}
+              busy={reprocess.isPending}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilteredCard({ item, onReprocess, busy }: {
+  item: IngestionLogItem;
+  onReprocess: () => void;
+  busy: boolean;
+}) {
+  const verdict = item.ingestion ? INGESTION_LABEL[item.ingestion.decision] : undefined;
+  return (
+    <Card>
+      <CardBody className="space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            {verdict && <Badge tone={verdict.tone}>{verdict.text}</Badge>}
+            {item.extractionStatus && <Badge tone="neutral">חילוץ: {item.extractionStatus}</Badge>}
+            <span className="text-xs text-ink-muted">{new Date(item.createdAt).toLocaleString('he-IL')}</span>
+            <span className="text-xs text-ink-faint">מ־{item.accountDisplayName}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link to={`/chats?conversation=${item.conversationId}`} className="text-xs underline text-brand">
+              פתח שיחה
+            </Link>
+            <Button variant="secondary" onClick={onReprocess} disabled={busy} leftIcon={<RefreshCw className="h-4 w-4" />}>
+              אלץ עיבוד
+            </Button>
+          </div>
+        </div>
+        {item.body && (
+          <div className="rounded-md border border-border bg-bg-subtle/40 p-2 text-sm whitespace-pre-wrap max-h-40 overflow-y-auto">
+            {item.body}
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -173,7 +329,7 @@ function ReviewCard({
           {/* Editable extracted fields */}
           <div>
             <div className="text-xs text-ink-muted mb-1">שדות לאישור (ניתנים לעריכה)</div>
-            <div className="rounded-md border border-border bg-white p-3 text-sm grid grid-cols-2 gap-2">
+            <div className="rounded-md border border-border bg-white p-3 text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
               <EditRow label="שם פרטי"><Input value={fields.firstName ?? ''} onChange={(e) => set('firstName', e.target.value || undefined)} /></EditRow>
               <EditRow label="שם משפחה"><Input value={fields.lastName ?? ''} onChange={(e) => set('lastName', e.target.value || undefined)} /></EditRow>
               <EditRow label="מגדר">

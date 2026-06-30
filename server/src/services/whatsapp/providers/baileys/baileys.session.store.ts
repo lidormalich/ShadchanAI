@@ -24,10 +24,12 @@ import { useMultiFileAuthState } from '@whiskeysockets/baileys';
 import type { AuthenticationState } from '@whiskeysockets/baileys';
 import { env } from '../../../../config/env.js';
 import { BAILEYS } from '../../whatsapp.constants.js';
+import { createLogger } from '../../../../utils/logger.js';
+
+const log = createLogger('baileys.session.store');
 
 if (!env.WA_SESSION_ENCRYPTION_KEY) {
-  // eslint-disable-next-line no-console
-  console.warn(JSON.stringify({ event: 'wa_sessions_unencrypted' }));
+  log.warn('wa_sessions_unencrypted');
 }
 
 export interface BaileysAuth {
@@ -67,8 +69,7 @@ export async function purgeSession(channelId: string): Promise<void> {
     await fs.rm(dir, { recursive: true, force: true });
   } catch (err) {
     // Swallow — purge must not throw from shutdown paths.
-    // eslint-disable-next-line no-console
-    console.error(`[baileys.session.store] purge failed for ${channelId}:`, (err as Error).message);
+    log.error({ channelId, error: (err as Error).message }, 'purge failed');
   }
 }
 

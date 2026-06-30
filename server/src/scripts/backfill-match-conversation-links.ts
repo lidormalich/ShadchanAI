@@ -65,10 +65,10 @@ async function repairSide(report: RepairReport, side: 'a' | 'b'): Promise<void> 
   const cursor = MatchSuggestion.find({
     [sentField]: { $exists: true },
     [convField]: { $exists: false },
-  }).select('_id internalCandidateId externalCandidateId').cursor();
+  }).select('_id internalCandidateId externalCandidateId').lean().cursor();
 
   for await (const match of cursor) {
-    const candId = (match as Record<string, unknown>)[candFieldOnMatch] as Types.ObjectId;
+    const candId = (match as unknown as Record<string, unknown>)[candFieldOnMatch] as Types.ObjectId;
     const candidateConvs = await Conversation.find({
       [candFieldOnConv]: candId,
       archivedAt: { $exists: false },
@@ -111,7 +111,7 @@ async function repairBacklinks(report: RepairReport): Promise<void> {
       { 'conversationIds.sideA': { $exists: true } },
       { 'conversationIds.sideB': { $exists: true } },
     ],
-  }).select('_id conversationIds').cursor();
+  }).select('_id conversationIds').lean().cursor();
 
   for await (const match of cursor) {
     const ids: Types.ObjectId[] = [];
@@ -136,7 +136,7 @@ async function repairBacklinks(report: RepairReport): Promise<void> {
   // Orphan: conversation.matchSuggestionId set, but the match doesn't exist.
   const orphanCursor = Conversation.find({
     matchSuggestionId: { $exists: true },
-  }).select('_id matchSuggestionId').cursor();
+  }).select('_id matchSuggestionId').lean().cursor();
   for await (const conv of orphanCursor) {
     if (!conv.matchSuggestionId) continue;
     const exists = await MatchSuggestion.exists({ _id: conv.matchSuggestionId });

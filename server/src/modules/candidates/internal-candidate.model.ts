@@ -11,6 +11,9 @@ import {
   StudyWorkDirection,
   CandidateStatus,
   ClosureReason,
+  Region,
+  ChildrenPreference,
+  CareerPriority,
 } from '@shadchanai/shared';
 
 // ── Sub-schemas ───────────────────────────────────────────
@@ -92,14 +95,40 @@ const aiEnrichmentSchema = new Schema(
   { _id: false },
 );
 
+// ── Multi-chunk embedding schema ──────────────────────────
+//
+// A candidate's profile is split into 4 semantic chunks, each
+// with its own vector.  Atlas $rankFusion searches all 4 in
+// parallel and merges the results with per-chunk weights:
+//   religious (0.40) | expectations (0.30) | personality (0.20) | background (0.10)
+//
+// vector and textSnapshot are select:false — they are large and
+// must be explicitly requested with select('+embedding.*.vector').
+// embeddedAt is always loaded so staleness can be checked cheaply.
+
+const embeddingChunkSchema = new Schema(
+  {
+    vector:       { type: [Number], select: false },   // the actual embedding
+    textSnapshot: { type: String,   select: false },   // source text (for RAG + debug)
+    embeddedAt:   { type: Date },                       // when this chunk was last generated
+  },
+  { _id: false },
+);
+
 const embeddingSchema = new Schema(
   {
-    vector: { type: [Number], select: false },
-    modelId: { type: String },
-    version: { type: String },
-    provider: { type: String },
-    dimensions: { type: Number },
-    updatedAt: { type: Date },
+    // Model metadata — shared across all chunks on this document.
+    // modelId is used to detect when re-embedding is needed after a model upgrade.
+    modelId:    { type: String },   // e.g. 'BAAI/bge-m3'
+    provider:   { type: String },   // e.g. 'huggingface'
+    dimensions: { type: Number },   // 1024 for bge-m3; 3584 for bge-multilingual-gemma2
+    updatedAt:  { type: Date },     // timestamp of the most recent chunk update
+
+    // The 4 semantic chunks — each maps to one Atlas vector index.
+    religious:    { type: embeddingChunkSchema },
+    expectations: { type: embeddingChunkSchema },
+    personality:  { type: embeddingChunkSchema },
+    background:   { type: embeddingChunkSchema },
   },
   { _id: false },
 );
@@ -122,11 +151,24 @@ export interface IInternalCandidate extends Document {
 
   // demographics
   city?: string;
+  region?: Region;
   neighborhood?: string;
   originCity?: string;
   originCountry?: string;
   ethnicity?: string;
+  familyBackground?: string;
   height?: number;
+
+  // character / middot (operator impression — informational, not scored)
+  characterTraits?: string[];
+  characterNotes?: string;
+
+  // shared goals (informational + feeds mutual_expectations scoring)
+  lifeGoals?: {
+    childrenPreference?: ChildrenPreference;
+    careerPriority?: CareerPriority;
+    homeVision?: string;
+  };
 
   // religious identity
   sectorGroup: SectorGroup;
@@ -231,14 +273,18 @@ export interface IInternalCandidate extends Document {
     model?: string;
   };
 
-  // embedding (for semantic search)
+  // Multi-chunk embedding for semantic search.
+  // Each chunk is independently indexed in Atlas and searched via $rankFusion.
+  // Vectors are select:false — use select('+embedding.*.vector') to load them.
   embedding?: {
-    vector?: number[];
-    modelId?: string;
-    version?: string;
-    provider?: string;
+    modelId?:    string;
+    provider?:   string;
     dimensions?: number;
-    updatedAt?: Date;
+    updatedAt?:  Date;
+    religious?:    { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
+    expectations?: { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
+    personality?:  { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
+    background?:   { vector?: number[]; textSnapshot?: string; embeddedAt?: Date };
   };
 
   // audit
@@ -246,6 +292,11 @@ export interface IInternalCandidate extends Document {
   // ownership — the shadchan currently responsible for this candidate
   ownerUserId?: Types.ObjectId;
   archivedAt?: Date;
+  // Incremental match-scan change detection: hash of the engine-relevant
+  // fields at last scan. The scan re-scores a candidate's pairs only when
+  // this differs from the freshly-computed hash. See match-scan.service.
+  scoringHash?: string;
+  scoringHashAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -267,11 +318,26 @@ const internalCandidateSchema = new Schema<IInternalCandidate>(
 
     // ── Demographics ──────────────────────────────────────
     city: { type: String, trim: true },
+    region: { type: String, enum: Object.values(Region) },
     neighborhood: { type: String, trim: true },
     originCity: { type: String, trim: true },
     originCountry: { type: String, trim: true },
     ethnicity: { type: String, trim: true },
+    familyBackground: { type: String, maxlength: 2000 },
     height: { type: Number, min: 100, max: 220 },
+
+    // ── Character / middot (informational) ────────────────
+    characterTraits: { type: [String], default: undefined },
+    characterNotes: { type: String, maxlength: 2000 },
+
+    // ── Shared goals (informational + scored) ─────────────
+    lifeGoals: {
+      type: new Schema({
+        childrenPreference: { type: String, enum: Object.values(ChildrenPreference) },
+        careerPriority: { type: String, enum: Object.values(CareerPriority) },
+        homeVision: { type: String, maxlength: 1000 },
+      }, { _id: false }),
+    },
 
     // ── Religious identity ────────────────────────────────
     sectorGroup: {
@@ -373,6 +439,10 @@ const internalCandidateSchema = new Schema<IInternalCandidate>(
     // ── Ownership ─────────────────────────────────────────
     ownerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     archivedAt: { type: Date },
+
+    // ── Match-scan change detection ───────────────────────
+    scoringHash: { type: String },
+    scoringHashAt: { type: Date },
   },
   {
     timestamps: true,

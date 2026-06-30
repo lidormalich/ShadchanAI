@@ -8,15 +8,25 @@ import { Drawer } from '@/components/ui/Drawer';
 import { Button, Input, Select, Textarea } from '@/components/ui/primitives';
 import { toast } from '@/components/ui/Toast';
 import { externalCandidatesApi } from '@/services/api/candidates';
+import { type ProfileExtraction } from '@/services/api/ai';
+import { describeApiError } from '@/utils/apiError';
+import { CardImportButton } from './CardImportButton';
 import { label } from '@/utils/labels';
 import type { ExternalCandidate } from '@/types/domain';
 
 const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani', 'other'];
+const REGIONS = ['north', 'haifa_krayot', 'sharon', 'gush_dan', 'jerusalem', 'shfela', 'south', 'yosh'];
 const SOURCES = ['whatsapp_group', 'matchmaker_referral', 'website', 'manual_entry', 'other'];
 const AVAILABILITY = ['available', 'dating', 'unavailable', 'unknown'];
 const AGE_CONF = ['exact', 'approximate', 'estimated', 'unknown'];
 
-type Values = Partial<ExternalCandidate> & { ageReliability?: { ageConfidence?: string; reportedAgeAt?: string } };
+// contactPhone is accepted by the create/update endpoint but isn't on the
+// read DTO type, so we widen Values to carry it (and agePreferences).
+type Values = Partial<ExternalCandidate> & {
+  contactPhone?: string;
+  agePreferences?: { min?: number; max?: number; flexibility?: string };
+  ageReliability?: { ageConfidence?: string; reportedAgeAt?: string };
+};
 
 export function ExternalCandidateForm({
   open, onClose, initial,
@@ -27,7 +37,16 @@ export function ExternalCandidateForm({
 }) {
   const qc = useQueryClient();
   const [v, setV] = useState<Values>({});
+  const [aiNotes, setAiNotes] = useState<string[]>([]);
   useEffect(() => { setV(initial ?? { availabilityStatus: 'available', sourceType: 'manual_entry' }); }, [initial]);
+  useEffect(() => { if (open) setAiNotes([]); }, [open]);
+
+  const applyExtraction = (profile: ProfileExtraction) => {
+    const { filled, notes } = mergeExtraction(profile);
+    setV((prev) => ({ ...prev, ...filled }));
+    setAiNotes(notes);
+    toast.success('המידע מולא', `${Object.keys(filled).length} שדות זוהו. בדוק ותקן לפני שמירה.`);
+  };
 
   const save = useMutation({
     mutationFn: async () => initial?._id
@@ -39,7 +58,7 @@ export function ExternalCandidateForm({
       if (initial?._id) qc.invalidateQueries({ queryKey: ['external', initial._id] });
       onClose();
     },
-    onError: (err) => toast.error('השמירה נכשלה', (err as Error).message),
+    onError: (err) => toast.error('השמירה נכשלה', describeApiError(err)),
   });
 
   const set = <K extends keyof Values>(k: K, val: Values[K]) => setV((p) => ({ ...p, [k]: val }));
@@ -57,9 +76,16 @@ export function ExternalCandidateForm({
       }
     >
       <div className="p-5 space-y-4">
+        <CardImportButton target="external" onExtracted={applyExtraction} />
+        {aiNotes.length > 0 && (
+          <ul className="text-xs text-warning-700 list-disc ps-5 space-y-0.5 rounded-md bg-warning-50 border border-warning-200 p-2">
+            {aiNotes.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
+        )}
+
         <Section title="מקור">
           <Row label="סוג מקור" required>
-            <Select value={v.sourceType ?? 'manual_entry'} onChange={(e) => set('sourceType', e.target.value)}>
+            <Select value={v.sourceType ?? 'manual_entry'} onChange={(e) => set('sourceType', e.target.value as Values['sourceType'])}>
               {SOURCES.map((s) => <option key={s} value={s}>{label('sourceType', s)}</option>)}
             </Select>
           </Row>
@@ -71,19 +97,27 @@ export function ExternalCandidateForm({
           <Row label="שם פרטי"><Input value={v.firstName ?? ''} onChange={(e) => set('firstName', e.target.value)} /></Row>
           <Row label="שם משפחה"><Input value={v.lastName ?? ''} onChange={(e) => set('lastName', e.target.value)} /></Row>
           <Row label="מין">
-            <Select value={v.gender ?? ''} onChange={(e) => set('gender', e.target.value)}>
+            <Select value={v.gender ?? ''} onChange={(e) => set('gender', e.target.value as Values['gender'])}>
               <option value="">—</option><option value="male">זכר</option><option value="female">נקבה</option>
             </Select>
           </Row>
           <Row label="גיל"><Input type="number" value={v.age ?? ''} onChange={(e) => set('age', Number(e.target.value))} /></Row>
           <Row label="עיר"><Input value={v.city ?? ''} onChange={(e) => set('city', e.target.value)} /></Row>
+          <Row label="אזור">
+            <Select value={v.region ?? ''} onChange={(e) => set('region', (e.target.value || undefined) as Values['region'])}>
+              <option value="">—</option>
+              {REGIONS.map((r) => <option key={r} value={r}>{label('region', r)}</option>)}
+            </Select>
+          </Row>
+          <Row label="גובה (ס״מ)"><Input type="number" value={v.height ?? ''} onChange={(e) => set('height', e.target.value ? Number(e.target.value) : undefined)} /></Row>
+          <Row label="טלפון"><Input value={v.contactPhone ?? ''} onChange={(e) => set('contactPhone', e.target.value)} /></Row>
         </Section>
 
         <Section title="דיוק גיל">
           <Row label="אמינות גיל">
             <Select
               value={v.ageReliability?.ageConfidence ?? 'unknown'}
-              onChange={(e) => set('ageReliability', { ...(v.ageReliability ?? {}), ageConfidence: e.target.value })}
+              onChange={(e) => set('ageReliability', { ...(v.ageReliability ?? {}), ageConfidence: e.target.value } as Values['ageReliability'])}
             >
               {AGE_CONF.map((c) => <option key={c} value={c}>{label('ageConfidence', c)}</option>)}
             </Select>
@@ -92,13 +126,13 @@ export function ExternalCandidateForm({
 
         <Section title="זהות דתית">
           <Row label="מגזר">
-            <Select value={v.sectorGroup ?? ''} onChange={(e) => set('sectorGroup', e.target.value)}>
+            <Select value={v.sectorGroup ?? ''} onChange={(e) => set('sectorGroup', e.target.value as Values['sectorGroup'])}>
               <option value="">—</option>
               {SECTORS.map((s) => <option key={s} value={s}>{label('sectorGroup', s)}</option>)}
             </Select>
           </Row>
           <Row label="זמינות" required>
-            <Select value={v.availabilityStatus ?? 'available'} onChange={(e) => set('availabilityStatus', e.target.value)}>
+            <Select value={v.availabilityStatus ?? 'available'} onChange={(e) => set('availabilityStatus', e.target.value as Values['availabilityStatus'])}>
               {AVAILABILITY.map((s) => <option key={s} value={s}>{label('availabilityStatus', s)}</option>)}
             </Select>
           </Row>
@@ -117,7 +151,7 @@ export function ExternalCandidateForm({
           <Row label="טווח גיל מבוקש — מ">
             <Input
               type="number"
-              value={v.ageReliability ? '' : (((v as Record<string, unknown>)['agePreferences'] as { min?: number } | undefined)?.min ?? '')}
+              value={(((v as Record<string, unknown>)['agePreferences'] as { min?: number } | undefined)?.min ?? '')}
               onChange={(e) => {
                 const curr = (((v as Record<string, unknown>)['agePreferences'] ?? {}) as { min?: number; max?: number; flexibility?: string });
                 const min = e.target.value === '' ? undefined : Number(e.target.value);
@@ -145,6 +179,79 @@ export function ExternalCandidateForm({
       </div>
     </Drawer>
   );
+}
+
+// Turn the AI extraction into a patch over the form values. Only fields
+// the model confidently returned are included, so a re-fill never blanks
+// out something the operator already typed.
+function mergeExtraction(p: ProfileExtraction): { filled: Values; notes: string[] } {
+  const filled: Values = {};
+  const bag = filled as Record<string, unknown>;
+  const notes: string[] = [...(p.warnings ?? [])];
+
+  const str = (k: keyof Values, val: string | undefined) => {
+    if (val && val.trim()) bag[k as string] = val.trim();
+  };
+  const numField = (k: keyof Values, val: number | undefined) => {
+    if (typeof val === 'number' && Number.isFinite(val)) bag[k as string] = val;
+  };
+
+  str('firstName', p.firstName);
+  str('lastName', p.lastName);
+  if (p.gender) filled.gender = p.gender;
+  numField('age', p.age);
+  numField('height', p.height);
+  str('city', p.city);
+  // External has one contact number; prefer the card's inquiry contact,
+  // else the candidate's own.
+  str('contactPhone', p.contactPhone ?? p.candidatePhone);
+  str('sectorGroup', p.sectorGroup);
+  str('subSector', p.subSector);
+  str('lifestyleTone', p.lifestyleTone);
+  str('personalStatus', p.personalStatus);
+  str('lifeStage', p.lifeStage);
+  str('studyWorkDirection', p.studyWorkDirection);
+  str('whatSeeking', p.whatSeeking);
+
+  // External has no dedicated occupation/education/army/family/ethnicity
+  // fields → compose everything into `about` so nothing is lost.
+  const aboutParts = [
+    p.about,
+    p.currentOccupation ? `עיסוק: ${p.currentOccupation}` : undefined,
+    p.educationLevel ? `השכלה: ${p.educationLevel}` : undefined,
+    p.educationInstitution ? `מוסד: ${p.educationInstitution}` : undefined,
+    p.armyService ? `שירות: ${p.armyService}` : undefined,
+    p.ethnicity ? `עדה: ${p.ethnicity}` : undefined,
+    p.religiousLevelText ? `השקפה: ${p.religiousLevelText}` : undefined,
+    p.familyBackground ? `משפחה: ${p.familyBackground}` : undefined,
+    p.headCovering ? `כיסוי ראש: ${p.headCovering}` : undefined,
+    p.smoking ? `מעשן/ת: ${p.smoking}` : undefined,
+  ].filter((s): s is string => Boolean(s && s.trim()));
+  if (aboutParts.length) filled.about = aboutParts.join('\n');
+
+  // Age from a card is rarely exact — flag the confidence so the engine
+  // and the operator treat it accordingly.
+  if (typeof p.age === 'number') {
+    filled.ageReliability = { ageConfidence: 'approximate' };
+    notes.push(`הגיל (${p.age}) סומן כ"משוער" — תקן ל"מדויק" אם אומת.`);
+  }
+
+  if (typeof p.seekingAgeMin === 'number' || typeof p.seekingAgeMax === 'number') {
+    filled.agePreferences = { min: p.seekingAgeMin, max: p.seekingAgeMax };
+  }
+
+  const openness: NonNullable<ExternalCandidate['openness']> = {};
+  if (p.openToOtherSectors !== undefined) openness.openToOtherSectors = p.openToOtherSectors;
+  if (p.openToConverts !== undefined) openness.openToConverts = p.openToConverts;
+  if (p.openToDivorced !== undefined) openness.openToDivorced = p.openToDivorced;
+  if (p.openToWithChildren !== undefined) openness.openToWithChildren = p.openToWithChildren;
+  if (p.openToAgeDifference !== undefined) openness.openToAgeDifference = p.openToAgeDifference;
+  if (p.openToLongDistance !== undefined) openness.openToLongDistance = p.openToLongDistance;
+  if (Object.keys(openness).length > 0) filled.openness = openness;
+
+  if (p.confidence < 0.5) notes.push(`רמת ביטחון נמוכה (${Math.round(p.confidence * 100)}%) — בדוק היטב.`);
+
+  return { filled, notes };
 }
 
 function OpennessRow({

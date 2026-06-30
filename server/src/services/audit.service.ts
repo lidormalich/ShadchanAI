@@ -12,6 +12,9 @@ import { Types } from 'mongoose';
 import type { AuditActionType, AuditEntityType } from '@shadchanai/shared';
 import { AuditLog } from '../models/index.js';
 import { env } from '../config/env.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('audit');
 
 let auditFailureCount = 0;
 export function getAuditFailureCount(): number {
@@ -46,14 +49,13 @@ export async function audit(input: AuditInput): Promise<void> {
   } catch (e) {
     auditFailureCount += 1;
     const err = e as Error;
-    console.error(JSON.stringify({
-      event: 'audit_write_failed',
+    log.error({
       entityType: input.entityType,
       entityId: input.entityId,
       actionType: input.actionType,
       performedBy: input.performedBy,
       error: err.message,
-    }));
+    }, 'audit_write_failed');
     if (env.STRICT_AUDIT) throw e;
   }
 }

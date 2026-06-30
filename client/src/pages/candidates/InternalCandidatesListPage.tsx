@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { LayoutGrid, Rows3, Search, UserPlus } from 'lucide-react';
-import { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { Avatar, Badge, Button, Card, CardBody, Input, Select, TBody, THead, Table, Td, Th, Tr } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, RowSkeleton } from '@/components/states/states';
 import { InternalCandidateForm } from '@/features/forms/InternalCandidateForm';
 import { Pagination } from '@/components/ui/Pagination';
+import { useIsMobile } from '@/hooks/useMediaQuery';
 import { OwnershipFilter, type OwnershipScope } from '@/features/ownership/OwnershipFilter';
 import { label } from '@/utils/labels';
 import type { InternalCandidate } from '@/types/domain';
@@ -26,6 +27,9 @@ export function InternalCandidatesListPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 25;
+  // Tables don't fit a phone — force the card view on mobile regardless of toggle.
+  const isMobile = useIsMobile();
+  const effectiveView: ViewMode = isMobile ? 'cards' : view;
 
   const query = useQuery({
     queryKey: ['internals', { search, status, sectorGroup, gender, ownership, page }],
@@ -60,7 +64,7 @@ export function InternalCandidatesListPage() {
 
       <Card>
         <div className="p-4 border-b border-border flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative flex-1 min-w-0 sm:min-w-[240px] w-full sm:w-auto">
             <Search className="absolute top-1/2 -translate-y-1/2 start-3 h-4 w-4 text-ink-faint" />
             <Input
               className="ps-9"
@@ -69,21 +73,21 @@ export function InternalCandidatesListPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <Select className="w-full sm:w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">כל הסטטוסים</option>
             {STATUSES.map((s) => <option key={s} value={s}>{label('candidateStatus', s)}</option>)}
           </Select>
-          <Select value={sectorGroup} onChange={(e) => setSectorGroup(e.target.value)}>
+          <Select className="w-full sm:w-auto" value={sectorGroup} onChange={(e) => setSectorGroup(e.target.value)}>
             <option value="">כל המגזרים</option>
             {SECTORS.map((s) => <option key={s} value={s}>{label('sectorGroup', s)}</option>)}
           </Select>
-          <Select value={gender} onChange={(e) => setGender(e.target.value)}>
+          <Select className="w-full sm:w-auto" value={gender} onChange={(e) => setGender(e.target.value)}>
             <option value="">בנים ובנות</option>
             <option value="male">בנים</option>
             <option value="female">בנות</option>
           </Select>
           <OwnershipFilter value={ownership} onChange={setOwnership} />
-          <div className="ms-auto flex gap-1 p-0.5 rounded-md bg-bg-subtle border border-border">
+          <div className="ms-auto hidden md:flex gap-1 p-0.5 rounded-md bg-bg-subtle border border-border">
             <button
               onClick={() => setView('table')}
               className={`p-1.5 rounded ${view === 'table' ? 'bg-white shadow-sm' : 'text-ink-muted'}`}
@@ -103,7 +107,7 @@ export function InternalCandidatesListPage() {
 
         {query.isError ? (
           <ErrorState description={(query.error as Error).message} onRetry={() => query.refetch()} />
-        ) : view === 'table' ? (
+        ) : effectiveView === 'table' ? (
           <Table>
             <THead>
               <Tr>
@@ -167,7 +171,8 @@ function ageFromDob(dob: string): number {
   return Math.abs(new Date(diff).getUTCFullYear() - 1970);
 }
 
-function CandidateRow({ c }: { c: InternalCandidate }) {
+const CandidateRow = React.memo(function CandidateRow({ c }: { c: InternalCandidate }) {
+  const age = useMemo(() => ageFromDob(c.dateOfBirth), [c.dateOfBirth]);
   return (
     <Tr>
       <Td>
@@ -186,7 +191,7 @@ function CandidateRow({ c }: { c: InternalCandidate }) {
         </div>
       </Td>
       <Td className="text-sm text-ink-muted">{c.city ?? '—'}</Td>
-      <Td className="text-sm num">{ageFromDob(c.dateOfBirth)}</Td>
+      <Td className="text-sm num">{age}</Td>
       <Td><StatusBadge status={c.status} /></Td>
       <Td><CompletionBar value={c.profileCompletion} blocked={c.sendReadinessBlockers.length > 0} /></Td>
       <Td className="text-end">
@@ -194,9 +199,10 @@ function CandidateRow({ c }: { c: InternalCandidate }) {
       </Td>
     </Tr>
   );
-}
+}, (prev, next) => prev.c._id === next.c._id);
 
-function CandidateGridCard({ c }: { c: InternalCandidate }) {
+const CandidateGridCard = React.memo(function CandidateGridCard({ c }: { c: InternalCandidate }) {
+  const age = useMemo(() => ageFromDob(c.dateOfBirth), [c.dateOfBirth]);
   return (
     <Link to={`/candidates/internal/${c._id}`} className="block">
       <Card className="p-4 hover:shadow-rise transition-shadow">
@@ -204,7 +210,7 @@ function CandidateGridCard({ c }: { c: InternalCandidate }) {
           <Avatar name={`${c.firstName} ${c.lastName}`} size={44} src={c.photoApproved ? c.photoUrl : undefined} />
           <div className="min-w-0 flex-1">
             <div className="font-semibold truncate">{c.firstName} {c.lastName}</div>
-            <div className="text-xs text-ink-muted truncate">{c.city ?? ''} · גיל {ageFromDob(c.dateOfBirth)}</div>
+            <div className="text-xs text-ink-muted truncate">{c.city ?? ''} · גיל {age}</div>
             <div className="mt-2 flex items-center gap-2 flex-wrap">
               <StatusBadge status={c.status} />
               <Badge tone="neutral">{label('sectorGroup', c.sectorGroup)}</Badge>
@@ -217,7 +223,7 @@ function CandidateGridCard({ c }: { c: InternalCandidate }) {
       </Card>
     </Link>
   );
-}
+}, (prev, next) => prev.c._id === next.c._id);
 
 function StatusBadge({ status }: { status: string }) {
   const tone = status === 'active' ? 'success' : status === 'dating' ? 'purple' : status === 'closed' ? 'neutral' : 'warning';

@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Lock, ShieldAlert } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Textarea } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
@@ -49,22 +49,10 @@ export function BlockedCandidatesList({
     return <EmptyState title="אין חסימות להציג" description="אין מועמדים חיצוניים שהמנוע חסם עבור מועמד זה." />;
   }
 
-  // Group: force-allowed first, then force-blocked.
-  const sorted = [...rows].sort((a, b) => {
-    if (a.aggregateOverridable === b.aggregateOverridable) return 0;
-    return a.aggregateOverridable === 'with_reason' ? -1 : 1;
-  });
-
   return (
     <>
       <ul className="space-y-2">
-        {sorted.map((row) => (
-          <BlockedRow
-            key={row.externalCandidateId}
-            row={row}
-            onForce={() => setForceTarget(row)}
-          />
-        ))}
+        <BlockedRowList rows={rows} onForce={setForceTarget} />
       </ul>
 
       <ForceMatchDialog
@@ -76,12 +64,39 @@ export function BlockedCandidatesList({
   );
 }
 
-function BlockedRow({
+// Sort + render lives in its own component so the useMemo hook sits above any
+// early return in the parent (hooks rules) and rows only re-sort when they change.
+function BlockedRowList({
+  rows,
+  onForce,
+}: {
+  rows: BlockedMatchItem[];
+  onForce: (row: BlockedMatchItem) => void;
+}) {
+  // Group: force-allowed first, then force-blocked.
+  const sorted = useMemo(
+    () =>
+      [...rows].sort((a, b) => {
+        if (a.aggregateOverridable === b.aggregateOverridable) return 0;
+        return a.aggregateOverridable === 'with_reason' ? -1 : 1;
+      }),
+    [rows],
+  );
+  return (
+    <>
+      {sorted.map((row) => (
+        <BlockedRow key={row.externalCandidateId} row={row} onForce={onForce} />
+      ))}
+    </>
+  );
+}
+
+const BlockedRow = memo(function BlockedRow({
   row,
   onForce,
 }: {
   row: BlockedMatchItem;
-  onForce: () => void;
+  onForce: (row: BlockedMatchItem) => void;
 }) {
   const name = `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim() || 'ללא שם';
   const forceAllowed = row.aggregateOverridable === 'with_reason';
@@ -121,7 +136,7 @@ function BlockedRow({
             size="sm"
             variant={forceAllowed ? 'secondary' : 'subtle'}
             disabled={!forceAllowed}
-            onClick={onForce}
+            onClick={() => onForce(row)}
             title={forceAllowed
               ? 'אלץ יצירה של הצעה למרות החסימה — ידרוש נימוק ויירשם ביומן'
               : 'חסימה לא ניתנת לעקיפה'}
@@ -132,7 +147,7 @@ function BlockedRow({
       </div>
     </li>
   );
-}
+});
 
 function ForceMatchDialog({
   internalCandidateId,

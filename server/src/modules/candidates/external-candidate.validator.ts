@@ -16,6 +16,7 @@ import {
   AvailabilityStatus,
   ShareCardPhotoMode,
   AgeConfidence,
+  Region,
 } from '@shadchanai/shared';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
 
@@ -71,9 +72,11 @@ export const CreateExternalCandidateSchema = z.object({
 
   firstName: z.string().max(100).optional(),
   lastName: z.string().max(100).optional(),
+  contactPhone: z.string().max(50).optional(),
   gender: z.nativeEnum(Gender).optional(),
-  age: z.number().int().min(18).max(120).optional(),
+  age: z.number().int().min(16).max(120).optional(),
   city: z.string().max(100).optional(),
+  region: z.nativeEnum(Region).optional(),
   sectorGroup: z.nativeEnum(SectorGroup).optional(),
   subSector: z.nativeEnum(SubSector).optional(),
   lifestyleTone: z.nativeEnum(LifestyleTone).optional(),

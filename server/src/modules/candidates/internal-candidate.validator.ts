@@ -15,6 +15,9 @@ import {
   StudyWorkDirection,
   CandidateStatus,
   ClosureReason,
+  Region,
+  ChildrenPreference,
+  CareerPriority,
 } from '@shadchanai/shared';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
 
@@ -79,11 +82,21 @@ export const CreateInternalCandidateSchema = z.object({
   photoApproved: z.boolean().optional(),
 
   city: z.string().max(100).optional(),
+  region: z.nativeEnum(Region).optional(),
   neighborhood: z.string().max(100).optional(),
   originCity: z.string().max(100).optional(),
   originCountry: z.string().max(100).optional(),
   ethnicity: z.string().max(100).optional(),
+  familyBackground: z.string().max(2000).optional(),
   height: z.number().int().min(100).max(220).optional(),
+
+  characterTraits: z.array(z.string().max(60)).max(20).optional(),
+  characterNotes: z.string().max(2000).optional(),
+  lifeGoals: z.object({
+    childrenPreference: z.nativeEnum(ChildrenPreference).optional(),
+    careerPriority: z.nativeEnum(CareerPriority).optional(),
+    homeVision: z.string().max(1000).optional(),
+  }).optional(),
 
   sectorGroup: z.nativeEnum(SectorGroup),
   subSector: z.nativeEnum(SubSector).optional(),

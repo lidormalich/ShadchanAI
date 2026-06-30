@@ -13,6 +13,7 @@
 import { Types } from 'mongoose';
 import { Setting } from './setting.model.js';
 import { ValidationError } from '../../utils/errors.js';
+import { env } from '../../config/env.js';
 
 export type SettingKey =
   | 'dashboard.awaiting_response_hours'
@@ -20,16 +21,28 @@ export type SettingKey =
   | 'dashboard.deferred_min_age_hours'
   // Pre-pilot safe mode: persisted runtime gate that lives ALONGSIDE
   // the env flag ENABLE_OUTBOUND_MESSAGES. Both must be true to send.
-  | 'outbound.enabled';
+  | 'outbound.enabled'
+  // Incremental match-scan tuning. Consumed by the scan service
+  // (services/matching/match-scan.service.ts), NOT the sync engine —
+  // the engine still runs discovery mode (floor 30) and the scan
+  // applies these as an additional, operator-controlled gate.
+  | 'matching.scan_min_score'
+  | 'matching.scan_autocreate_enabled'
+  | 'matching.scan_autocreate_min_score'
+  // Which AI engine is primary. Overrides the AI_ENGINE env default at
+  // runtime; consumed by services/ai/ai.service.ts.
+  | 'ai.engine';
 
 export interface SettingDef {
   key: SettingKey;
-  type: 'number' | 'boolean';
+  type: 'number' | 'boolean' | 'enum';
   // For numbers
   min?: number;
   max?: number;
-  // Default value (number for numeric keys, boolean for boolean keys)
-  default: number | boolean;
+  // For enums: the allowed values
+  options?: string[];
+  // Default value (typed per `type`)
+  default: number | boolean | string;
   description: string;
 }
 
@@ -55,12 +68,63 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
     default: false,
     description: 'Persisted runtime kill-switch for outbound WhatsApp messages. Must be true AND ENABLE_OUTBOUND_MESSAGES env must be true to allow sending.',
   },
+  'matching.scan_min_score': {
+    key: 'matching.scan_min_score',
+    type: 'number', min: 0, max: 100, default: 30,
+    description: 'ציון מינימלי לסריקה — זוגות מתחת אליו לא נשמרים כהתאמה כשירה',
+  },
+  'matching.scan_autocreate_enabled': {
+    key: 'matching.scan_autocreate_enabled',
+    type: 'boolean',
+    default: true,
+    description: 'יצירת טיוטות הצעה אוטומטית בסריקה עבור זוגות כשירים מעל סף הציון',
+  },
+  'matching.scan_autocreate_min_score': {
+    key: 'matching.scan_autocreate_min_score',
+    type: 'number', min: 0, max: 100, default: 45,
+    description: 'ציון מינימלי ליצירת טיוטת הצעה אוטומטית בסריקה',
+  },
+  'ai.engine': {
+    key: 'ai.engine',
+    type: 'enum',
+    options: ['groq', 'openai'],
+    // The deploy-time env var is the default; this setting overrides it.
+    default: env.AI_ENGINE,
+    description: 'מנוע ה-AI הראשי: Groq (חינמי, מהיר) או OpenAI (בתשלום). המנוע השני משמש כגיבוי אוטומטי.',
+  },
 };
 
 function requireDef(key: string): SettingDef {
   const def = (SETTING_DEFS as Record<string, SettingDef | undefined>)[key];
   if (!def) throw new ValidationError(`Unknown setting key: ${key}`);
   return def;
+}
+
+// ── In-memory TTL cache ─────────────────────────────────────
+// Rarely-changing settings (e.g. dashboard thresholds) are read on
+// every dashboard load. Cache the resolved value per key for a short
+// TTL to avoid a Setting.findOne() per read. Writes invalidate the
+// affected key (see upsertSetting) so updates take effect immediately.
+const SETTING_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const settingCache = new Map<SettingKey, { value: number | boolean; expiresAt: number }>();
+
+/**
+ * Cached read of a setting's resolved value. On a cache miss (or expiry)
+ * it falls through to the existing typed getters and populates the cache.
+ * Use for hot, rarely-changing reads; for always-fresh reads call the
+ * underlying getSettingNumber / getSettingBoolean directly.
+ */
+export async function getSettingCached(key: SettingKey): Promise<number | boolean> {
+  const cached = settingCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const def = requireDef(key);
+  const value = def.type === 'number'
+    ? await getSettingNumber(key)
+    : await getSettingBoolean(key);
+
+  settingCache.set(key, { value, expiresAt: Date.now() + SETTING_CACHE_TTL_MS });
+  return value;
 }
 
 export async function getSettingNumber(key: SettingKey): Promise<number> {
@@ -83,18 +147,41 @@ export async function getSettingBoolean(key: SettingKey): Promise<boolean> {
   return row.value;
 }
 
+export async function getSettingString(key: SettingKey): Promise<string> {
+  const def = requireDef(key);
+  if (def.type !== 'enum') throw new ValidationError(`${key} is not an enum setting`);
+  const fallback = def.default as string;
+  const row = await Setting.findOne({ key }).lean().exec();
+  if (!row || typeof row.value !== 'string') return fallback;
+  if (def.options && !def.options.includes(row.value)) return fallback;
+  return row.value;
+}
+
+// String settings get their own short-TTL cache so hot reads (e.g. the AI
+// engine on every AI call) don't hit the DB each time. Writes invalidate.
+const settingStringCache = new Map<SettingKey, { value: string; expiresAt: number }>();
+
+export async function getSettingStringCached(key: SettingKey): Promise<string> {
+  const cached = settingStringCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const value = await getSettingString(key);
+  settingStringCache.set(key, { value, expiresAt: Date.now() + SETTING_CACHE_TTL_MS });
+  return value;
+}
+
 // Backward-compat: dashboard.service still calls getSetting(key) for numbers.
 export const getSetting = getSettingNumber;
 
-export async function listSettings(): Promise<Array<SettingDef & { value: number | boolean }>> {
+export async function listSettings(): Promise<Array<SettingDef & { value: number | boolean | string }>> {
   const rows = await Setting.find({ key: { $in: Object.keys(SETTING_DEFS) } }).lean().exec();
   const rowByKey = new Map(rows.map((r) => [r.key, r]));
   return Object.values(SETTING_DEFS).map((def) => {
     const row = rowByKey.get(def.key);
-    let value: number | boolean = def.default;
+    let value: number | boolean | string = def.default;
     if (row) {
       if (def.type === 'number' && typeof row.value === 'number') value = row.value;
       else if (def.type === 'boolean' && typeof row.value === 'boolean') value = row.value;
+      else if (def.type === 'enum' && typeof row.value === 'string') value = row.value;
     }
     return { ...def, value };
   });
@@ -104,15 +191,21 @@ export async function upsertSetting(
   key: string,
   rawValue: unknown,
   performedBy: string,
-): Promise<{ key: SettingKey; value: number | boolean }> {
+): Promise<{ key: SettingKey; value: number | boolean | string }> {
   const def = requireDef(key);
-  let value: number | boolean;
+  let value: number | boolean | string;
 
   if (def.type === 'boolean') {
     if (typeof rawValue === 'boolean') value = rawValue;
     else if (rawValue === 'true' || rawValue === 1) value = true;
     else if (rawValue === 'false' || rawValue === 0) value = false;
     else throw new ValidationError(`Value for ${key} must be a boolean`);
+  } else if (def.type === 'enum') {
+    const s = String(rawValue);
+    if (!def.options || !def.options.includes(s)) {
+      throw new ValidationError(`Value for ${key} must be one of: ${def.options?.join(', ') ?? ''}`);
+    }
+    value = s;
   } else {
     const n = typeof rawValue === 'number' ? rawValue : Number(rawValue);
     if (!Number.isFinite(n)) throw new ValidationError(`Value for ${key} must be a number`);
@@ -126,5 +219,9 @@ export async function upsertSetting(
     { $set: { value, updatedBy: new Types.ObjectId(performedBy) } },
     { upsert: true, new: true },
   ).exec();
+
+  // Invalidate both caches so the new value is read immediately.
+  settingCache.delete(def.key);
+  settingStringCache.delete(def.key);
   return { key: def.key, value };
 }

@@ -43,3 +43,9 @@ export const DeleteChannelSchema = z.object({
   // bad URL-param typo can't wipe the wrong channel.
   confirmChannelId: z.string().regex(/^ch_[a-f0-9]+$/i),
 });
+
+// Body for the admin force-release-lock endpoint. Reason is required
+// so the audit trail records WHY ownership was forcibly stolen.
+export const ForceReleaseLockSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});

@@ -89,13 +89,13 @@ export function TaskForm({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium mb-1">סוג</label>
-            <Select value={v.type ?? 'general'} onChange={(e) => set('type', e.target.value)}>
+            <Select value={v.type ?? 'general'} onChange={(e) => set('type', e.target.value as Values['type'])}>
               {TYPES.map((t) => <option key={t} value={t}>{label('taskType', t)}</option>)}
             </Select>
           </div>
           <div>
             <label className="block text-xs font-medium mb-1">עדיפות</label>
-            <Select value={v.priority ?? 'medium'} onChange={(e) => set('priority', e.target.value)}>
+            <Select value={v.priority ?? 'medium'} onChange={(e) => set('priority', e.target.value as Values['priority'])}>
               {PRIORITIES.map((p) => <option key={p} value={p}>{label('taskPriority', p)}</option>)}
             </Select>
           </div>

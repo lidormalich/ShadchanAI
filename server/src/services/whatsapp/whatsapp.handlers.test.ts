@@ -302,7 +302,16 @@ vi.mock('../../models/index.js', () => {
     })),
   };
 
-  return { Channel, Conversation, Message, AIRequest: {}, InternalCandidate: {}, ExternalCandidate: {}, MatchSuggestion: {}, Task: {}, Note: {}, AuditLog: {}, User: {} };
+  // ChatMapping: no explicit per-chat role overrides in these tests, so
+  // findOne resolves to null and the handler falls back to the
+  // conversation's assignedRole (the pre-mapping behavior).
+  const ChatMapping = {
+    findOne: vi.fn(() => ({
+      select: () => ({ lean: () => ({ exec: async () => null }) }),
+    })),
+  };
+
+  return { Channel, Conversation, Message, ChatMapping, AIRequest: {}, InternalCandidate: {}, ExternalCandidate: {}, MatchSuggestion: {}, Task: {}, Note: {}, AuditLog: {}, User: {} };
 });
 
 // Reset store between tests (after mocks are defined so vi.mock hoists correctly)
@@ -339,7 +348,7 @@ beforeAll(async () => {
 });
 
 function buildInboundMsg(overrides: Record<string, unknown> = {}): Parameters<MessageHandler['handleInboundMessage']>[0] {
-  return {
+  const base = {
     externalMessageId: 'wamid.test1',
     direction: 'inbound',
     providerSessionId: 'PHN_1',
@@ -351,7 +360,13 @@ function buildInboundMsg(overrides: Record<string, unknown> = {}): Parameters<Me
     body: 'shalom',
     rawPayload: { id: 'wamid.test1' },
     ...overrides,
-  } as Parameters<MessageHandler['handleInboundMessage']>[0];
+  } as Record<string, unknown>;
+  // Derive chat identity from the (possibly overridden) participant so
+  // per-participant tests stay distinct. Explicit overrides still win.
+  const phone = String(base['participantPhone'] ?? '').replace(/\D/g, '');
+  if (base['chatJid'] === undefined) base['chatJid'] = `${phone}@s.whatsapp.net`;
+  if (base['chatType'] === undefined) base['chatType'] = 'private';
+  return base as unknown as Parameters<MessageHandler['handleInboundMessage']>[0];
 }
 
 // ══════════════════════════════════════════════════════════

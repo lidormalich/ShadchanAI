@@ -1,9 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Calendar, Eye, MapPin, Share2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Calendar, Pencil, MapPin, Share2, Sparkles } from 'lucide-react';
+import { useState } from 'react';
 import { Drawer } from '@/components/ui/Drawer';
 import { Avatar, Badge, Button, Card, CardBody, Tabs } from '@/components/ui/primitives';
 import { LoadingSkeleton } from '@/components/states/states';
 import { externalCandidatesApi } from '@/services/api/candidates';
+import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
+import { CreateSuggestionDialog } from '@/features/matching/CreateSuggestionDialog';
 import { StaleBanner } from '@/components/domain/banners';
 import { label } from '@/utils/labels';
 import { NotesRail } from '@/features/notes/NotesRail';
@@ -14,6 +17,8 @@ import type { ExternalCandidate } from '@/types/domain';
 
 export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const open = id !== null;
+  const [editOpen, setEditOpen] = useState(false);
+  const [createSuggestionOpen, setCreateSuggestionOpen] = useState(false);
   const ext = useQuery({
     queryKey: ['external', id],
     queryFn: () => externalCandidatesApi.get(id!),
@@ -28,6 +33,7 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
   const c = ext.data?.data;
 
   return (
+    <>
     <Drawer
       open={open}
       onClose={onClose}
@@ -44,8 +50,8 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
               {c.staleAt && <Badge tone="warning">ישן</Badge>}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="secondary" leftIcon={<Eye className="h-4 w-4" />}>עריכה</Button>
-              <Button leftIcon={<Share2 className="h-4 w-4" />}>צור הצעת שידוך</Button>
+              <Button variant="secondary" leftIcon={<Pencil className="h-4 w-4" />} onClick={() => setEditOpen(true)}>עריכה</Button>
+              <Button leftIcon={<Share2 className="h-4 w-4" />} onClick={() => setCreateSuggestionOpen(true)}>צור הצעת שידוך</Button>
             </div>
           </div>
         )
@@ -91,6 +97,9 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
         </div>
       )}
     </Drawer>
+    <ExternalCandidateForm open={editOpen} onClose={() => setEditOpen(false)} initial={c} />
+    <CreateSuggestionDialog open={createSuggestionOpen} onClose={() => setCreateSuggestionOpen(false)} initialExternal={c} />
+    </>
   );
 }
 
@@ -98,7 +107,7 @@ function FullProfile({ c }: { c: ExternalCandidate }) {
   return (
     <div className="space-y-3">
       <Card>
-        <CardBody className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <CardBody className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
           <F label="מגזר" v={label('sectorGroup', c.sectorGroup)} />
           <F label="תת-מגזר" v={label('subSector', c.subSector)} />
           <F label="גוון דתי" v={label('lifestyleTone', c.lifestyleTone)} />

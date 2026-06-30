@@ -19,7 +19,8 @@
 
 import type { Types } from 'mongoose';
 import { ForbiddenError } from './errors.js';
-import { hasRole, type AuthUser } from '../middleware/permissions.js';
+import { hasRole } from '../middleware/permissions.js';
+import type { AuthUser } from '../middleware/auth.middleware.js';
 import { recordNotOwnerAttempt } from '../services/monitoring/metrics.service.js';
 
 export interface OwnershipAssertionOptions {
