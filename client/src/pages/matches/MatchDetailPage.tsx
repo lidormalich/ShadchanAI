@@ -345,6 +345,7 @@ export function MatchDetailPage() {
                   [internal.data.data.city, internal.data.data.region ? label('region', internal.data.data.region) : undefined].filter(Boolean).join(' · ') || undefined,
                   label('sectorGroup', internal.data.data.sectorGroup),
                   label('studyWorkDirection', internal.data.data.studyWorkDirection),
+                  internal.data.data.currentOccupation,
                   label('personalStatus', internal.data.data.personalStatus),
                 ]}
               />
@@ -384,6 +385,7 @@ export function MatchDetailPage() {
                   [external.data.data.city, external.data.data.region ? label('region', external.data.data.region) : undefined].filter(Boolean).join(' · ') || undefined,
                   label('sectorGroup', external.data.data.sectorGroup),
                   label('studyWorkDirection', external.data.data.studyWorkDirection),
+                  external.data.data.currentOccupation,
                   label('personalStatus', external.data.data.personalStatus),
                 ]}
               />

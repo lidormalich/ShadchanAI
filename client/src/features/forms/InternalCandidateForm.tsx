@@ -40,6 +40,7 @@ const CHARACTER_TRAITS = ['סבלנות', 'כבוד הדדי', 'עין טובה'
 const READINESS = ['actively_looking', 'open', 'exploring', 'not_ready', 'on_hold'];
 const LIFE_STAGE = ['post_high_school', 'national_service', 'army', 'yeshiva_seminary', 'early_studies', 'mid_studies', 'early_career', 'established_career', 'mature'];
 const PERSONAL_STATUS = ['single', 'divorced', 'widowed', 'separated'];
+const SECOND_CHAPTER_STATUSES = ['divorced', 'separated', 'widowed'];
 const STUDY_WORK = ['full_time_torah', 'torah_with_work', 'academic_studies', 'professional_training', 'working', 'military_career', 'entrepreneurial', 'hesder', 'mechina_army', 'sherut_leumi', 'undecided'];
 
 export function InternalCandidateForm({
@@ -239,8 +240,55 @@ export function InternalCandidateForm({
           <Row label="שם ממליץ"><Input value={v.referenceName ?? ''} onChange={(e) => set('referenceName', e.target.value)} /></Row>
           <Row label="טלפון ממליץ"><Input value={v.referencePhone ?? ''} onChange={(e) => set('referencePhone', e.target.value)} /></Row>
         </Section>
+
+        <Section title="העדפות">
+          <Row label="טווח גיל מבוקש — מ">
+            <Input
+              type="number"
+              value={v.agePreferences?.min ?? ''}
+              onChange={(e) => set('agePreferences', { ...(v.agePreferences ?? {}), min: e.target.value ? Number(e.target.value) : undefined })}
+            />
+          </Row>
+          <Row label="טווח גיל מבוקש — עד">
+            <Input
+              type="number"
+              value={v.agePreferences?.max ?? ''}
+              onChange={(e) => set('agePreferences', { ...(v.agePreferences ?? {}), max: e.target.value ? Number(e.target.value) : undefined })}
+            />
+          </Row>
+          <OpennessRow v={v} set={set as unknown as (k: string, val: unknown) => void} flag="openToOtherSectors" label="פתוח למגזרים אחרים" />
+          <OpennessRow v={v} set={set as unknown as (k: string, val: unknown) => void} flag="openToDivorced" label="פתוח לגרוש/ה" />
+          <OpennessRow v={v} set={set as unknown as (k: string, val: unknown) => void} flag="openToWithChildren" label="פתוח למועמד עם ילדים" />
+          <OpennessRow v={v} set={set as unknown as (k: string, val: unknown) => void} flag="openToAgeDifference" label="פתוח לפערי גיל" />
+          <OpennessRow v={v} set={set as unknown as (k: string, val: unknown) => void} flag="openToLongDistance" label="פתוח למרחק גיאוגרפי" />
+        </Section>
       </div>
     </Drawer>
+  );
+}
+
+// Tri-state openness toggle (לא ידוע / כן / לא) — identical to the one in
+// ExternalCandidateForm; both forms edit the same openness shape.
+function OpennessRow({
+  v, set, flag, label,
+}: {
+  v: Record<string, unknown>;
+  set: (k: string, val: unknown) => void;
+  flag: string;
+  label: string;
+}) {
+  const openness = (v['openness'] as Record<string, boolean | undefined> | undefined) ?? {};
+  const current = openness[flag];
+  const next = (val: boolean | undefined) => set('openness', { ...openness, [flag]: val });
+  return (
+    <div className="col-span-2 flex items-center justify-between gap-3 py-1">
+      <span className="text-sm text-ink-muted">{label}</span>
+      <div className="flex gap-1 p-0.5 rounded-md bg-bg-subtle border border-border text-xs">
+        <button type="button" onClick={() => next(undefined)} className={`px-2 py-1 rounded ${current === undefined ? 'bg-white shadow-sm font-medium' : 'text-ink-muted'}`}>לא ידוע</button>
+        <button type="button" onClick={() => next(true)} className={`px-2 py-1 rounded ${current === true ? 'bg-white shadow-sm font-medium text-success' : 'text-ink-muted'}`}>כן</button>
+        <button type="button" onClick={() => next(false)} className={`px-2 py-1 rounded ${current === false ? 'bg-white shadow-sm font-medium text-danger' : 'text-ink-muted'}`}>לא</button>
+      </div>
+    </div>
   );
 }
 
@@ -321,6 +369,13 @@ function mergeExtraction(p: ProfileExtraction): { filled: Values; notes: string[
   if (p.openToWithChildren !== undefined) openness.openToWithChildren = p.openToWithChildren;
   if (p.openToAgeDifference !== undefined) openness.openToAgeDifference = p.openToAgeDifference;
   if (p.openToLongDistance !== undefined) openness.openToLongDistance = p.openToLongDistance;
+  // A second-chapter candidate (divorced/separated/widowed) is, by default,
+  // open to a divorcee — otherwise the engine blocks the very common
+  // second-chapter↔second-chapter pair. Defaulted only when not stated.
+  if (SECOND_CHAPTER_STATUSES.includes(p.personalStatus ?? '') && p.openToDivorced === undefined) {
+    openness.openToDivorced = true;
+    notes.push('המועמד/ת בפרק ב׳ — סומן אוטומטית "פתוח/ה לגרוש/ה". שנה במידת הצורך.');
+  }
   if (Object.keys(openness).length > 0) filled.openness = openness;
 
   if (p.confidence < 0.5) notes.push(`רמת ביטחון נמוכה (${Math.round(p.confidence * 100)}%) — בדוק היטב.`);

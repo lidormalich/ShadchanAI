@@ -8,8 +8,10 @@ import {
   SectorGroup,
   SubSector,
   LifestyleTone,
+  ReligiousStyle,
   PersonalStatus,
   LifeStage,
+  ReadinessForMarriage,
   StudyWorkDirection,
   ExternalCandidateStatus,
   ExternalSourceType,
@@ -17,6 +19,8 @@ import {
   ShareCardPhotoMode,
   AgeConfidence,
   Region,
+  ChildrenPreference,
+  CareerPriority,
 } from '@shadchanai/shared';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
 
@@ -72,20 +76,53 @@ export const CreateExternalCandidateSchema = z.object({
 
   firstName: z.string().max(100).optional(),
   lastName: z.string().max(100).optional(),
+  hebrewName: z.string().max(100).optional(),
+  fatherName: z.string().max(100).optional(),
+  motherName: z.string().max(100).optional(),
+  email: z.string().email().max(200).optional(),
   contactPhone: z.string().max(50).optional(),
   gender: z.nativeEnum(Gender).optional(),
   age: z.number().int().min(16).max(120).optional(),
+
   city: z.string().max(100).optional(),
   region: z.nativeEnum(Region).optional(),
+  neighborhood: z.string().max(100).optional(),
+  originCity: z.string().max(100).optional(),
+  originCountry: z.string().max(100).optional(),
+  ethnicity: z.string().max(100).optional(),
+  familyBackground: z.string().max(2000).optional(),
+  height: z.number().int().min(100).max(220).optional(),
+
   sectorGroup: z.nativeEnum(SectorGroup).optional(),
   subSector: z.nativeEnum(SubSector).optional(),
   lifestyleTone: z.nativeEnum(LifestyleTone).optional(),
+  religiousStyle: z.nativeEnum(ReligiousStyle).optional(),
+
   personalStatus: z.nativeEnum(PersonalStatus).optional(),
+  numberOfChildren: z.number().int().min(0).optional(),
   lifeStage: z.nativeEnum(LifeStage).optional(),
+  readinessForMarriage: z.nativeEnum(ReadinessForMarriage).optional(),
+
   studyWorkDirection: z.nativeEnum(StudyWorkDirection).optional(),
-  height: z.number().int().min(100).max(220).optional(),
+  currentOccupation: z.string().max(200).optional(),
+  educationLevel: z.string().max(200).optional(),
+  educationInstitution: z.string().max(200).optional(),
+  torahStudyYears: z.number().int().min(0).max(60).optional(),
+  armyService: z.string().max(200).optional(),
+
+  characterTraits: z.array(z.string().max(60)).max(20).optional(),
+  characterNotes: z.string().max(2000).optional(),
+  lifeGoals: z.object({
+    childrenPreference: z.nativeEnum(ChildrenPreference).optional(),
+    careerPriority: z.nativeEnum(CareerPriority).optional(),
+    homeVision: z.string().max(1000).optional(),
+  }).optional(),
+
   about: z.string().max(2000).optional(),
   whatSeeking: z.string().max(2000).optional(),
+  additionalInfo: z.string().max(2000).optional(),
+  referenceName: z.string().max(200).optional(),
+  referencePhone: z.string().max(30).optional(),
   photoUrl: z.string().url().optional(),
 
   sharePhoto: z.boolean().default(false),

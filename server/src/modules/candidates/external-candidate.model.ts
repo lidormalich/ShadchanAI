@@ -4,8 +4,10 @@ import {
   SectorGroup,
   SubSector,
   LifestyleTone,
+  ReligiousStyle,
   PersonalStatus,
   LifeStage,
+  ReadinessForMarriage,
   StudyWorkDirection,
   ExternalCandidateStatus,
   ExternalSourceType,
@@ -13,6 +15,8 @@ import {
   ShareCardPhotoMode,
   AgeConfidence,
   Region,
+  ChildrenPreference,
+  CareerPriority,
 } from '@shadchanai/shared';
 
 // ── Sub-schemas ───────────────────────────────────────────
@@ -110,21 +114,67 @@ export interface IExternalCandidate extends Document {
   sourceMessageIds?: Types.ObjectId[];
 
   // profile data (may be partial — comes from external sources)
+  // NOTE: external mirrors the internal candidate's PROFILE field set —
+  // same profile, different source. Only age (vs DOB) and the source/
+  // availability/sharing metadata are external-specific.
   firstName?: string;
   lastName?: string;
+  hebrewName?: string;
+  fatherName?: string;
+  motherName?: string;
+  email?: string;
   gender?: Gender;
   age?: number;
+
+  // demographics
   city?: string;
   region?: Region;
+  neighborhood?: string;
+  originCity?: string;
+  originCountry?: string;
+  ethnicity?: string;
+  familyBackground?: string;
+  height?: number;
+
+  // religious identity
   sectorGroup?: SectorGroup;
   subSector?: SubSector;
   lifestyleTone?: LifestyleTone;
+  religiousStyle?: ReligiousStyle;
+
+  // personal
   personalStatus?: PersonalStatus;
+  numberOfChildren?: number;
   lifeStage?: LifeStage;
+  readinessForMarriage?: ReadinessForMarriage;
+
+  // study / work
   studyWorkDirection?: StudyWorkDirection;
-  height?: number;
+  // What they currently do (free text — "מהנדס תוכנה" / "לומד בישיבת X").
+  // Informational only, never scored. Extracted from the card or typed.
+  currentOccupation?: string;
+  educationLevel?: string;
+  educationInstitution?: string;
+  torahStudyYears?: number;
+  armyService?: string;
+
+  // character / middot (informational, not scored)
+  characterTraits?: string[];
+  characterNotes?: string;
+
+  // shared goals (informational + feeds mutual_expectations scoring)
+  lifeGoals?: {
+    childrenPreference?: ChildrenPreference;
+    careerPriority?: CareerPriority;
+    homeVision?: string;
+  };
+
+  // free text
   about?: string;
   whatSeeking?: string;
+  additionalInfo?: string;
+  referenceName?: string;
+  referencePhone?: string;
   photoUrl?: string;
 
   // sharing permissions
@@ -255,25 +305,68 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     contactPhoneNormalized: { type: String, trim: true, index: true, sparse: true },
     sourceMessageIds: [{ type: Schema.Types.ObjectId, ref: 'Message' }],
 
-    // ── Profile data (may be partial) ─────────────────────
+    // ── Profile data (may be partial) — mirrors internal profile ──
     firstName: { type: String, trim: true },
     lastName: { type: String, trim: true },
+    hebrewName: { type: String, trim: true },
+    fatherName: { type: String, trim: true },
+    motherName: { type: String, trim: true },
+    email: { type: String, trim: true, lowercase: true },
     gender: { type: String, enum: Object.values(Gender) },
     age: { type: Number, min: 16, max: 120 },
+
+    // demographics
     city: { type: String, trim: true },
     region: { type: String, enum: Object.values(Region) },
+    neighborhood: { type: String, trim: true },
+    originCity: { type: String, trim: true },
+    originCountry: { type: String, trim: true },
+    ethnicity: { type: String, trim: true },
+    familyBackground: { type: String, maxlength: 2000 },
+    height: { type: Number, min: 100, max: 220 },
+
+    // religious identity
     sectorGroup: { type: String, enum: Object.values(SectorGroup) },
     subSector: { type: String, enum: Object.values(SubSector) },
     lifestyleTone: { type: String, enum: Object.values(LifestyleTone) },
+    religiousStyle: { type: String, enum: Object.values(ReligiousStyle) },
+
+    // personal
     personalStatus: { type: String, enum: Object.values(PersonalStatus) },
+    numberOfChildren: { type: Number, min: 0 },
     lifeStage: { type: String, enum: Object.values(LifeStage) },
+    readinessForMarriage: { type: String, enum: Object.values(ReadinessForMarriage) },
+
+    // study / work
     studyWorkDirection: {
       type: String,
       enum: Object.values(StudyWorkDirection),
     },
-    height: { type: Number, min: 100, max: 220 },
+    currentOccupation: { type: String, trim: true, maxlength: 200 },
+    educationLevel: { type: String, trim: true },
+    educationInstitution: { type: String, trim: true },
+    torahStudyYears: { type: Number, min: 0 },
+    armyService: { type: String, trim: true },
+
+    // character / middot (informational)
+    characterTraits: { type: [String], default: undefined },
+    characterNotes: { type: String, maxlength: 2000 },
+
+    // shared goals (informational + scored)
+    lifeGoals: {
+      type: new Schema({
+        childrenPreference: { type: String, enum: Object.values(ChildrenPreference) },
+        careerPriority: { type: String, enum: Object.values(CareerPriority) },
+        homeVision: { type: String, maxlength: 1000 },
+      }, { _id: false }),
+    },
+
+    // free text
     about: { type: String, maxlength: 2000 },
     whatSeeking: { type: String, maxlength: 2000 },
+    additionalInfo: { type: String, maxlength: 2000 },
+    referenceName: { type: String, trim: true },
+    referencePhone: { type: String, trim: true },
     photoUrl: { type: String },
 
     // ── Preferences (optional — bidirectional matching) ───
