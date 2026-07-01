@@ -161,6 +161,23 @@ const envSchema = z.object({
   // ── WhatsApp reconnect circuit ───────────────────────
   WA_RECONNECT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(10),
 
+  // ── WhatsApp connection watchdog ─────────────────────
+  // Self-heal for sessions that dropped and did NOT recover on their own —
+  // primarily channels whose reconnect circuit tripped open (SUSPENDED with
+  // statusReason 'reconnect_circuit_open') or that are missing a live client
+  // after a restart. Periodically resets the circuit and reconnects them.
+  // This is "keep it connected", NOT "cycle the connection". Single-instance
+  // only (same constraint as WA_AUTO_START_SESSIONS).
+  WA_WATCHDOG_ENABLED: booleanString(true),
+  WA_WATCHDOG_INTERVAL_MS: z.coerce.number().int().positive().default(120_000),
+
+  // ── WhatsApp history sync on link ────────────────────
+  // When true, Baileys asks WhatsApp to push the device's fuller message
+  // history on (re)connect — these arrive via messaging-history.set and
+  // flow through the normal ingestion gate. Default false keeps storage
+  // lean; flip to true (and RE-PAIR) to backfill existing group history.
+  WA_SYNC_FULL_HISTORY: booleanString(false),
+
   // ── PRE-PILOT SAFE MODE ──────────────────────────────
   // Master kill-switch for ANY real WhatsApp outbound.
   //   false (default) → every send is rejected before the socket is touched.

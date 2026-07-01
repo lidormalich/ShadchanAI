@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "seed:admin": "tsx src/scripts/seed-admin.ts",
+    "wa:diagnose": "tsx src/scripts/wa-diagnose.ts",
+    "wa:rehome": "tsx src/scripts/rehome-orphaned-channels.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
