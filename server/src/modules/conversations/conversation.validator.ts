@@ -11,6 +11,10 @@ export const ListConversationsQuerySchema = PaginationQuerySchema.extend({
   purpose: z.nativeEnum(ConversationPurpose).optional(),
   needsAction: optionalBooleanString(),
   hasUnread: optionalBooleanString(),
+  // true → only conversations where the system actually sent a message
+  // (lastOutboundAt set). Used by the chat inbox to show "proposals that
+  // were sent" rather than every conversation that merely exists.
+  hasOutbound: optionalBooleanString(),
   internalCandidateId: ObjectIdString.optional(),
   externalCandidateId: ObjectIdString.optional(),
   matchSuggestionId: ObjectIdString.optional(),

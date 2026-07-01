@@ -26,13 +26,20 @@ const cacheStore = new Map<string, CacheEntry<unknown>>();
 const MAX_ENTRIES = 1000;
 
 /**
+ * Cache-key version. Bump this whenever a prompt change alters the EXPECTED
+ * output (e.g. enforcing Hebrew) so previously cached results are bypassed
+ * instead of being served stale. v2 = Hebrew-only natural-language outputs.
+ */
+const CACHE_VERSION = 'v2';
+
+/**
  * Produce a stable SHA-256 hash key for a given request type + input.
  * Input is JSON-stringified with sorted keys for determinism.
  */
 export function hashKey(requestType: string, input: unknown): string {
   const normalized = JSON.stringify(input, Object.keys(input ?? {}).sort());
   return crypto.createHash('sha256')
-    .update(`${requestType}::${normalized}`)
+    .update(`${CACHE_VERSION}::${requestType}::${normalized}`)
     .digest('hex');
 }
 

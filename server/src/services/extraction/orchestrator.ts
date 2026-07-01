@@ -36,6 +36,13 @@ import { findExistingCandidate, type MatchResult } from './candidate.matcher.js'
 import { extractProfileWithAI, type AIExtractedProfile } from './ai.extractor.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
 import { normalizePhone } from '../../utils/phone.js';
+import { createLogger } from '../../utils/logger.js';
+
+// End-to-end flow logger. Every message's journey through the engine emits
+// one line per stage under the 'extraction.flow' scope, keyed by messageId,
+// so a single grep reveals exactly where a message stopped (and why).
+const flow = createLogger('extraction.flow');
+const preview = (s: string): string => s.replace(/\s+/g, ' ').slice(0, 60);
 
 // Threshold tuning. Moved here rather than into env so the decisions
 // live next to the logic that makes them. Revisit after ~100 messages
@@ -70,7 +77,12 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   // image-with-caption profile ("שדכנים — שרה בת 24…" with photo)
   // was previously silently ignored; now we extract from the caption.
   const effectiveText = (message.body?.trim() || message.mediaCaption?.trim() || '');
+  flow.info(
+    { messageId, contentType: message.contentType, textLen: effectiveText.length, preview: preview(effectiveText) },
+    'flow_start',
+  );
   if (!effectiveText) {
+    flow.info({ messageId, contentType: message.contentType }, 'flow_stop: no_text (media without caption)');
     return finalize(message, {
       status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
       method: ExtractionMethod.REGEX,
@@ -82,8 +94,21 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 
   // ── 1. Regex pre-parse ─────────────────────────────────
   const regex = extractProfileFromText(effectiveText);
+  flow.info(
+    {
+      messageId,
+      regexConfidence: regex.confidence,
+      isTemplateForm: regex.isTemplateForm,
+      isLikelyProfile: regex.isLikelyProfile,
+      hasName: !!regex.profile.firstName,
+      hasPhone: !!regex.profile.contactPhones?.length,
+      fields: regex.matchedFields,
+    },
+    'regex_parsed',
+  );
 
   if (regex.isTemplateForm) {
+    flow.info({ messageId }, 'flow_stop: skipped_template (looks like a blank template/form)');
     return finalize(message, {
       status: MessageExtractionStatus.SKIPPED_TEMPLATE,
       method: ExtractionMethod.REGEX,
@@ -98,8 +123,10 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   let method: ExtractionMethod = ExtractionMethod.REGEX;
 
   let match = await findExistingCandidate(profile);
+  flow.info({ messageId, matchStrength: match.strength }, 'regex_match_lookup');
   if (match.strength === 'exact' || (match.strength === 'strong' && regex.confidence >= 0.5)) {
     const updated = await linkToExisting(match.candidate!, message);
+    flow.info({ messageId, candidateId: String(updated._id) }, 'flow_stop: matched_existing (linked, no new profile)');
     return finalize(message, {
       status: MessageExtractionStatus.MATCHED_EXISTING,
       method,
@@ -118,10 +145,15 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
     regex.isLikelyProfile &&
     !!profile.firstName;
 
-  if (!regexSufficient) {
+  if (regexSufficient) {
+    flow.info({ messageId }, 'ai_skipped (regex confident + has name)');
+  } else {
+    flow.info({ messageId }, 'ai_calling');
     try {
       const ai = await extractProfileWithAI(effectiveText, { messageId: String(message._id) });
+      flow.info({ messageId, isProfile: ai.profile.isProfile, aiConfidence: ai.profile.confidence }, 'ai_result');
       if (!ai.profile.isProfile) {
+        flow.info({ messageId }, 'flow_stop: skipped_not_profile (AI says not a profile)');
         return finalize(message, {
           status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
           method: ExtractionMethod.AI,
@@ -138,6 +170,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       match = await findExistingCandidate(profile);
       if (match.strength === 'exact' || match.strength === 'strong') {
         const updated = await linkToExisting(match.candidate!, message);
+        flow.info({ messageId, candidateId: String(updated._id) }, 'flow_stop: matched_existing (after AI)');
         return finalize(message, {
           status: MessageExtractionStatus.MATCHED_EXISTING,
           method,
@@ -151,7 +184,12 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       // AI failed — if regex gave us SOMETHING usable, proceed with it,
       // marked as needs_review. If not, bubble the failure for the
       // reconciler to retry.
+      flow.warn(
+        { messageId, error: (err as Error).message, fallback: regex.isLikelyProfile ? 'regex' : 'none' },
+        'ai_failed',
+      );
       if (!regex.isLikelyProfile) {
+        flow.warn({ messageId }, 'flow_stop: failed (AI unavailable + regex not a likely profile) — will retry via reconciler');
         return finalize(message, {
           status: MessageExtractionStatus.FAILED,
           method: ExtractionMethod.AI,
@@ -167,6 +205,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   // ── 4. Nothing matched → create or queue for review ───
   if (!profile.firstName && !profile.contactPhones?.length) {
     // No key identifier → can't safely create. Mark for human review.
+    flow.info({ messageId, confidence: combinedConfidence }, 'flow_stop: needs_review (no name or phone extracted → profile request)');
     return finalize(message, {
       status: MessageExtractionStatus.NEEDS_REVIEW,
       method,
@@ -178,6 +217,10 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 
   const autoCreate = combinedConfidence >= AI_CONFIDENCE_AUTO_CREATE;
   if (!autoCreate) {
+    flow.info(
+      { messageId, confidence: combinedConfidence, threshold: AI_CONFIDENCE_AUTO_CREATE },
+      'flow_stop: needs_review (confidence below auto-create threshold → profile request)',
+    );
     return finalize(message, {
       status: MessageExtractionStatus.NEEDS_REVIEW,
       method,
@@ -187,6 +230,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   }
 
   const created = await createFromProfile(profile, message);
+  flow.info({ messageId, candidateId: String(created._id), confidence: combinedConfidence }, 'flow_stop: created_new (profile created)');
   return finalize(message, {
     status: MessageExtractionStatus.CREATED_NEW,
     method,

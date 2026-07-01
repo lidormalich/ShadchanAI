@@ -42,6 +42,12 @@ OUTPUT FORMAT:
 - Return a single JSON object matching the schema described below.
 - Do not wrap the JSON in code fences, commentary, or headers.
 - Do not include trailing text.
+
+LANGUAGE (CRITICAL): Write EVERY natural-language field in Hebrew, regardless of
+the language of the input data. This includes summaries, reasons, strengths,
+concerns, recommended actions, warnings, and any free text. NEVER output English
+prose. Enum/code fields (ISO language codes, sentiment/urgency enums, intent
+labels) stay exactly as specified in the schema.
 `.trim();
 
 // ── explainMatch ─────────────────────────────────────────
@@ -68,8 +74,6 @@ Context: The engine already scored this pair using 8 dimensions
 life-stage, flexibility) and classified it as ${input.matchType}.
 Your job is to translate the structured signals into a short,
 respectful narrative — NOT to re-score or override the engine.
-
-LANGUAGE: Write ALL natural-language fields in Hebrew.
 
 notMatchReasons RULES (this is the "למה לא מתאים" array):
 - This pair is ${eligible ? 'ELIGIBLE but may still be weak' : 'INELIGIBLE (hard-blocked)'}.
@@ -131,6 +135,10 @@ send happens. You never send anything.
 Tone: ${input.tone}
 Language: ${input.language} (${input.language === 'he' ? 'Hebrew' : 'English'})
 Purpose: ${input.purpose}
+
+LANGUAGE EXCEPTION (overrides the core Hebrew rule): write the 'message' field
+in the requested language above (${input.language}). ALL other fields
+(reviewFlags, tone, language echo) stay in Hebrew.
 
 Respect religious community conventions:
 - Use appropriate greetings/blessings where culturally expected

@@ -56,6 +56,7 @@ export async function enqueueExtraction(messageId: string): Promise<void> {
   }
 
   queue.push(messageId);
+  log.info({ messageId, queued: queue.length, inFlight: inFlight.size }, 'extraction_enqueued');
   drain();
 }
 

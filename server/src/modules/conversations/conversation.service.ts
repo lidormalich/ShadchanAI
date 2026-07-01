@@ -34,6 +34,7 @@ export async function listConversations(
   if (query.purpose) filter['purpose'] = query.purpose;
   if (query.needsAction !== undefined) filter['needsAction'] = query.needsAction;
   if (query.hasUnread) filter['unreadCount'] = { $gt: 0 };
+  if (query.hasOutbound) filter['lastOutboundAt'] = { $exists: true };
   if (query.internalCandidateId) filter['internalCandidateId'] = new Types.ObjectId(query.internalCandidateId);
   if (query.externalCandidateId) filter['externalCandidateId'] = new Types.ObjectId(query.externalCandidateId);
   if (query.matchSuggestionId) filter['matchSuggestionId'] = new Types.ObjectId(query.matchSuggestionId);

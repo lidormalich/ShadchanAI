@@ -201,6 +201,14 @@ export async function executeWithFallback<T>(
     } catch (e) {
       lastError = `Fallback request failed: ${(e as Error).message}`;
     }
+  } else if (result === undefined) {
+    // Primary failed and there's no usable fallback — surface this loudly,
+    // otherwise a Groq rate-limit (429) silently sinks every extraction with
+    // no second chance. This is the "processed but nothing created" symptom.
+    log.warn(
+      { primary: primaryProvider.name, secondaryConfigured: secondaryProvider.isAvailable(), reason: lastError },
+      'AI primary failed and no fallback available',
+    );
   }
 
   const latencyMs = Date.now() - started;
@@ -421,10 +429,10 @@ export async function askAI(
       summaryMetadata = summary.metadata;
     } catch (e) {
       // If summarization fails, we still return the deterministic tool results.
-      warnings.push(`Summary generation failed: ${(e as Error).message}`);
+      warnings.push(`יצירת הסיכום נכשלה: ${(e as Error).message}`);
     }
   } else {
-    reasoningSummary = 'No results found. Consider broadening the query or checking the candidate id.';
+    reasoningSummary = 'לא נמצאו תוצאות. כדאי להרחיב את השאלה או לבדוק את מזהה הכרטיס.';
   }
 
   const output: AskAIOutput = {
@@ -467,7 +475,7 @@ async function dispatchTool(
   switch (intent) {
     case 'find_matching_candidates': {
       if (!filters['candidateId']) {
-        warnings.push('find_matching_candidates requires a candidateId — none extracted from query');
+        warnings.push('חיפוש התאמות דורש מזהה כרטיס — לא זוהה מזהה בשאלה.');
         return { results: [], appliedFilters: applied, warnings };
       }
       const result = await tools.getMatchingCandidatesTool({
@@ -483,7 +491,7 @@ async function dispatchTool(
         },
       });
       if (!result.internalFound) {
-        warnings.push(`Internal candidate ${filters['candidateId']} not found`);
+        warnings.push(`כרטיס פנימי ${filters['candidateId']} לא נמצא.`);
       }
       return { results: result.results, appliedFilters: applied, warnings };
     }
@@ -517,7 +525,7 @@ async function dispatchTool(
 
     case 'find_similar_candidates': {
       if (!filters['candidateId']) {
-        warnings.push('find_similar_candidates requires a candidateId — none extracted from query');
+        warnings.push('חיפוש כרטיסים דומים דורש מזהה כרטיס — לא זוהה מזהה בשאלה.');
         return { results: [], appliedFilters: applied, warnings };
       }
       const results = await tools.getSimilarCandidatesTool({
@@ -538,7 +546,7 @@ async function dispatchTool(
 
     case 'summarize_candidate': {
       if (!filters['candidateId']) {
-        warnings.push('summarize_candidate requires a candidateId — none extracted from query');
+        warnings.push('סיכום כרטיס דורש מזהה כרטיס — לא זוהה מזהה בשאלה.');
         return { results: [], appliedFilters: applied, warnings };
       }
       const candidate = await tools.summarizeCandidateTool({
@@ -546,7 +554,7 @@ async function dispatchTool(
         scope: 'internal',
       });
       if (!candidate) {
-        warnings.push(`Candidate ${filters['candidateId']} not found`);
+        warnings.push(`כרטיס ${filters['candidateId']} לא נמצא.`);
         return { results: [], appliedFilters: applied, warnings };
       }
       return { results: [candidate], appliedFilters: applied, warnings };
@@ -554,7 +562,7 @@ async function dispatchTool(
 
     case 'unknown':
     default:
-      warnings.push('Query intent could not be determined. Try rephrasing or providing a candidate id.');
+      warnings.push('לא ניתן היה לזהות את כוונת השאלה. נסה לנסח מחדש או לספק מזהה כרטיס.');
       return { results: [], appliedFilters: applied, warnings };
   }
 }
