@@ -19,8 +19,14 @@ const InternalCandidateDetailPage = lazy(() =>
 const ExternalCandidatesListPage = lazy(() =>
   import('./pages/candidates/ExternalCandidatesListPage').then((m) => ({ default: m.ExternalCandidatesListPage })),
 );
+const ExternalCandidateDetailPage = lazy(() =>
+  import('./pages/candidates/ExternalCandidateDetailPage').then((m) => ({ default: m.ExternalCandidateDetailPage })),
+);
 const MatchesPipelinePage = lazy(() =>
   import('./pages/matches/MatchesPipelinePage').then((m) => ({ default: m.MatchesPipelinePage })),
+);
+const ProposalInboxPage = lazy(() =>
+  import('./pages/inbox/ProposalInboxPage').then((m) => ({ default: m.ProposalInboxPage })),
 );
 const MatchDetailPage = lazy(() =>
   import('./pages/matches/MatchDetailPage').then((m) => ({ default: m.MatchDetailPage })),
@@ -29,6 +35,9 @@ const ChatsPage = lazy(() => import('./pages/chats/ChatsPage').then((m) => ({ de
 const ChannelsPage = lazy(() => import('./pages/channels/ChannelsPage').then((m) => ({ default: m.ChannelsPage })));
 const ChannelMappingsPage = lazy(() =>
   import('./pages/channels/ChannelMappingsPage').then((m) => ({ default: m.ChannelMappingsPage })),
+);
+const PendingChannelsPage = lazy(() =>
+  import('./pages/channels/PendingChannelsPage').then((m) => ({ default: m.PendingChannelsPage })),
 );
 const ReviewQueuePage = lazy(() =>
   import('./pages/review/ReviewQueuePage').then((m) => ({ default: m.ReviewQueuePage })),
@@ -87,11 +96,14 @@ const appChildren = [
   { path: 'candidates/internal', element: lazyPage(<InternalCandidatesListPage />) },
   { path: 'candidates/internal/:id', element: lazyPage(<InternalCandidateDetailPage />) },
   { path: 'candidates/external', element: lazyPage(<ExternalCandidatesListPage />) },
+  { path: 'candidates/external/:id', element: lazyPage(<ExternalCandidateDetailPage />) },
+  { path: 'inbox', element: lazyPage(<ProposalInboxPage />) },
   { path: 'matches', element: lazyPage(<MatchesPipelinePage />) },
   { path: 'matches/:id', element: lazyPage(<MatchDetailPage />) },
   { path: 'chats', element: lazyPage(<ChatsPage />) },
   { path: 'channels', element: lazyPage(<ChannelsPage />) },
   { path: 'channels/mappings', element: lazyPage(<ChannelMappingsPage />) },
+  { path: 'channels/pending', element: lazyPage(<PendingChannelsPage />) },
   { path: 'review', element: lazyPage(<ReviewQueuePage />) },
   { path: 'tasks', element: lazyPage(<TasksPage />) },
   { path: 'insights', element: lazyPage(<InsightsPage />) },

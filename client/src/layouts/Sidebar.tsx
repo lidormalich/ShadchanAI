@@ -1,10 +1,13 @@
 import { clsx } from 'clsx';
+import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
   ClipboardList,
   Heart,
+  Hourglass,
   Inbox,
   LayoutDashboard,
+  MailOpen,
   MessageCircle,
   MessageSquare,
   Settings,
@@ -13,10 +16,12 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
+import { matchesApi } from '@/services/api/matches';
+import { Badge } from '@/components/ui/primitives';
 
 interface NavGroup {
   title?: string;
-  items: Array<{ to: string; label: string; icon: ReactNode; end?: boolean }>;
+  items: Array<{ to: string; label: string; icon: ReactNode; end?: boolean; badge?: 'inbox' }>;
 }
 
 const NAV: NavGroup[] = [
@@ -35,6 +40,7 @@ const NAV: NavGroup[] = [
   {
     title: 'שידוך',
     items: [
+      { to: '/inbox', label: 'תיבת ההצעות', icon: <MailOpen className="h-4 w-4" />, badge: 'inbox' },
       { to: '/matches', label: 'הצעות שידוך', icon: <Heart className="h-4 w-4" /> },
       { to: '/chats', label: 'שיחות', icon: <MessageSquare className="h-4 w-4" /> },
       { to: '/review', label: 'תור סקירת פרופילים', icon: <Inbox className="h-4 w-4" /> },
@@ -44,12 +50,25 @@ const NAV: NavGroup[] = [
     title: 'תפעול',
     items: [
       { to: '/tasks', label: 'משימות ומעקב', icon: <ClipboardList className="h-4 w-4" /> },
-      { to: '/channels', label: 'ערוצי WhatsApp', icon: <MessageCircle className="h-4 w-4" /> },
+      { to: '/channels', label: 'ערוצי WhatsApp', icon: <MessageCircle className="h-4 w-4" />, end: true },
+      { to: '/channels/pending', label: 'ערוצים בהמתנה', icon: <Hourglass className="h-4 w-4" /> },
       { to: '/insights', label: 'תובנות', icon: <BarChart3 className="h-4 w-4" /> },
       { to: '/settings', label: 'הגדרות', icon: <Settings className="h-4 w-4" /> },
     ],
   },
 ];
+
+// Live count of proposals awaiting a decision, shown beside the
+// "תיבת ההצעות" nav item so pending work is visible from anywhere.
+function InboxCountBadge() {
+  const { data } = useQuery({
+    queryKey: ['scan-results', 'inbox', { direction: '', minScore: '' }],
+    queryFn: () => matchesApi.scanResults({ view: 'inbox', eligibleOnly: true, limit: 200 }),
+  });
+  const count = data?.data.length ?? 0;
+  if (count === 0) return null;
+  return <Badge tone="brand">{count}</Badge>;
+}
 
 export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void } = {}) {
   return (
@@ -105,7 +124,8 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
                       }
                     >
                       {item.icon}
-                      <span>{item.label}</span>
+                      <span className="flex-1">{item.label}</span>
+                      {item.badge === 'inbox' && <InboxCountBadge />}
                     </NavLink>
                   </li>
                 ))}
