@@ -6,12 +6,14 @@
 // of each job.run() function won't need to change.
 // ═══════════════════════════════════════════════════════════
 
-import { ChannelRole, MessageDirection, MessageExtractionStatus } from '@shadchanai/shared';
+import { ChannelRole, MessageDirection, MessageExtractionStatus, MessageIngestionDecision } from '@shadchanai/shared';
 import { ExternalCandidate, Message } from '../../models/index.js';
 import { registerJob } from './job.scheduler.js';
 import { enqueueExtraction } from '../extraction/queue.js';
 import { runScanNow } from '../matching/match-scan.service.js';
 import { replayFailedInboundMessages } from '../whatsapp/message.handler.js';
+import { runConnectionWatchdog } from '../whatsapp/connection.watchdog.js';
+import { env } from '../../config/env.js';
 import { createLogger } from '../../utils/logger.js';
 
 const log = createLogger('job');
@@ -87,7 +89,23 @@ registerJob({
           // $not/$gte also matches legacy docs with no retryCount field.
           'extraction.retryCount': { $not: { $gte: MAX_EXTRACTION_RETRIES } },
         },
-        { extraction: { $exists: false }, createdAt: { $gt: backfillCutoff } },
+        {
+          extraction: { $exists: false },
+          createdAt: { $gt: backfillCutoff },
+          // Exclude messages the ingestion gate deliberately held back
+          // (chat unmapped / mapped to ignore / match_sending). Those
+          // have no extraction subdoc on purpose; re-enqueuing them here
+          // would bypass the chat-mapping gate and silently process
+          // "pending" chats. They only enter extraction via an explicit
+          // operator backfill (see channel.service.backfillChatExtraction).
+          'ingestion.decision': {
+            $nin: [
+              MessageIngestionDecision.IGNORED_ASSIGNED_IGNORE,
+              MessageIngestionDecision.IGNORED_MATCH_SENDING,
+              MessageIngestionDecision.IGNORED_UNMAPPED,
+            ],
+          },
+        },
       ],
     })
       .select('_id')
@@ -146,6 +164,24 @@ registerJob({
     }
   },
 });
+
+// ── WhatsApp connection watchdog ─────────────────────────
+// Self-heals sessions that dropped and stopped reconnecting on their own
+// (circuit tripped open, or client missing after a restart). Keeps them
+// ONLINE without cycling healthy connections. Gated + interval-tuned via
+// env; single-instance only (same constraint as WA_AUTO_START_SESSIONS).
+if (env.WA_WATCHDOG_ENABLED) {
+  registerJob({
+    name: 'wa-connection-watchdog',
+    intervalMs: env.WA_WATCHDOG_INTERVAL_MS,
+    async run() {
+      const r = await runConnectionWatchdog();
+      if (r.revived.length > 0) {
+        log.info({ job: 'wa-connection-watchdog', ...r }, 'revived dropped sessions');
+      }
+    },
+  });
+}
 
 // ── Task reminder sweep (placeholder) ────────────────────
 // Future: scan overdue tasks and write a per-owner digest.

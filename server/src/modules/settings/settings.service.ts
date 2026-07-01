@@ -76,8 +76,11 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
   'matching.scan_autocreate_enabled': {
     key: 'matching.scan_autocreate_enabled',
     type: 'boolean',
-    default: true,
-    description: 'יצירת טיוטות הצעה אוטומטית בסריקה עבור זוגות כשירים מעל סף הציון',
+    // Default OFF: the scan feeds the discovery inbox; the shadchan accepts
+    // proposals into the pipeline. Turn ON for automatic drafting of strong
+    // eligible pairs (above scan_autocreate_min_score).
+    default: false,
+    description: 'יצירת טיוטות הצעה אוטומטית בסריקה (כבוי = הצעות נכנסות לתיבת הגילוי לאישור ידני)',
   },
   'matching.scan_autocreate_min_score': {
     key: 'matching.scan_autocreate_min_score',

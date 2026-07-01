@@ -31,6 +31,7 @@ import {
   MatchSuggestion,
   PairScore,
   MatchScanState,
+  PairReview,
   User,
 } from '../../models/index.js';
 import { evaluatePair as engineEvaluatePair } from './matching.engine.js';
@@ -566,6 +567,9 @@ export interface ScanResultItem {
   matchSuggestionId?: string;
   autoCreated: boolean;
   scoredAt: string;
+  // The operator's reason recorded when this pair was held (review_later)
+  // or dismissed (not_suitable). Empty for pending proposals.
+  reviewReason?: string;
 }
 
 export interface ScanResultsQuery {
@@ -575,9 +579,18 @@ export interface ScanResultsQuery {
   autoCreated?: boolean;
   bucket?: PairScoreBucket;
   limit?: number;
+  // Inbox tabs over the scored pairs:
+  //   'inbox' (default): proposals awaiting a decision — excludes pairs that
+  //      already became a suggestion (accepted), were marked not_suitable
+  //      (dismissed), or were parked as review_later (on hold).
+  //   'review_later': only pairs parked on hold (manualStatus review_later).
+  //   'rejected': only pairs dismissed (manualStatus not_suitable).
+  //   'all': every scored pair, undecorated.
+  view?: 'inbox' | 'review_later' | 'rejected' | 'all';
 }
 
 export async function listScanResults(query: ScanResultsQuery): Promise<ScanResultItem[]> {
+  const view = query.view ?? 'inbox';
   const filter: Record<string, unknown> = {};
   if (query.direction) filter['scoreDirection'] = query.direction;
   if (query.eligibleOnly) filter['eligible'] = true;
@@ -585,15 +598,47 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
   if (query.autoCreated !== undefined) filter['autoCreated'] = query.autoCreated;
   if (query.minScore !== undefined) filter['matchScore'] = { $gte: query.minScore };
 
-  const limit = Math.min(query.limit ?? 100, 500);
+  const want = Math.min(query.limit ?? 100, 500);
+  // Over-fetch for any post-filtered view so the page still fills after culling.
+  const fetchLimit = view === 'all' ? want : 500;
   const rows = await PairScore.find(filter)
     .sort({ matchScore: -1 })
-    .limit(limit)
+    .limit(fetchLimit)
     .lean()
     .exec();
 
-  const internalIds = [...new Set(rows.map((r) => String(r.internalCandidateId)))];
-  const externalIds = [...new Set(rows.map((r) => String(r.externalCandidateId)))];
+  // Decorate every non-'all' view with each pair's decision state, then keep
+  // only the rows that belong in the requested tab.
+  const keyOf = (x: { internalCandidateId: unknown; externalCandidateId: unknown }) =>
+    `${String(x.internalCandidateId)}:${String(x.externalCandidateId)}`;
+  let reviewReasons = new Map<string, string>();
+  let visible = rows;
+  if (view !== 'all') {
+    const key = keyOf;
+    const internalIds = [...new Set(rows.map((r) => String(r.internalCandidateId)))].map((id) => new Types.ObjectId(id));
+    const [accepted, reviews] = await Promise.all([
+      MatchSuggestion.find({ internalCandidateId: { $in: internalIds }, status: { $nin: ['closed', 'expired'] } })
+        .select('internalCandidateId externalCandidateId').lean().exec(),
+      PairReview.find({ internalCandidateId: { $in: internalIds }, manualStatus: { $in: ['not_suitable', 'review_later'] } })
+        .select('internalCandidateId externalCandidateId manualStatus operatorReason').lean().exec(),
+    ]);
+    const acceptedSet = new Set(accepted.map((s) => key(s)));
+    const reviewStatus = new Map(reviews.map((r) => [key(r), r.manualStatus]));
+    reviewReasons = new Map(reviews.map((r) => [key(r), r.operatorReason ?? '']));
+
+    if (view === 'inbox') {
+      // Awaiting a decision: not accepted, not held, not dismissed.
+      visible = rows.filter((r) => !acceptedSet.has(key(r)) && !reviewStatus.has(key(r)));
+    } else if (view === 'review_later') {
+      visible = rows.filter((r) => reviewStatus.get(key(r)) === 'review_later');
+    } else {
+      visible = rows.filter((r) => reviewStatus.get(key(r)) === 'not_suitable');
+    }
+  }
+  visible = visible.slice(0, want);
+
+  const internalIds = [...new Set(visible.map((r) => String(r.internalCandidateId)))];
+  const externalIds = [...new Set(visible.map((r) => String(r.externalCandidateId)))];
   const [internals, externals] = await Promise.all([
     InternalCandidate.find({ _id: { $in: internalIds } }).select('firstName lastName').lean().exec(),
     ExternalCandidate.find({ _id: { $in: externalIds } }).select('firstName lastName').lean().exec(),
@@ -603,7 +648,7 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
   const internalNames = new Map(internals.map((c) => [String(c._id), nameOf(c)]));
   const externalNames = new Map(externals.map((c) => [String(c._id), nameOf(c)]));
 
-  return rows.map((r) => ({
+  return visible.map((r) => ({
     internalCandidateId: String(r.internalCandidateId),
     externalCandidateId: String(r.externalCandidateId),
     internalName: internalNames.get(String(r.internalCandidateId)) ?? 'ללא שם',
@@ -619,6 +664,7 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
     ...(r.matchSuggestionId ? { matchSuggestionId: String(r.matchSuggestionId) } : {}),
     autoCreated: r.autoCreated,
     scoredAt: r.scoredAt.toISOString(),
+    ...(reviewReasons.get(keyOf(r)) ? { reviewReason: reviewReasons.get(keyOf(r)) } : {}),
   }));
 }
 

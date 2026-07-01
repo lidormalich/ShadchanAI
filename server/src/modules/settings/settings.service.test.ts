@@ -86,7 +86,9 @@ describe('getSettingBoolean', () => {
     stubFindOne(null);
     expect(await getSettingBoolean('outbound.enabled')).toBe(false);
     stubFindOne(null);
-    expect(await getSettingBoolean('matching.scan_autocreate_enabled')).toBe(true);
+    // Auto-create defaults OFF — the scan feeds the discovery inbox and the
+    // shadchan accepts proposals into the pipeline (see match-scan design).
+    expect(await getSettingBoolean('matching.scan_autocreate_enabled')).toBe(false);
   });
 
   it('ignores a non-boolean stored value and uses the default', async () => {

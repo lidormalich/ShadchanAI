@@ -1,32 +1,31 @@
 // ═══════════════════════════════════════════════════════════
 // MatchScanBar — triggers the incremental match scan and surfaces
-// its live progress + results.
+// its live progress.
 //
 //   • "סרוק הצעות"  → POST /matches/scan {mode:'missing'} — scans only
 //      pairs never scored before (X-Y new → scanned; X-Z already done →
 //      skipped). Runs in the BACKGROUND on the server.
 //   • A progress modal polls GET /matches/scan/state and can be MINIMIZED
 //      to a floating chip while the scan keeps running.
-//   • "תוצאות הסריקה" → dialog over GET /matches/scan/results with
-//      score-trend filters (up / down / new).
+//   • "תיבת ההצעות" → navigates to the dedicated ProposalInboxPage where
+//      the scan results are reviewed and decided on.
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronUp, Loader2, Minus, Search, TrendingDown, TrendingUp } from 'lucide-react';
+import { ChevronUp, Loader2, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Badge, Button, Card, Select } from '@/components/ui/primitives';
+import { Link, useLocation } from 'react-router-dom';
+import { Button, Card } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
-import { EmptyState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
-import { label } from '@/utils/labels';
-import { matchesApi, type ScanResultItem, type ScanState } from '@/services/api/matches';
+import { matchesApi, type ScanState } from '@/services/api/matches';
 
 type ProgressView = 'closed' | 'modal' | 'minimized';
 
 export function MatchScanBar() {
   const qc = useQueryClient();
-  const [resultsOpen, setResultsOpen] = useState(false);
+  const location = useLocation();
+  const onInboxPage = location.pathname === '/inbox';
   const [view, setView] = useState<ProgressView>('closed');
   const prevStatus = useRef<string | undefined>();
 
@@ -44,7 +43,9 @@ export function MatchScanBar() {
     if (prevStatus.current === 'running' && status === 'done' && live) {
       toast.success(
         'הסריקה הושלמה',
-        `נסרקו ${live.pairsScored} זוגות · נוצרו ${live.draftsCreated} טיוטות`,
+        live.draftsCreated > 0
+          ? `נסרקו ${live.pairsScored} זוגות · נוצרו ${live.draftsCreated} טיוטות`
+          : `נסרקו ${live.pairsScored} זוגות · ההצעות ממתינות בתיבת ההצעות`,
       );
       qc.invalidateQueries({ queryKey: ['scan-results'] });
       qc.invalidateQueries({ queryKey: ['matches'] });
@@ -76,9 +77,11 @@ export function MatchScanBar() {
       >
         סרוק הצעות
       </Button>
-      <Button variant="secondary" onClick={() => setResultsOpen(true)}>
-        תוצאות הסריקה
-      </Button>
+      {!onInboxPage && (
+        <Link to="/inbox">
+          <Button variant="secondary">תיבת ההצעות</Button>
+        </Link>
+      )}
 
       {running ? (
         <button
@@ -107,8 +110,6 @@ export function MatchScanBar() {
       {view === 'minimized' && running && live && (
         <ScanProgressChip state={live} onExpand={() => setView('modal')} />
       )}
-
-      {resultsOpen && <ScanResultsDialog onClose={() => setResultsOpen(false)} />}
     </Card>
   );
 }
@@ -188,126 +189,5 @@ function ScanProgressChip({ state, onExpand }: { state: ScanState; onExpand: () 
       </div>
       <div className="text-[11px] text-ink-muted mt-1 num">{state.progressCurrent}/{state.progressTotal} · {state.draftsCreated} טיוטות</div>
     </div>
-  );
-}
-
-function ScanResultsDialog({ onClose }: { onClose: () => void }) {
-  const [direction, setDirection] = useState('');
-  const [eligibleOnly, setEligibleOnly] = useState(true);
-  const [minScore, setMinScore] = useState('');
-
-  const q = useQuery({
-    queryKey: ['scan-results', { direction, eligibleOnly, minScore }],
-    queryFn: () => matchesApi.scanResults({
-      direction: direction || undefined,
-      eligibleOnly: eligibleOnly || undefined,
-      minScore: minScore ? Number(minScore) : undefined,
-      limit: 200,
-    }),
-  });
-
-  return (
-    <Dialog
-      open={true}
-      onClose={onClose}
-      title="תוצאות סריקת ההתאמות"
-      description="כל הזוגות שנסרקו, עם מגמת הציון לעומת הסריקה הקודמת. סינון לפי שיפור/ירידה בציון."
-      secondaryAction={{ label: 'סגור', onClick: onClose }}
-    >
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Select value={direction} onChange={(e) => setDirection(e.target.value)}>
-            <option value="">כל המגמות</option>
-            <option value="up">השתפרו ▲</option>
-            <option value="down">ירדו ▼</option>
-            <option value="new">חדשים</option>
-            <option value="same">ללא שינוי</option>
-          </Select>
-          <Select value={minScore} onChange={(e) => setMinScore(e.target.value)}>
-            <option value="">כל הציונים</option>
-            <option value="70">70+</option>
-            <option value="55">55+</option>
-            <option value="40">40+</option>
-          </Select>
-          <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
-            <input type="checkbox" checked={eligibleOnly} onChange={(e) => setEligibleOnly(e.target.checked)} className="h-3.5 w-3.5" />
-            כשירים בלבד
-          </label>
-        </div>
-
-        <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1">
-          {q.isLoading ? (
-            <LoadingSkeleton rows={6} />
-          ) : !q.data?.data.length ? (
-            <EmptyState title="אין תוצאות" description="הרץ סריקה או שנה את הסינון." />
-          ) : (
-            <ul className="divide-y divide-border">
-              {q.data.data.map((r) => (
-                <ScanResultRow key={`${r.internalCandidateId}:${r.externalCandidateId}`} row={r} />
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
-function ScanResultRow({ row }: { row: ScanResultItem }) {
-  return (
-    <li className="py-2.5 flex items-center gap-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium truncate">
-          {row.internalName} <span className="text-ink-faint">·</span> {row.externalName}
-        </div>
-        <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap">
-          <Badge tone={row.matchType === 'safe' ? 'success' : row.matchType === 'balanced' ? 'brand' : 'warning'}>
-            {label('matchType', row.matchType)}
-          </Badge>
-          {row.autoCreated && <Badge tone="purple">טיוטה נוצרה</Badge>}
-          {!row.eligible && <Badge tone="danger">חסום</Badge>}
-        </div>
-      </div>
-
-      <DeltaBadge row={row} />
-
-      <div className="text-end shrink-0 w-12">
-        <div className="text-lg font-semibold num text-brand-700">{row.matchScore}</div>
-        <div className="text-[11px] text-ink-faint num">ביטחון {row.confidenceScore}</div>
-      </div>
-
-      <div className="shrink-0 w-16 text-end">
-        {row.matchSuggestionId ? (
-          <Link to={`/matches/${row.matchSuggestionId}`} className="text-xs text-brand-700 hover:underline">פתח הצעה</Link>
-        ) : (
-          <Link to={`/candidates/external/${row.externalCandidateId}`} className="text-xs text-ink-muted hover:underline">פרופיל</Link>
-        )}
-      </div>
-    </li>
-  );
-}
-
-function DeltaBadge({ row }: { row: ScanResultItem }) {
-  if (row.scoreDirection === 'new') {
-    return <span className="text-[11px] text-ink-faint shrink-0 w-14 text-center">חדש</span>;
-  }
-  if (row.scoreDirection === 'up') {
-    return (
-      <span className="inline-flex items-center gap-0.5 text-emerald-600 text-xs shrink-0 w-14 justify-center">
-        <TrendingUp className="h-3.5 w-3.5" /> +{row.scoreDelta}
-      </span>
-    );
-  }
-  if (row.scoreDirection === 'down') {
-    return (
-      <span className="inline-flex items-center gap-0.5 text-red-600 text-xs shrink-0 w-14 justify-center">
-        <TrendingDown className="h-3.5 w-3.5" /> {row.scoreDelta}
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-0.5 text-ink-faint text-xs shrink-0 w-14 justify-center">
-      <Minus className="h-3.5 w-3.5" />
-    </span>
   );
 }
