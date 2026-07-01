@@ -103,7 +103,7 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
   );
 }
 
-function FullProfile({ c }: { c: ExternalCandidate }) {
+export function FullProfile({ c }: { c: ExternalCandidate }) {
   return (
     <div className="space-y-3">
       <Card>
@@ -158,7 +158,7 @@ function MatchingInternals({ items, loading }: { items: unknown[]; loading: bool
   );
 }
 
-function ShareCardPreview({ c }: { c: ExternalCandidate }) {
+export function ShareCardPreview({ c }: { c: ExternalCandidate }) {
   const { shareCard } = c;
   return (
     <div className="space-y-3">

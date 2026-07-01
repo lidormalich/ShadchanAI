@@ -310,10 +310,11 @@ function mergeExtraction(p: ProfileExtraction): { filled: Values; notes: string[
   str('educationLevel', p.educationLevel);
   str('educationInstitution', p.educationInstitution);
   str('armyService', p.armyService);
-  // Candidate's own number → contactPhone; the card's inquiry contact →
-  // reference (set below). Fall back to the inquiry number if the
-  // candidate's own wasn't on the card.
-  str('contactPhone', p.candidatePhone ?? p.contactPhone);
+  // ONLY the candidate's own number becomes contactPhone (the dedup key).
+  // The card's inquiry contact (איש קשר / מספר לפניות) is the referrer, not
+  // the candidate — it goes to reference fields below. Using the referrer's
+  // number here would falsely collide when one referrer sends many cards.
+  str('contactPhone', p.candidatePhone);
   str('sectorGroup', p.sectorGroup);
   str('subSector', p.subSector);
   str('lifestyleTone', p.lifestyleTone);

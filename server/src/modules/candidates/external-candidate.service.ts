@@ -40,6 +40,8 @@ export async function listExternalCandidates(
   const filter: Record<string, unknown> = { archivedAt: { $exists: false } };
   if (query.status) filter['status'] = query.status;
   if (query.gender) filter['gender'] = query.gender;
+  // `gender: null` matches both an explicit null and a missing field.
+  if (query.missingGender) filter['gender'] = null;
   if (query.sectorGroup) filter['sectorGroup'] = query.sectorGroup;
   if (query.city) filter['city'] = query.city;
   if (query.availabilityStatus) filter['availabilityStatus'] = query.availabilityStatus;
@@ -93,7 +95,7 @@ export async function createExternalCandidate(
     sourceImportedAt: new Date(),
     importedBy: new Types.ObjectId(performedBy),
     ownerUserId: new Types.ObjectId(performedBy),
-    shareCard: { approvedForShare: false },
+    shareCard: { approvedForShare: true },
   });
   await audit({
     entityType: AuditEntityType.EXTERNAL_CANDIDATE,

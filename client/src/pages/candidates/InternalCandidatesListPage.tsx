@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { LayoutGrid, Rows3, Search, UserPlus } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { Avatar, Badge, Button, Card, CardBody, Input, Select, TBody, THead, Table, Td, Th, Tr } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, RowSkeleton } from '@/components/states/states';
@@ -9,6 +9,7 @@ import { InternalCandidateForm } from '@/features/forms/InternalCandidateForm';
 import { Pagination } from '@/components/ui/Pagination';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import { OwnershipFilter, type OwnershipScope } from '@/features/ownership/OwnershipFilter';
+import { GenderBadge } from '@/components/domain/GenderBadge';
 import { label } from '@/utils/labels';
 import type { InternalCandidate } from '@/types/domain';
 
@@ -18,10 +19,17 @@ const STATUSES = ['active', 'paused', 'dating', 'closed'] as const;
 type ViewMode = 'table' | 'cards';
 
 export function InternalCandidatesListPage() {
+  // Deep links from the insights "מגדר חסר" KPI arrive as ?gender=missing.
+  const [searchParams] = useSearchParams();
+  const initialGender = (() => {
+    const g = searchParams.get('gender');
+    return g === 'male' || g === 'female' || g === 'missing' ? g : '';
+  })();
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<string>('active');
+  // When deep-linked to a data-quality filter, don't also narrow by status.
+  const [status, setStatus] = useState<string>(initialGender ? '' : 'active');
   const [sectorGroup, setSectorGroup] = useState<string>('');
-  const [gender, setGender] = useState<string>('');
+  const [gender, setGender] = useState<string>(initialGender);
   const [ownership, setOwnership] = useState<OwnershipScope>('all');
   const [view, setView] = useState<ViewMode>('table');
   const [formOpen, setFormOpen] = useState(false);
@@ -37,7 +45,8 @@ export function InternalCandidatesListPage() {
       search: search || undefined,
       status: status || undefined,
       sectorGroup: sectorGroup || undefined,
-      gender: gender || undefined,
+      gender: gender === 'male' || gender === 'female' ? gender : undefined,
+      missingGender: gender === 'missing' ? true : undefined,
       ownership,
       page,
       limit,
@@ -85,6 +94,7 @@ export function InternalCandidatesListPage() {
             <option value="">בנים ובנות</option>
             <option value="male">בנים</option>
             <option value="female">בנות</option>
+            <option value="missing">חסר מגדר</option>
           </Select>
           <OwnershipFilter value={ownership} onChange={setOwnership} />
           <div className="ms-auto hidden md:flex gap-1 p-0.5 rounded-md bg-bg-subtle border border-border">
@@ -112,6 +122,7 @@ export function InternalCandidatesListPage() {
             <THead>
               <Tr>
                 <Th>שם</Th>
+                <Th>מין</Th>
                 <Th>מגזר</Th>
                 <Th>עיר</Th>
                 <Th>גיל</Th>
@@ -122,12 +133,12 @@ export function InternalCandidatesListPage() {
             </THead>
             <TBody>
               {query.isLoading ? (
-                <RowSkeleton cols={7} />
+                <RowSkeleton cols={8} />
               ) : query.data?.data.length ? (
                 query.data.data.map((c) => <CandidateRow key={c._id} c={c} />)
               ) : (
                 <Tr>
-                  <Td colSpan={7}>
+                  <Td colSpan={8}>
                     <EmptyState title="לא נמצאו מועמדים" description="נסה להתאים את הסינונים או להוסיף מועמד חדש." />
                   </Td>
                 </Tr>
@@ -184,6 +195,7 @@ const CandidateRow = React.memo(function CandidateRow({ c }: { c: InternalCandid
           </div>
         </Link>
       </Td>
+      <Td><GenderBadge gender={c.gender} /></Td>
       <Td>
         <div className="text-xs">
           <div>{label('sectorGroup', c.sectorGroup)}</div>
@@ -191,7 +203,7 @@ const CandidateRow = React.memo(function CandidateRow({ c }: { c: InternalCandid
         </div>
       </Td>
       <Td className="text-sm text-ink-muted">{c.city ?? '—'}</Td>
-      <Td className="text-sm num">{age}</Td>
+      <Td className="text-sm"><span className="num">{age}</span></Td>
       <Td><StatusBadge status={c.status} /></Td>
       <Td><CompletionBar value={c.profileCompletion} blocked={c.sendReadinessBlockers.length > 0} /></Td>
       <Td className="text-end">
@@ -212,6 +224,7 @@ const CandidateGridCard = React.memo(function CandidateGridCard({ c }: { c: Inte
             <div className="font-semibold truncate">{c.firstName} {c.lastName}</div>
             <div className="text-xs text-ink-muted truncate">{c.city ?? ''} · גיל {age}</div>
             <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <GenderBadge gender={c.gender} />
               <StatusBadge status={c.status} />
               <Badge tone="neutral">{label('sectorGroup', c.sectorGroup)}</Badge>
             </div>

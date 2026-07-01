@@ -73,7 +73,9 @@ const shareCardSchema = new Schema(
       enum: Object.values(ShareCardPhotoMode),
       default: ShareCardPhotoMode.NONE,
     },
-    approvedForShare: { type: Boolean, default: false },
+    // Approved by default — the share card is editable/previewable in the
+    // drawer, so we don't block sending behind a manual approval step.
+    approvedForShare: { type: Boolean, default: true },
     lastReviewedAt: { type: Date },
   },
   { _id: false },
@@ -420,7 +422,7 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     sharePhoto: { type: Boolean, default: false },
     shareCard: {
       type: shareCardSchema,
-      default: () => ({ approvedForShare: false }),
+      default: () => ({ approvedForShare: true }),
     },
 
     // ── Availability ──────────────────────────────────────
@@ -475,7 +477,16 @@ externalCandidateSchema.index({ status: 1, gender: 1 });
 // Match-scan filter: { gender, status, availabilityStatus: { $in: [...] } }
 externalCandidateSchema.index({ status: 1, gender: 1, availabilityStatus: 1 });
 externalCandidateSchema.index({ status: 1, sectorGroup: 1 });
-externalCandidateSchema.index({ sourceType: 1, sourceExternalId: 1 }, { unique: true, sparse: true });
+// Dedup external-system imports by (sourceType, sourceExternalId) — but ONLY
+// when sourceExternalId is present. A plain `sparse` compound index does NOT
+// work here: sourceType is always set, so manual/whatsapp candidates (which
+// have no sourceExternalId) all collide on {sourceType, null}, allowing only
+// ONE such candidate. A partial index keyed on sourceExternalId existence
+// enforces uniqueness only for real source ids.
+externalCandidateSchema.index(
+  { sourceType: 1, sourceExternalId: 1 },
+  { unique: true, partialFilterExpression: { sourceExternalId: { $exists: true } } },
+);
 externalCandidateSchema.index({ sourceChannelId: 1 }, { sparse: true });
 externalCandidateSchema.index({ contactPhone: 1 }, { sparse: true });
 externalCandidateSchema.index({ availabilityStatus: 1 });

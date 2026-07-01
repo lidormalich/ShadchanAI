@@ -143,6 +143,9 @@ export type UpdateExternalCandidateInput = z.infer<typeof UpdateExternalCandidat
 export const ListExternalCandidatesQuerySchema = PaginationQuerySchema.extend({
   status: z.nativeEnum(ExternalCandidateStatus).optional(),
   gender: z.nativeEnum(Gender).optional(),
+  // Data-quality filter: when true, return only candidates with no gender
+  // set (gender null/missing) — these never appear in matching.
+  missingGender: z.coerce.boolean().optional(),
   sectorGroup: z.nativeEnum(SectorGroup).optional(),
   city: z.string().optional(),
   availabilityStatus: z.nativeEnum(AvailabilityStatus).optional(),

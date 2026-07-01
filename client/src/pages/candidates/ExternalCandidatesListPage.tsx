@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Search, UserPlus } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Avatar, Badge, Button, Card, CardBody, Input, Select, TBody, THead, Table, Td, Th, Tr } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, RowSkeleton } from '@/components/states/states';
 import { externalCandidatesApi } from '@/services/api/candidates';
@@ -8,6 +9,7 @@ import { ExternalCandidateDrawer } from './ExternalCandidateDrawer';
 import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { Pagination } from '@/components/ui/Pagination';
 import { useIsMobile } from '@/hooks/useMediaQuery';
+import { GenderBadge } from '@/components/domain/GenderBadge';
 import { label } from '@/utils/labels';
 import type { ExternalCandidate } from '@/types/domain';
 
@@ -15,9 +17,19 @@ const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani'] 
 const AVAILABILITIES = ['available', 'dating', 'unavailable', 'unknown'] as const;
 
 export function ExternalCandidatesListPage() {
+  // Deep links from the insights "מגדר חסר" KPI arrive as ?gender=missing.
+  const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [sectorGroup, setSectorGroup] = useState('');
-  const [availabilityStatus, setAvailabilityStatus] = useState('available');
+  // '' = all, 'male', 'female', 'missing' (no gender set).
+  const initialGender = (() => {
+    const g = searchParams.get('gender');
+    return g === 'male' || g === 'female' || g === 'missing' ? g : '';
+  })();
+  // When deep-linked to a data-quality filter, start with no availability
+  // narrowing so every flagged candidate is visible.
+  const [availabilityStatus, setAvailabilityStatus] = useState(initialGender ? '' : 'available');
+  const [gender, setGender] = useState(initialGender);
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -26,17 +38,19 @@ export function ExternalCandidatesListPage() {
   const isMobile = useIsMobile();
 
   const list = useQuery({
-    queryKey: ['externals', { search, sectorGroup, availabilityStatus, page }],
+    queryKey: ['externals', { search, sectorGroup, availabilityStatus, gender, page }],
     queryFn: () => externalCandidatesApi.list({
       search: search || undefined,
       sectorGroup: sectorGroup || undefined,
       availabilityStatus: availabilityStatus || undefined,
+      gender: gender === 'male' || gender === 'female' ? gender : undefined,
+      missingGender: gender === 'missing' ? true : undefined,
       page,
       limit,
     }),
   });
 
-  const filterKey = `${search}|${sectorGroup}|${availabilityStatus}`;
+  const filterKey = `${search}|${sectorGroup}|${availabilityStatus}|${gender}`;
   const [lastFilterKey, setLastFilterKey] = useState(filterKey);
   if (filterKey !== lastFilterKey) {
     setLastFilterKey(filterKey);
@@ -67,6 +81,12 @@ export function ExternalCandidatesListPage() {
             <option value="">כל הזמינות</option>
             {AVAILABILITIES.map((a) => <option key={a} value={a}>{label('availabilityStatus', a)}</option>)}
           </Select>
+          <Select className="w-full sm:w-auto" value={gender} onChange={(e) => setGender(e.target.value)}>
+            <option value="">בנים ובנות</option>
+            <option value="male">בנים</option>
+            <option value="female">בנות</option>
+            <option value="missing">חסר מגדר</option>
+          </Select>
         </div>
 
         {list.isError ? (
@@ -90,16 +110,17 @@ export function ExternalCandidatesListPage() {
             <THead>
               <Tr>
                 <Th>שם / מקור</Th>
+                <Th>מין</Th>
                 <Th>מגזר</Th>
                 <Th>עיר</Th>
                 <Th>גיל</Th>
                 <Th>זמינות</Th>
-                <Th>מעמד</Th>
+                <Th>כרטיס שיתוף</Th>
                 <Th></Th>
               </Tr>
             </THead>
             <TBody>
-              {list.isLoading ? <RowSkeleton cols={7} /> :
+              {list.isLoading ? <RowSkeleton cols={8} /> :
                 list.data?.data.length ? list.data.data.map((c) => (
                   <Tr key={c._id} className="cursor-pointer" onClick={() => setDrawerId(c._id)}>
                     <Td>
@@ -111,12 +132,13 @@ export function ExternalCandidatesListPage() {
                         </div>
                       </div>
                     </Td>
+                    <Td><GenderBadge gender={c.gender} /></Td>
                     <Td className="text-xs">
                       <div>{label('sectorGroup', c.sectorGroup)}</div>
                       <div className="text-ink-faint">{c.subSector ? label('subSector', c.subSector) : ''}</div>
                     </Td>
                     <Td className="text-sm text-ink-muted">{c.city ?? '—'}</Td>
-                    <Td className="text-sm num">{c.age ?? '—'}</Td>
+                    <Td className="text-sm"><span className="num">{c.age ?? '—'}</span></Td>
                     <Td>
                       <Badge tone={c.availabilityStatus === 'available' ? 'success' : c.availabilityStatus === 'dating' ? 'purple' : 'warning'}>
                         {label('availabilityStatus', c.availabilityStatus)}
@@ -132,7 +154,7 @@ export function ExternalCandidatesListPage() {
                     </Td>
                   </Tr>
                 )) : (
-                  <Tr><Td colSpan={7}><EmptyState title="לא נמצאו פרופילים חיצוניים" /></Td></Tr>
+                  <Tr><Td colSpan={8}><EmptyState title="לא נמצאו פרופילים חיצוניים" /></Td></Tr>
                 )
               }
             </TBody>
@@ -170,6 +192,7 @@ const ExternalCard = React.memo(function ExternalCard({ c, onOpen }: { c: Extern
             {c.city ?? '—'}{c.age ? ` · גיל ${c.age}` : ''}
           </div>
           <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <GenderBadge gender={c.gender} />
             <Badge tone={c.availabilityStatus === 'available' ? 'success' : c.availabilityStatus === 'dating' ? 'purple' : 'warning'}>
               {label('availabilityStatus', c.availabilityStatus)}
             </Badge>

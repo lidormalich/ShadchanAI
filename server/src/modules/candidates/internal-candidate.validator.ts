@@ -140,6 +140,9 @@ export type UpdateInternalCandidateInput = z.infer<typeof UpdateInternalCandidat
 export const ListInternalCandidatesQuerySchema = PaginationQuerySchema.extend({
   status: z.nativeEnum(CandidateStatus).optional(),
   gender: z.nativeEnum(Gender).optional(),
+  // Data-quality filter: when true, return only candidates with no gender
+  // set. Gender is required on create, so this surfaces legacy/bad rows.
+  missingGender: z.coerce.boolean().optional(),
   sectorGroup: z.nativeEnum(SectorGroup).optional(),
   city: z.string().optional(),
   search: z.string().max(200).optional(),

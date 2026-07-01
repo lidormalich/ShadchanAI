@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Mail, MapPin, Phone, Search, Sparkles } from 'lucide-react';
+import { Calendar, Mail, MapPin, Phone, RotateCcw, Search, Sparkles, UserX } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, TBody, THead, Table, Td, Th, Tr, Tabs } from '@/components/ui/primitives';
+import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, TBody, THead, Table, Td, Textarea, Th, Tr, Tabs } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi, type FindMatchItem } from '@/services/api/matches';
@@ -16,16 +16,20 @@ import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList
 import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
-import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
+import { EmptyState, ErrorState, LoadingSkeleton, NotFoundState } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
+import { useSetPageTitle } from '@/layouts/PageTitleContext';
+import { isNotFoundError } from '@/utils/apiError';
 import { label, matchTypeTone } from '@/utils/labels';
 import { formatDate } from '@/utils/format';
 import type { MatchSuggestion, Conversation, InternalCandidate } from '@/types/domain';
 
 export function InternalCandidateDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const qc = useQueryClient();
   const [findOpen, setFindOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [notRelevantOpen, setNotRelevantOpen] = useState(false);
   const candidate = useQuery({
     queryKey: ['internal', id],
     queryFn: () => internalCandidatesApi.get(id!),
@@ -47,6 +51,18 @@ export function InternalCandidateDetailPage() {
     enabled: !!id,
   });
 
+  // Bring a previously "not relevant" candidate back into the matching pool.
+  const reopen = useMutation({
+    mutationFn: () => internalCandidatesApi.reopen(id!, { reason: 'חזר להיות רלוונטי' }),
+    onSuccess: () => {
+      toast.success('המועמד הוחזר לפעילות', 'יופיע שוב בסריקות ובהתאמות');
+      qc.invalidateQueries({ queryKey: ['internal', id] });
+      qc.invalidateQueries({ queryKey: ['scan-results'] });
+      qc.invalidateQueries({ queryKey: ['matches'] });
+    },
+    onError: (err) => toast.error('ההחזרה נכשלה', (err as Error).message),
+  });
+
   const summarize = useMutation({
     mutationFn: async (doc: InternalCandidate) => aiApi.summarizeCandidate({ candidate: buildCandidateBrief(doc) }),
     onSuccess: (r) => {
@@ -56,8 +72,16 @@ export function InternalCandidateDetailPage() {
     onError: (err) => toast.error('סיכום נכשל', (err as Error).message),
   });
 
+  // Breadcrumb shows the candidate's name instead of the raw id from the URL.
+  const cd = candidate.data?.data;
+  useSetPageTitle(cd ? `${cd.firstName} ${cd.lastName}`.trim() : undefined);
+
   if (candidate.isLoading) return <div className="p-6"><LoadingSkeleton rows={8} /></div>;
-  if (candidate.isError) return <ErrorState description={(candidate.error as Error).message} onRetry={() => candidate.refetch()} />;
+  if (candidate.isError) {
+    return isNotFoundError(candidate.error)
+      ? <NotFoundState title="מועמד לא נמצא" description="המועמד המבוקש לא קיים או הוסר מהמאגר." backTo="/candidates/internal" backLabel="חזרה למועמדים" />
+      : <ErrorState description={(candidate.error as Error).message} onRetry={() => candidate.refetch()} />;
+  }
   if (!candidate.data) return null;
 
   const c = candidate.data.data;
@@ -101,6 +125,24 @@ export function InternalCandidateDetailPage() {
               סיכום AI
             </Button>
             <Button variant="secondary" onClick={() => setEditOpen(true)}>עריכה</Button>
+            {isClosed ? (
+              <Button
+                variant="secondary"
+                leftIcon={<RotateCcw className="h-4 w-4" />}
+                loading={reopen.isPending}
+                onClick={() => reopen.mutate()}
+              >
+                החזר לפעילות
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                leftIcon={<UserX className="h-4 w-4" />}
+                onClick={() => setNotRelevantOpen(true)}
+              >
+                סמן כלא רלוונטי
+              </Button>
+            )}
           </div>
         </CardBody>
       </Card>
@@ -179,7 +221,72 @@ export function InternalCandidateDetailPage() {
         onClose={() => setEditOpen(false)}
         initial={c}
       />
+
+      <MarkNotRelevantDialog
+        open={notRelevantOpen}
+        onClose={() => setNotRelevantOpen(false)}
+        candidateId={c._id}
+        candidateName={`${c.firstName} ${c.lastName}`.trim()}
+      />
     </div>
+  );
+}
+
+// Marks an internal candidate as "no longer relevant" — closes them with a
+// reason so they drop out of every scan and matching result (the engine only
+// considers status:'active' candidates). Reversible via "החזר לפעילות".
+const NOT_RELEVANT_REASONS = [
+  'married', 'engaged', 'not_interested', 'taking_break', 'left_system', 'shadchan_decision', 'other',
+];
+
+function MarkNotRelevantDialog({
+  open, onClose, candidateId, candidateName,
+}: {
+  open: boolean;
+  onClose: () => void;
+  candidateId: string;
+  candidateName: string;
+}) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('married');
+  const [note, setNote] = useState('');
+
+  const close = useMutation({
+    mutationFn: () => internalCandidatesApi.close(candidateId, { reason, note: note.trim() || undefined }),
+    onSuccess: () => {
+      toast.success('המועמד סומן כלא רלוונטי', 'לא יופיע יותר בסריקות ובהתאמות');
+      qc.invalidateQueries({ queryKey: ['internal', candidateId] });
+      qc.invalidateQueries({ queryKey: ['scan-results'] });
+      qc.invalidateQueries({ queryKey: ['matches'] });
+      onClose();
+    },
+    onError: (err) => toast.error('הפעולה נכשלה', (err as Error).message),
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="סימון מועמד כלא רלוונטי"
+      description={`${candidateName} יוסר מכל הסריקות וההתאמות. ניתן להחזיר לפעילות בכל עת.`}
+      primaryAction={{ label: 'סמן כלא רלוונטי', onClick: () => close.mutate(), loading: close.isPending, variant: 'danger' }}
+      secondaryAction={{ label: 'ביטול', onClick: onClose }}
+    >
+      <div className="space-y-3">
+        <div>
+          <div className="text-xs text-ink-muted mb-1">סיבה</div>
+          <Select value={reason} onChange={(e) => setReason(e.target.value)}>
+            {NOT_RELEVANT_REASONS.map((r) => (
+              <option key={r} value={r}>{label('closureReason', r)}</option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <div className="text-xs text-ink-muted mb-1">הערה (אופציונלי)</div>
+          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="פרטים נוספים…" />
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
