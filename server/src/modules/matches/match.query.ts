@@ -3,16 +3,25 @@
 // ═══════════════════════════════════════════════════════════
 
 import { Types } from 'mongoose';
-import { MatchSuggestion, type IMatchSuggestion } from '../../models/index.js';
+import {
+  MatchSuggestion,
+  InternalCandidate,
+  ExternalCandidate,
+  type IMatchSuggestion,
+} from '../../models/index.js';
 import { NotFoundError } from '../../utils/errors.js';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
 import type { ListMatchesQuery } from './match.validator.js';
 
+// Match list rows carry resolved candidate names so cards render people,
+// not raw ids. Lightweight projection — names only.
+export type MatchListItem = IMatchSuggestion & { internalName: string; externalName: string };
+
 export async function listMatches(
   query: ListMatchesQuery,
   currentUserId?: string,
-): Promise<{ items: IMatchSuggestion[]; total: number; meta: ReturnType<typeof makeMeta> }> {
+): Promise<{ items: MatchListItem[]; total: number; meta: ReturnType<typeof makeMeta> }> {
   const { skip, limit } = toSkipLimit(query);
   const sort = buildSort(query, 'matchScore');
 
@@ -30,11 +39,31 @@ export async function listMatches(
     MatchSuggestion.countDocuments(filter).exec(),
   ]);
 
+  const named = await attachCandidateNames(items as unknown as IMatchSuggestion[]);
+
   return {
-    items: items as unknown as IMatchSuggestion[],
+    items: named,
     total,
     meta: makeMeta(query.page, query.limit, total),
   };
+}
+
+async function attachCandidateNames(items: IMatchSuggestion[]): Promise<MatchListItem[]> {
+  const internalIds = [...new Set(items.map((m) => String(m.internalCandidateId)))];
+  const externalIds = [...new Set(items.map((m) => String(m.externalCandidateId)))];
+  const [internals, externals] = await Promise.all([
+    InternalCandidate.find({ _id: { $in: internalIds } }).select('firstName lastName').lean().exec(),
+    ExternalCandidate.find({ _id: { $in: externalIds } }).select('firstName lastName').lean().exec(),
+  ]);
+  const nameOf = (c: { firstName?: string; lastName?: string }) =>
+    `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם';
+  const internalNames = new Map(internals.map((c) => [String(c._id), nameOf(c)]));
+  const externalNames = new Map(externals.map((c) => [String(c._id), nameOf(c)]));
+  return items.map((m) => ({
+    ...m,
+    internalName: internalNames.get(String(m.internalCandidateId)) ?? 'ללא שם',
+    externalName: externalNames.get(String(m.externalCandidateId)) ?? 'ללא שם',
+  })) as unknown as MatchListItem[];
 }
 
 export async function getMatchById(id: string): Promise<IMatchSuggestion> {

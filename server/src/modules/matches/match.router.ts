@@ -47,6 +47,7 @@ matchRouter.post('/:id/mark-dating', validate({ params: IdParamSchema }), ctrl.m
 matchRouter.post('/:id/close', validate({ params: IdParamSchema, body: CloseMatchSchema }), ctrl.closeHandler);
 
 matchRouter.get('/:id/explanation', validate({ params: IdParamSchema }), ctrl.explanationHandler);
+matchRouter.post('/:id/explain', validate({ params: IdParamSchema }), ctrl.explainHandler);
 matchRouter.get('/:id/send-preview', validate({ params: IdParamSchema }), ctrl.sendPreviewHandler);
 matchRouter.patch('/:id/draft', validate({ params: IdParamSchema, body: SaveDraftSchema }), ctrl.saveDraftHandler);
 matchRouter.post('/:id/acknowledge-response', validate({ params: IdParamSchema, body: AcknowledgeResponseSchema }), ctrl.acknowledgeResponseHandler);

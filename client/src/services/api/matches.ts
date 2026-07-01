@@ -54,6 +54,39 @@ export interface ScanResultItem {
   matchSuggestionId?: string;
   autoCreated: boolean;
   scoredAt: string;
+  // Operator reason recorded when held (review_later) or rejected (not_suitable).
+  reviewReason?: string;
+}
+
+export interface MatchExplanationDTO {
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  nuance: string;
+  recommendedApproach: string;
+  notMatchReasons: string[];
+  generatedAt?: string;
+  provider?: string;
+  model?: string;
+}
+
+export interface MatchExplanation {
+  explanation: MatchExplanationDTO;
+  // true when served from the persisted explanation (no AI call made).
+  fromCache: boolean;
+  // Labels of inputs that changed since the last generation (e.g.
+  // "ציון ההתאמה"). Empty when served from cache or first-generated.
+  changedFields: string[];
+  // true when the fresh engine re-evaluation differed and the
+  // suggestion's score/analysis fields were updated in place.
+  rescored: boolean;
+  // Engine score movement detected by the re-evaluation.
+  score: {
+    current: number;
+    previous: number;
+    delta: number;
+    direction: 'up' | 'down' | 'same';
+  };
 }
 
 export const matchesApi = {
@@ -85,6 +118,8 @@ export const matchesApi = {
   close: (id: string, body: { reason: string }) =>
     api.post<MatchSuggestion>(`/matches/${id}/close`, body),
   explanation: (id: string) => api.get<Record<string, unknown>>(`/matches/${id}/explanation`),
+  explain: (id: string, body: { force?: boolean } = {}) =>
+    api.post<MatchExplanation>(`/matches/${id}/explain`, body),
   sendPreview: (id: string) => api.get<SendPreview>(`/matches/${id}/send-preview`),
   saveDraft: (id: string, body: { side: 'a' | 'b'; body: string; source?: 'ai' | 'manual' }) =>
     api.patch<MatchSuggestion>(`/matches/${id}/draft`, body),

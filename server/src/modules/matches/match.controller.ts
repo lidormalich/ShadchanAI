@@ -127,6 +127,9 @@ export async function scanResultsHandler(req: Request, res: Response, next: Next
       bucket: q['bucket'] as PairScoreBucket | undefined,
       minScore: q['minScore'] !== undefined ? Number(q['minScore']) : undefined,
       limit: q['limit'] !== undefined ? Number(q['limit']) : undefined,
+      view: ['all', 'review_later', 'rejected'].includes(q['view'] as string)
+        ? (q['view'] as 'all' | 'review_later' | 'rejected')
+        : 'inbox',
     });
     ok(res, items);
   } catch (e) { next(e); }
@@ -194,6 +197,18 @@ export async function explanationHandler(req: Request, res: Response, next: Next
     ensureUser(req.user);
     const { id } = getValidatedParams<{ id: string }>(req);
     ok(res, await svc.getExplanationPayload(id));
+  } catch (e) { next(e); }
+}
+
+// Persisted, staleness-aware AI explanation. Returns the stored
+// explanation untouched when nothing scoring-relevant changed; otherwise
+// regenerates and reports which inputs changed.
+export async function explainHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const force = req.body?.force === true;
+    ok(res, await svc.explainMatchSuggestion(id, user, { force }));
   } catch (e) { next(e); }
 }
 

@@ -36,6 +36,7 @@ import { publishMatchUpdate } from './match.events.js';
 // ── Re-exports (stable public surface) ───────────────────
 
 export { listMatches, getMatchById, getExplanationPayload } from './match.query.js';
+export { explainMatchSuggestion, type MatchExplanationDTO, type ExplainMatchResult } from './match.explain.js';
 export {
   evaluatePair,
   previewSendReadiness,

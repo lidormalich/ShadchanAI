@@ -33,9 +33,9 @@ export const MatchCard = React.memo(function MatchCard({ match, compact }: { mat
               {match.riskLevel === 'high' && <Badge tone="danger">סיכון גבוה</Badge>}
               {match.flexibilityOverrideApplied && <Badge tone="purple">גמישות</Badge>}
             </div>
-            <div className="mt-2 text-sm text-ink-muted">
-              <div>פנימי: <span className="font-mono text-xs">{match.internalCandidateId.slice(-6)}</span></div>
-              <div>חיצוני: <span className="font-mono text-xs">{match.externalCandidateId.slice(-6)}</span></div>
+            <div className="mt-2 text-sm">
+              <div className="font-medium text-ink truncate">{match.internalName ?? `פנימי ${match.internalCandidateId.slice(-6)}`}</div>
+              <div className="text-ink-muted truncate">{match.externalName ?? `חיצוני ${match.externalCandidateId.slice(-6)}`}</div>
             </div>
           </div>
           <div className="shrink-0 text-end">

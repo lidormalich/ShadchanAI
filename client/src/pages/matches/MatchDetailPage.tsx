@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Heart, MessageSquare, Send, Shield, Sparkles, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Heart, Loader2, MessageSquare, Send, Shield, Sparkles, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { matchesApi } from '@/services/api/matches';
+import { matchesApi, type MatchExplanation } from '@/services/api/matches';
 import { internalCandidatesApi, externalCandidatesApi } from '@/services/api/candidates';
 import { channelsApi } from '@/services/api/channels';
 import { aiApi, buildCandidateBrief } from '@/services/api/ai';
 import { toast } from '@/components/ui/Toast';
 import type { MatchSuggestion } from '@/types/domain';
 import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, Textarea } from '@/components/ui/primitives';
-import { ErrorState, LoadingSkeleton } from '@/components/states/states';
+import { ErrorState, LoadingSkeleton, NotFoundState } from '@/components/states/states';
 import { BlockedBanner } from '@/components/domain/banners';
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { AskAIPanel } from '@/features/ai/AskAIPanel';
@@ -20,6 +20,7 @@ import { conversationsApi } from '@/services/api/conversations';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { useSafeMode } from '@/features/safe-mode/useSafeMode';
 import { useSetPageTitle } from '@/layouts/PageTitleContext';
+import { isNotFoundError } from '@/utils/apiError';
 import { label, matchTypeTone } from '@/utils/labels';
 import { formatDateTime } from '@/utils/format';
 import type { SendPreview } from '@/types/domain';
@@ -70,27 +71,13 @@ export function MatchDetailPage() {
     },
     onError: (err) => toast.error('האישור נכשל', (err as Error).message),
   });
+  // Persisted, staleness-aware explanation. The server returns the stored
+  // answer untouched when nothing scoring-relevant changed, or regenerates
+  // and reports which inputs changed. `force` ignores the stored answer.
+  // Result is rendered in the ExplainAIModal; no toast.
   const explain = useMutation({
-    mutationFn: async () => {
-      const m = match.data!.data;
-      const i = internal.data!.data;
-      const e = external.data!.data;
-      return aiApi.explainMatch({
-        internal: buildCandidateBrief(i),
-        external: buildCandidateBrief(e),
-        matchScore: m.matchScore,
-        confidenceScore: m.confidenceScore,
-        matchType: m.matchType,
-        riskLevel: m.riskLevel,
-        strengths: m.strengths,
-        attentionPoints: m.attentionPoints,
-        scoreBreakdown: m.scoreBreakdown,
-      });
-    },
-    onSuccess: (r) => {
-      const d = r.data as { summary?: string; nuance?: string; recommendedApproach?: string };
-      toast.info('הסבר AI', [d.summary, d.nuance, d.recommendedApproach].filter(Boolean).join('\n\n'));
-    },
+    mutationFn: (opts: { force?: boolean } = {}) => matchesApi.explain(id!, opts),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['match', id] }),
     onError: (err) => toast.error('ההסבר נכשל', (err as Error).message),
   });
 
@@ -172,6 +159,7 @@ export function MatchDetailPage() {
   });
 
   const [confirm, setConfirm] = useState<null | { type: 'approve' | 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [explainOpen, setExplainOpen] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [sendSide, setSendSide] = useState<'a' | 'b'>('a');
@@ -243,7 +231,11 @@ export function MatchDetailPage() {
   }, [id, match.data?.data.sideAResponse?.respondedAt, match.data?.data.sideBResponse?.respondedAt]);
 
   if (match.isLoading) return <div className="p-6"><LoadingSkeleton rows={8} /></div>;
-  if (match.isError) return <ErrorState description={(match.error as Error).message} onRetry={() => match.refetch()} />;
+  if (match.isError) {
+    return isNotFoundError(match.error)
+      ? <NotFoundState title="הצעה לא נמצאה" description="הצעת השידוך המבוקשת לא קיימת או נמחקה." backTo="/matches" backLabel="חזרה להצעות" />
+      : <ErrorState description={(match.error as Error).message} onRetry={() => match.refetch()} />;
+  }
   if (!match.data) return null;
 
   const m = match.data.data;
@@ -272,9 +264,8 @@ export function MatchDetailPage() {
             <Button
               variant="secondary"
               leftIcon={<Sparkles className="h-4 w-4" />}
-              loading={explain.isPending}
               disabled={!internal.data || !external.data}
-              onClick={() => explain.mutate()}
+              onClick={() => { setExplainOpen(true); explain.mutate({}); }}
             >
               הסבר AI
             </Button>
@@ -516,10 +507,21 @@ export function MatchDetailPage() {
         }}
       />
 
+      <ExplainAIModal
+        open={explainOpen}
+        onClose={() => setExplainOpen(false)}
+        loading={explain.isPending}
+        error={explain.isError ? (explain.error as Error).message : null}
+        data={explain.data?.data}
+        onRetry={() => explain.mutate({})}
+        onRefresh={() => explain.mutate({ force: true })}
+      />
+
       <AskAIPanel
         open={askOpen}
         onClose={() => setAskOpen(false)}
-        initialQuery={`הצעת שידוך ${id ?? ''} — איזה צעדים שווה לשקול? מה נקודות הלב העיקריות?`}
+        initialQuery="הצעת שידוך לכרטיס זה — איזה צעדים שווה לשקול? מה נקודות הלב העיקריות?"
+        contextId={id}
       />
 
       <Dialog
@@ -580,6 +582,124 @@ export function MatchDetailPage() {
         </div>
       </Dialog>
     </div>
+  );
+}
+
+// AI match-explanation modal. Opens immediately on click and shows a
+// "מנתח מידע ובודק…" loading state until the answer arrives, then renders
+// the structured explanation (summary, strengths, concerns, nuance,
+// recommended approach). The explanation is persisted on the suggestion:
+// it is reused as-is until something scoring-relevant changes, at which
+// point it refreshes and reports WHAT changed.
+function ExplainAIModal({
+  open,
+  onClose,
+  loading,
+  error,
+  data,
+  onRetry,
+  onRefresh,
+}: {
+  open: boolean;
+  onClose: () => void;
+  loading: boolean;
+  error: string | null;
+  data?: MatchExplanation;
+  onRetry: () => void;
+  onRefresh: () => void;
+}) {
+  const r = data?.explanation;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-brand-700" />
+          הסבר AI להתאמה
+        </span>
+      }
+      secondaryAction={{ label: 'סגור', onClick: onClose }}
+    >
+      <div className="max-h-[60vh] overflow-y-auto pe-1">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-10 text-ink-muted">
+            <Loader2 className="h-7 w-7 animate-spin text-brand-700" />
+            <div className="text-sm font-medium">מנתח מידע ובודק…</div>
+            <div className="text-xs text-ink-faint">ה-AI עובר על הנתונים ומכין הסבר מפורט</div>
+          </div>
+        ) : error ? (
+          <div className="space-y-3 py-4 text-center">
+            <div className="text-sm text-danger">ההסבר נכשל: {error}</div>
+            <Button variant="secondary" onClick={onRetry}>נסה שוב</Button>
+          </div>
+        ) : r ? (
+          <div className="space-y-4 text-sm">
+            {/* Score movement — the engine was re-evaluated on open */}
+            {data?.rescored && data.score.direction !== 'same' && (
+              <div className={`rounded-md border p-2.5 text-xs font-medium ${
+                data.score.direction === 'up'
+                  ? 'border-success/30 bg-success/10 text-success'
+                  : 'border-warning/30 bg-warning/10 text-warning'
+              }`}>
+                {data.score.direction === 'up' ? '↑ ההתאמה השתפרה' : '↓ ההתאמה נחלשה'} — הציון
+                {' '}{data.score.direction === 'up' ? 'עלה' : 'ירד'} מ-{data.score.previous} ל-{data.score.current}
+                {' '}({data.score.delta > 0 ? '+' : ''}{data.score.delta})
+              </div>
+            )}
+
+            {/* Freshness banner — refreshed vs reused, and what changed */}
+            {data && (data.changedFields.length > 0 ? (
+              <div className="rounded-md border border-brand-200 bg-brand-50 p-2.5 text-xs text-brand-800">
+                ההסבר עודכן כי השתנה: {data.changedFields.join(' · ')}
+              </div>
+            ) : data.fromCache ? (
+              <div className="text-[11px] text-ink-faint flex items-center justify-between gap-2">
+                <span>
+                  מבוסס על ניתוח שמור
+                  {r.generatedAt ? ` · עודכן ${formatDateTime(r.generatedAt)}` : ''}
+                </span>
+                <button type="button" onClick={onRefresh} className="text-brand-700 hover:underline">רענן</button>
+              </div>
+            ) : null)}
+
+            {r.summary && <p className="text-ink leading-relaxed">{r.summary}</p>}
+            {r.strengths.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-success uppercase tracking-wide mb-1">חוזקות</div>
+                <ul className="list-disc ps-4 space-y-1">{r.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+            )}
+            {r.concerns.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-warning uppercase tracking-wide mb-1">נקודות לב</div>
+                <ul className="list-disc ps-4 space-y-1">{r.concerns.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+            )}
+            {r.nuance && (
+              <div>
+                <div className="text-xs font-medium text-ink-muted uppercase tracking-wide mb-1">ניואנס</div>
+                <p className="text-ink-muted leading-relaxed">{r.nuance}</p>
+              </div>
+            )}
+            {r.recommendedApproach && (
+              <div className="rounded-md bg-bg-subtle p-3">
+                <div className="text-xs font-medium text-brand-700 uppercase tracking-wide mb-1">גישה מומלצת</div>
+                <p className="text-ink leading-relaxed">{r.recommendedApproach}</p>
+              </div>
+            )}
+            {r.notMatchReasons.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-danger uppercase tracking-wide mb-1">סיבות אפשריות לאי-התאמה</div>
+                <ul className="list-disc ps-4 space-y-1">{r.notMatchReasons.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="py-6 text-center text-sm text-ink-muted">אין הסבר זמין.</div>
+        )}
+      </div>
+    </Dialog>
   );
 }
 

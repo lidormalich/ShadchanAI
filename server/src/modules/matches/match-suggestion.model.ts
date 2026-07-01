@@ -94,15 +94,49 @@ const blockerReasonSchema = new Schema(
   { _id: false },
 );
 
+// Snapshot of every input the explanation depends on. Stored so we can
+// (a) detect staleness by hashing it and (b) diff old↔new to tell the
+// operator WHAT changed when the explanation refreshes.
+const aiExplanationInputsSchema = new Schema(
+  {
+    internalScoringHash: { type: String },
+    externalScoringHash: { type: String },
+    matchScore: { type: Number },
+    confidenceScore: { type: Number },
+    matchType: { type: String },
+    riskLevel: { type: String },
+  },
+  { _id: false },
+);
+
 const aiExplanationSchema = new Schema(
   {
     text: { type: String },
     strengths: [{ type: String }],
     concerns: [{ type: String }],
+    nuance: { type: String },
+    recommendedApproach: { type: String },
+    notMatchReasons: [{ type: String }],
     generatedAt: { type: Date },
     provider: { type: String },
     model: { type: String },
     requestId: { type: Schema.Types.ObjectId, ref: 'AIRequest' },
+    // Staleness key: sha256 of `inputs`. A mismatch with the current
+    // inputs means the explanation is stale and must be regenerated.
+    inputHash: { type: String },
+    // The inputHash that was in effect BEFORE this generation — present
+    // only when the explanation was refreshed (not first-generated).
+    previousInputHash: { type: String },
+    // The input snapshot this explanation was generated from.
+    inputs: { type: aiExplanationInputsSchema },
+    // Candidate updatedAt values at generation time. A candidate's data
+    // only changes on a manual edit, so a newer updatedAt is our signal
+    // to re-check the pair the next time this suggestion is opened.
+    sourceInternalUpdatedAt: { type: Date },
+    sourceExternalUpdatedAt: { type: Date },
+    // Human-readable labels of what changed since the prior generation
+    // (e.g. "ציון ההתאמה", "פרופיל המועמד החיצוני"). Empty on first gen.
+    changedFields: [{ type: String }],
   },
   { _id: false },
 );
@@ -238,10 +272,26 @@ export interface IMatchSuggestion extends Document {
     text?: string;
     strengths?: string[];
     concerns?: string[];
+    nuance?: string;
+    recommendedApproach?: string;
+    notMatchReasons?: string[];
     generatedAt?: Date;
     provider?: string;
     model?: string;
     requestId?: Types.ObjectId;
+    inputHash?: string;
+    previousInputHash?: string;
+    inputs?: {
+      internalScoringHash?: string;
+      externalScoringHash?: string;
+      matchScore?: number;
+      confidenceScore?: number;
+      matchType?: string;
+      riskLevel?: string;
+    };
+    changedFields?: string[];
+    sourceInternalUpdatedAt?: Date;
+    sourceExternalUpdatedAt?: Date;
   };
 
   // timestamps
