@@ -9,9 +9,9 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Filter, RefreshCw, ShieldAlert, Users } from 'lucide-react';
+import { Filter, RefreshCw, Search, ShieldAlert, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Badge, Button, Card, CardBody, CardHeader, Select } from '@/components/ui/primitives';
+import { Badge, Button, Card, CardBody, CardHeader, Input, Select } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { channelsApi, type DiscoveredChat } from '@/services/api/channels';
 import { toast } from '@/components/ui/Toast';
@@ -74,6 +74,7 @@ export function ChannelMappingsPage() {
 
 function ChatList({ channelId }: { channelId: string }) {
   const [filter, setFilter] = useState<RoleFilter>('unmapped');
+  const [search, setSearch] = useState('');
 
   const discovery = useQuery({
     queryKey: ['channel', channelId, 'chats'],
@@ -92,14 +93,31 @@ function ChatList({ channelId }: { channelId: string }) {
   }
   const result = discovery.data!.data;
 
+  const q = search.trim().toLowerCase();
   const filtered = result.chats.filter((c) => {
-    if (filter === 'all') return true;
-    if (filter === 'unmapped') return !c.role;
-    return c.role === filter;
+    const roleOk =
+      filter === 'all' ? true
+      : filter === 'unmapped' ? !c.role
+      : c.role === filter;
+    if (!roleOk) return false;
+    if (!q) return true;
+    return (c.name?.toLowerCase().includes(q) ?? false) || c.chatJid.toLowerCase().includes(q);
   });
 
   return (
     <div className="space-y-3">
+      {!result.liveSessionAvailable ? (
+        <Card className="p-3 border-amber-200 bg-amber-50 text-xs text-amber-900">
+          הסשן אינו מחובר{result.liveState ? ` (מצב: ${result.liveState})` : ''} — מוצגות רק שיחות מוכרות ומיפויים קיימים.
+          חבר את הסשן בעמוד <span className="font-semibold">ערוצי WhatsApp</span>, ואז לחץ "רענן רשימה".
+        </Card>
+      ) : result.groupsFetched === 0 && (
+        <Card className="p-3 border-amber-200 bg-amber-50 text-xs text-amber-900">
+          {result.groupFetchError
+            ? <>הסשן מחובר אך שליפת הקבוצות נכשלה: <span className="font-mono">{result.groupFetchError}</span></>
+            : <>הסשן מחובר אך WhatsApp החזיר 0 קבוצות. אם אתה חבר בקבוצות תחת המספר המחובר, המתן כמה שניות ולחץ "רענן רשימה", או חבר מחדש את הסשן.</>}
+        </Card>
+      )}
       <Card className="p-3 flex items-center gap-3 flex-wrap">
         <Filter className="h-4 w-4 text-ink-faint" />
         <Select value={filter} onChange={(e) => setFilter(e.target.value as RoleFilter)}>
@@ -109,6 +127,15 @@ function ChatList({ channelId }: { channelId: string }) {
           <option value="ignore">מתעלם</option>
           <option value="all">הכול</option>
         </Select>
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
+          <Search className="absolute top-1/2 -translate-y-1/2 start-2 h-3.5 w-3.5 text-ink-faint pointer-events-none" />
+          <Input
+            className="ps-7"
+            placeholder="חיפוש לפי שם או מזהה…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
         <Button
           size="sm"
           variant="secondary"
@@ -128,8 +155,12 @@ function ChatList({ channelId }: { channelId: string }) {
       {filtered.length === 0 ? (
         <Card className="p-5">
           <EmptyState
-            title="אין שיחות בקטגוריה זו"
-            description={filter === 'unmapped' ? 'כל השיחות מופו. שיחות חדשות יופיעו כאן.' : undefined}
+            title={q ? 'אין תוצאות לחיפוש' : 'אין שיחות בקטגוריה זו'}
+            description={
+              q ? `לא נמצאה שיחה התואמת "${search.trim()}".`
+              : filter === 'unmapped' ? 'כל השיחות מופו. שיחות חדשות יופיעו כאן.'
+              : undefined
+            }
           />
         </Card>
       ) : (

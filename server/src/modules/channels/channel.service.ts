@@ -6,14 +6,15 @@
 // Serialization strips secrets (tokenRef) before returning.
 // ═══════════════════════════════════════════════════════════
 
-import { AuditActionType, AuditEntityType } from '@shadchanai/shared';
+import { AuditActionType, AuditEntityType, MessageDirection, MessageIngestionDecision } from '@shadchanai/shared';
 import { Channel, type IChannel } from '../../models/index.js';
 import { channels as channelMgr } from '../../services/whatsapp/whatsapp.service.js';
 import { audit } from '../../services/audit.service.js';
 import { NotFoundError, BusinessRuleError } from '../../utils/errors.js';
 import { publishRealtimeEvent } from '../../services/realtime/realtime.service.js';
 import { discoverChats, type DiscoveryResult } from '../../services/whatsapp/chat-discovery.service.js';
-import { ChatMapping } from '../../models/index.js';
+import { ChatMapping, Conversation, Message } from '../../models/index.js';
+import { enqueueExtraction } from '../../services/extraction/queue.js';
 import { Types } from 'mongoose';
 import { ChannelStatus } from '@shadchanai/shared';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
@@ -38,6 +39,8 @@ export interface ChannelView {
   replacedByChannelId?: string;
   statusReason?: string;
   lastDisconnectAt?: Date;
+  lastAutoReconnectAt?: Date;
+  autoReconnectCount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -60,6 +63,8 @@ export function toChannelView(doc: IChannel): ChannelView {
     replacedByChannelId: doc.replacedByChannelId,
     statusReason: doc.statusReason,
     lastDisconnectAt: doc.lastDisconnectAt,
+    lastAutoReconnectAt: doc.lastAutoReconnectAt,
+    autoReconnectCount: doc.autoReconnectCount,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -325,6 +330,31 @@ export async function listDiscoveredChats(channelId: string): Promise<DiscoveryR
   return discoverChats(channelId);
 }
 
+// Pending chats = every chat that hasn't been assigned a role yet (the
+// "ערוצים בהמתנה" triage surface). Chats that already have held-back
+// messages waiting for a decision are surfaced first so the real work is
+// on top; brand-new chats with nothing waiting still appear so the
+// operator can proactively choose which to pull from.
+export async function listPendingChats(channelId: string): Promise<DiscoveryResult> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+  const result = await discoverChats(channelId);
+  const chats = result.chats
+    .filter((c) => !c.role)
+    .sort((a, b) => {
+      // Waiting messages first (most-waiting on top), then recent activity.
+      const ap = a.pendingMessageCount ?? 0;
+      const bp = b.pendingMessageCount ?? 0;
+      if (ap !== bp) return bp - ap;
+      const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      if (at !== bt) return bt - at;
+      // Stable tiebreaker so rows don't reshuffle between 30s refetches.
+      return a.chatJid.localeCompare(b.chatJid);
+    });
+  return { ...result, chats };
+}
+
 export async function assignChatRole(
   channelId: string,
   chatJid: string,
@@ -332,7 +362,8 @@ export async function assignChatRole(
   role: 'profiles_source' | 'match_sending' | 'ignore' | null,
   performedBy: string,
   chatName?: string,
-): Promise<{ channelId: string; chatJid: string; role: typeof role }> {
+  backfillExisting?: boolean,
+): Promise<{ channelId: string; chatJid: string; role: typeof role; backfilled?: number }> {
   const ch = await channelMgr.findById(channelId);
   if (!ch) throw new NotFoundError('Channel', channelId);
 
@@ -372,16 +403,142 @@ export async function assignChatRole(
     metadata: { scope: 'chat_mapping_assigned', chatJid, chatType, role },
   });
 
-  return { channelId, chatJid, role };
+  // When the operator approves a previously-unmapped chat as a profiles
+  // source and opts in, retroactively feed everything that already
+  // arrived from it (held back as ignored_unmapped) into extraction.
+  let backfilled: number | undefined;
+  if (role === 'profiles_source' && backfillExisting) {
+    backfilled = await backfillChatExtraction(channelId, chatJid, performedBy);
+  }
+
+  return { channelId, chatJid, role, backfilled };
+}
+
+// ── Retroactive backfill of held-back (pending) messages ────
+//
+// Takes every inbound message that the ingestion gate stored but held
+// back for this chat (ingestion.decision = ignored_unmapped) and feeds
+// it into the extraction pipeline — flipping the decision to ACCEPTED so
+// the audit trail reflects the operator's approval and the message is no
+// longer counted as pending. Used when a pending chat is approved as a
+// profiles source, and by the explicit per-chat backfill endpoint.
+//
+// Message stores conversationId (not chatJid), so we resolve the chat's
+// conversations first (a group has one conversation per sender, all
+// sharing the chatJid) and then scan their messages.
+export async function backfillChatExtraction(
+  channelId: string,
+  chatJid: string,
+  performedBy: string,
+): Promise<number> {
+  const conversations = await Conversation.find({ channelId, chatJid })
+    .select('_id')
+    .lean()
+    .exec();
+  if (conversations.length === 0) return 0;
+
+  const conversationIds = conversations.map((c) => c._id);
+  const messages = await Message.find({
+    conversationId: { $in: conversationIds },
+    direction: MessageDirection.INBOUND,
+    'ingestion.decision': MessageIngestionDecision.IGNORED_UNMAPPED,
+  })
+    .select('_id')
+    .lean()
+    .exec();
+
+  let enqueued = 0;
+  for (const m of messages) {
+    // Flip the verdict so it stops counting as pending and the audit
+    // trail shows it was accepted on approval, then enqueue extraction.
+    await Message.updateOne(
+      { _id: m._id },
+      {
+        $set: {
+          ingestion: {
+            decision: MessageIngestionDecision.ACCEPTED,
+            effectiveRole: 'profiles_source',
+            decidedAt: new Date(),
+          },
+        },
+      },
+    ).exec();
+    void enqueueExtraction(String(m._id)).catch(() => undefined);
+    enqueued += 1;
+  }
+
+  await audit({
+    entityType: AuditEntityType.CHANNEL,
+    entityId: channelId,
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    metadata: { scope: 'chat_backfill_extraction', chatJid, enqueued },
+  });
+
+  return enqueued;
+}
+
+// ── Best-effort WhatsApp history pull for a chat ────────────
+//
+// Asks the live Baileys session to fetch older history for this chat.
+// Whatever WhatsApp delivers flows back through the normal inbound path
+// (messaging-history.set → ingest), so it lands subject to the same
+// ingestion gate: an unmapped chat accumulates as pending, a mapped
+// profiles_source chat extracts immediately. Best-effort — WhatsApp
+// does not always return the full history, and nothing arrives if the
+// session isn't connected.
+export async function requestChatHistorySync(
+  channelId: string,
+  chatJid: string,
+  performedBy: string,
+): Promise<{ requested: boolean; reason?: string }> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+
+  const { getChannelClient } = await import(
+    '../../services/whatsapp/providers/baileys/baileys.client.js'
+  );
+  const client = getChannelClient(channelId);
+  if (!client || client.status.state !== 'connected') {
+    return { requested: false, reason: 'session_not_connected' };
+  }
+
+  const result = await client.requestHistorySync(chatJid);
+
+  await audit({
+    entityType: AuditEntityType.CHANNEL,
+    entityId: String(ch._id),
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    metadata: { scope: 'chat_history_sync', chatJid, requested: result.requested },
+  });
+
+  return result;
 }
 
 // ── Safe channel deletion ────────────────────────────────
 // Only allowed when the channel is already disconnected / suspended /
-// replaced AND no live Baileys client is running. Wipes the Channel
-// row + its ChatMappings; conversation history is retained because
-// Conversation rows reference channelId but don't cascade-delete.
+// replaced AND no live Baileys client is running.
+//
+// History is NEVER silently orphaned: a channel that still holds
+// Conversation/Message history cannot be deleted unless the caller
+// says where that history should go —
+//   • reassignHistoryTo: an explicit live channel to re-home onto, OR
+//   • the channel's replacedByChannelId (auto-used when set), OR
+//   • orphanHistory: true — an explicit acknowledgement to leave it.
+// Without one of these we throw, because a plain delete used to strand
+// the history under a dead channelId (invisible to discovery).
 
-export async function deleteChannelSafely(channelId: string, performedBy: string): Promise<void> {
+export interface DeleteChannelOptions {
+  reassignHistoryTo?: string;
+  orphanHistory?: boolean;
+}
+
+export async function deleteChannelSafely(
+  channelId: string,
+  performedBy: string,
+  opts: DeleteChannelOptions = {},
+): Promise<void> {
   const ch = await channelMgr.findById(channelId);
   if (!ch) throw new NotFoundError('Channel', channelId);
 
@@ -407,6 +564,45 @@ export async function deleteChannelSafely(channelId: string, performedBy: string
     );
   }
 
+  // Guard the history: never let a delete strand conversations/messages.
+  const convCount = await Conversation.countDocuments({ channelId }).exec();
+  const reassignTarget = opts.reassignHistoryTo ?? ch.replacedByChannelId ?? undefined;
+  let historyReassignedTo: string | undefined;
+  if (convCount > 0) {
+    if (reassignTarget) {
+      const target = await Channel.findOne({ channelId: reassignTarget }).select('channelId').lean().exec();
+      if (!target) {
+        throw new BusinessRuleError(
+          `Reassign target channel '${reassignTarget}' does not exist.`,
+          { code: 'reassign_target_missing', reassignTarget },
+        );
+      }
+      await Conversation.updateMany(
+        { channelId },
+        { $set: { channelId: reassignTarget, migratedFromChannelId: channelId } },
+      ).exec();
+      await Message.updateMany(
+        { channelId },
+        { $set: { channelId: reassignTarget, migratedFromChannelId: channelId } },
+      ).exec();
+      // Never-gated inbound messages (no ingestion.decision) would stay
+      // invisible to discovery/pending after the move. Normalize them to
+      // ignored_unmapped — same as the rehome-orphaned-channels recovery —
+      // so the reassigned history surfaces as pending and is backfillable.
+      await Message.updateMany(
+        { channelId: reassignTarget, migratedFromChannelId: channelId, direction: MessageDirection.INBOUND, 'ingestion.decision': { $exists: false } },
+        { $set: { ingestion: { decision: MessageIngestionDecision.IGNORED_UNMAPPED, decidedAt: new Date() } } },
+      ).exec();
+      historyReassignedTo = reassignTarget;
+    } else if (!opts.orphanHistory) {
+      throw new BusinessRuleError(
+        `Channel has ${convCount} conversations of history. Deleting would orphan them under a dead channel id. `
+        + `Reconnect this channel instead, or pass reassignHistoryTo (a live channel) / orphanHistory=true to proceed.`,
+        { code: 'channel_has_history', conversationCount: convCount },
+      );
+    }
+  }
+
   await ChatMapping.deleteMany({ channelId }).exec();
   await Channel.deleteOne({ channelId }).exec();
 
@@ -415,7 +611,7 @@ export async function deleteChannelSafely(channelId: string, performedBy: string
     entityId: String(ch._id),
     actionType: AuditActionType.DELETE,
     performedBy,
-    metadata: { transition: 'delete', formerStatus: ch.status },
+    metadata: { transition: 'delete', formerStatus: ch.status, historyReassignedTo, orphanedHistory: convCount > 0 && !historyReassignedTo },
   });
   publishRealtimeEvent('channel.updated', {
     channelId: ch.channelId,

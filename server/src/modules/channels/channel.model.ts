@@ -47,6 +47,12 @@ export interface IChannel extends Document {
   ownerInstanceId?: string | null;
   ownerHeartbeatAt?: Date;
 
+  // self-heal telemetry — stamped by the connection watchdog each time it
+  // automatically revives a dropped session. Surfaced in the UI so the
+  // operator can see auto-recovery is working without reading logs.
+  lastAutoReconnectAt?: Date;
+  autoReconnectCount?: number;
+
   // timestamps
   createdAt: Date;
   updatedAt: Date;
@@ -112,6 +118,10 @@ const channelSchema = new Schema<IChannel>(
     lastDisconnectAt: { type: Date },
     ownerInstanceId: { type: String, default: null },
     ownerHeartbeatAt: { type: Date },
+
+    // ── Self-heal telemetry (watchdog) ────────────────────
+    lastAutoReconnectAt: { type: Date },
+    autoReconnectCount: { type: Number, default: 0 },
   },
   {
     timestamps: true,

@@ -10,12 +10,20 @@ export interface DiscoveredChat {
   lastMessageAt?: string;
   hasConversation: boolean;
   conversationId?: string;
+  // Messages stored but held back by the ingestion gate (waiting for a
+  // mapping decision) — drives the "Pending" surface and backfill count.
+  pendingMessageCount?: number;
+  lastPendingAt?: string;
 }
 
 export interface ChatDiscoveryResult {
   channelId: string;
   liveSessionAvailable: boolean;
+  /** Live Baileys state of the in-process client (null = no live client). */
+  liveState: string | null;
   groupsFetched: number;
+  /** Why the live group fetch returned nothing, when it did. */
+  groupFetchError?: string;
   chats: DiscoveredChat[];
 }
 
@@ -97,9 +105,21 @@ export const channelsApi = {
     chatType: 'group' | 'private';
     role: 'profiles_source' | 'match_sending' | 'ignore' | null;
     chatName?: string;
-  }) => api.patch<{ channelId: string; chatJid: string; role: string | null }>(
+    backfillExisting?: boolean;
+  }) => api.patch<{ channelId: string; chatJid: string; role: string | null; backfilled?: number }>(
     `/channels/${channelId}/chats/role`, body,
   ),
+  // ── Pending channels (held-back chats) ──────────────────
+  listPending: (channelId: string) =>
+    api.get<ChatDiscoveryResult>(`/channels/${channelId}/pending`),
+  backfillChat: (channelId: string, chatJid: string) =>
+    api.post<{ channelId: string; chatJid: string; enqueued: number }>(
+      `/channels/${channelId}/chats/backfill`, { chatJid },
+    ),
+  historySync: (channelId: string, chatJid: string) =>
+    api.post<{ requested: boolean; reason?: string }>(
+      `/channels/${channelId}/chats/history-sync`, { chatJid },
+    ),
   deleteChannel: (channelId: string) =>
     api.post<void>(`/channels/${channelId}/delete`, { confirmChannelId: channelId }),
   // ── Multi-account admin ─────────────────────────────────

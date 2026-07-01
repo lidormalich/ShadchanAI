@@ -36,6 +36,17 @@ export const AssignChatRoleSchema = z.object({
   chatName: z.string().trim().max(200).optional(),
   chatType: z.enum(['group', 'private']),
   role: z.enum(['profiles_source', 'match_sending', 'ignore']).nullable(),
+  // When approving a chat as profiles_source, also retroactively feed the
+  // messages that already arrived from it (held back as ignored_unmapped)
+  // into the extraction pipeline.
+  backfillExisting: z.boolean().optional(),
+});
+
+// Body for per-chat actions that only need to identify the chat (backfill
+// held-back messages / request WhatsApp history). chatJid carries '@' and
+// '.', so it travels in the body rather than the URL.
+export const ChatJidBodySchema = z.object({
+  chatJid: z.string().trim().min(3).max(200),
 });
 
 export const DeleteChannelSchema = z.object({

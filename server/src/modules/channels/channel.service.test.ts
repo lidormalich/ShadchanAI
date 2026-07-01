@@ -5,8 +5,22 @@ import { NotFoundError, BusinessRuleError } from '../../utils/errors.js';
 // ── Hoisted mocks for every collaborator the service imports ──
 const h = vi.hoisted(() => ({
   channelMgr: { findById: vi.fn() },
-  Channel: { deleteOne: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })) },
+  Channel: {
+    deleteOne: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })),
+    findOne: vi.fn(),
+  },
   ChatMapping: { deleteMany: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })) },
+  Conversation: {
+    find: vi.fn(),
+    countDocuments: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(0) })),
+    updateMany: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })),
+  },
+  Message: {
+    find: vi.fn(),
+    updateOne: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })),
+    updateMany: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })),
+  },
+  enqueueExtraction: vi.fn().mockResolvedValue(undefined),
   auditMock: vi.fn().mockResolvedValue(undefined),
   publishMock: vi.fn(),
   getChannelClient: vi.fn(),
@@ -16,7 +30,15 @@ const h = vi.hoisted(() => ({
   describeAllSessions: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('../../models/index.js', () => ({ Channel: h.Channel, ChatMapping: h.ChatMapping }));
+vi.mock('../../models/index.js', () => ({
+  Channel: h.Channel,
+  ChatMapping: h.ChatMapping,
+  Conversation: h.Conversation,
+  Message: h.Message,
+}));
+vi.mock('../../services/extraction/queue.js', () => ({
+  enqueueExtraction: (...a: unknown[]) => h.enqueueExtraction(...a),
+}));
 vi.mock('../../services/whatsapp/whatsapp.service.js', () => ({ channels: h.channelMgr }));
 vi.mock('../../services/audit.service.js', () => ({ audit: (...a: unknown[]) => h.auditMock(...a) }));
 vi.mock('../../services/realtime/realtime.service.js', () => ({
@@ -36,7 +58,12 @@ vi.mock('../../services/whatsapp/instance.lock.js', () => ({
   INSTANCE_ID: 'test-instance',
 }));
 
-import { getChannel, deleteChannelSafely, startSession } from './channel.service.js';
+import { getChannel, deleteChannelSafely, startSession, backfillChatExtraction } from './channel.service.js';
+
+// Chainable lean().exec() query stub used by Conversation.find / Message.find.
+const leanExec = (value: unknown) => ({
+  select: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue(value) }) }),
+});
 
 const PERFORMER = '507f1f77bcf86cd799439012';
 const fakeChannel = (over: Record<string, unknown> = {}) => ({
@@ -100,6 +127,67 @@ describe('deleteChannelSafely', () => {
     expect(h.Channel.deleteOne).toHaveBeenCalledWith({ channelId: 'ch-1' });
     expect(h.auditMock).toHaveBeenCalledTimes(1);
     expect(h.publishMock).toHaveBeenCalledWith('channel.updated', expect.objectContaining({ transition: 'delete' }));
+  });
+
+  it('refuses to delete a channel that still holds history (would orphan it)', async () => {
+    h.channelMgr.findById.mockResolvedValue(fakeChannel({ status: ChannelStatus.SUSPENDED }));
+    h.getChannelClient.mockReturnValue(undefined);
+    h.Conversation.countDocuments.mockReturnValueOnce({ exec: vi.fn().mockResolvedValue(7) });
+
+    await expect(deleteChannelSafely('ch-1', PERFORMER))
+      .rejects.toMatchObject({ name: 'BusinessRuleError', details: { code: 'channel_has_history', conversationCount: 7 } });
+    expect(h.Channel.deleteOne).not.toHaveBeenCalled();
+  });
+
+  it('re-homes history to an explicit target, then deletes', async () => {
+    h.channelMgr.findById.mockResolvedValue(fakeChannel({ status: ChannelStatus.SUSPENDED }));
+    h.getChannelClient.mockReturnValue(undefined);
+    h.Conversation.countDocuments.mockReturnValueOnce({ exec: vi.fn().mockResolvedValue(7) });
+    h.Channel.findOne.mockReturnValue({ select: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue({ channelId: 'ch-live' }) }) }) });
+
+    await deleteChannelSafely('ch-1', PERFORMER, { reassignHistoryTo: 'ch-live' });
+
+    expect(h.Conversation.updateMany).toHaveBeenCalledWith(
+      { channelId: 'ch-1' },
+      { $set: { channelId: 'ch-live', migratedFromChannelId: 'ch-1' } },
+    );
+    expect(h.Message.updateMany).toHaveBeenCalledWith(
+      { channelId: 'ch-1' },
+      { $set: { channelId: 'ch-live', migratedFromChannelId: 'ch-1' } },
+    );
+    expect(h.Channel.deleteOne).toHaveBeenCalledWith({ channelId: 'ch-1' });
+    expect(h.auditMock).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ historyReassignedTo: 'ch-live' }) }));
+  });
+});
+
+describe('backfillChatExtraction', () => {
+  it('returns 0 and enqueues nothing when the chat has no conversations', async () => {
+    h.Conversation.find.mockReturnValue(leanExec([]));
+
+    const n = await backfillChatExtraction('ch-1', 'g1@g.us', PERFORMER);
+
+    expect(n).toBe(0);
+    expect(h.Message.find).not.toHaveBeenCalled();
+    expect(h.enqueueExtraction).not.toHaveBeenCalled();
+  });
+
+  it('flips held-back messages to accepted and enqueues each for extraction', async () => {
+    h.Conversation.find.mockReturnValue(leanExec([{ _id: 'c1' }, { _id: 'c2' }]));
+    h.Message.find.mockReturnValue(leanExec([{ _id: 'm1' }, { _id: 'm2' }]));
+
+    const n = await backfillChatExtraction('ch-1', 'g1@g.us', PERFORMER);
+
+    expect(n).toBe(2);
+    // Only ignored_unmapped inbound messages of this chat's conversations.
+    expect(h.Message.find).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: { $in: ['c1', 'c2'] },
+      'ingestion.decision': 'ignored_unmapped',
+    }));
+    expect(h.Message.updateOne).toHaveBeenCalledTimes(2);
+    expect(h.enqueueExtraction).toHaveBeenCalledTimes(2);
+    expect(h.enqueueExtraction).toHaveBeenCalledWith('m1');
+    expect(h.enqueueExtraction).toHaveBeenCalledWith('m2');
+    expect(h.auditMock).toHaveBeenCalledTimes(1);
   });
 });
 

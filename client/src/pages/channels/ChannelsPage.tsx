@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Activity, AlertTriangle, KeyRound, LogOut, Plug, PlugZap, QrCode, RefreshCcw, Replace, Shield, Unplug, PlayCircle, Link2, Lock,
+  Activity, AlertTriangle, CheckCircle2, KeyRound, LogOut, Plug, PlugZap, QrCode, RefreshCcw, Replace, Shield, Unplug, PlayCircle, Link2, Lock,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { channelsApi, type AdminSessionView } from '@/services/api/channels';
 import {
@@ -35,6 +35,11 @@ const STATUS_REASON_MAP: Record<string, string> = {
   reconnect_circuit_open: 'חוגה שבורה — נדרשת התערבות ידנית',
 };
 
+// States that are still "in motion" toward a connected session. While in
+// any of these the pairing modal keeps polling so it can advance from
+// scan → connecting → connected without the operator clicking refresh.
+const PAIRING_IN_PROGRESS: BaileysChannelStatus['state'][] = ['pending_pairing', 'connecting', 'reconnecting'];
+
 function connectionHealthTone(h: string): 'success' | 'warning' | 'danger' {
   if (h === 'healthy') return 'success';
   if (h === 'degraded') return 'warning';
@@ -51,6 +56,18 @@ function maskPhone(p: string): string {
   if (!p) return '—';
   const digits = p.replace(/\D/g, '');
   return `•••${digits.slice(-4)}`;
+}
+
+// Short Hebrew relative time for the auto-recovery indicator.
+function relTime(iso?: string): string {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.round(ms / 60_000);
+  if (m < 1) return 'ממש עכשיו';
+  if (m < 60) return `לפני ${m} דק׳`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `לפני ${h} שע׳`;
+  return `לפני ${Math.round(h / 24)} ימים`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -150,10 +167,13 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
     queryFn: () => channelsApi.sessionStatus(channel.channelId),
     // Phase 7: while pairing, QR rotates on the Baileys side every
     // ~20s. Auto-poll status so the UI picks up the fresh QR before
-    // the operator scans an expired one. Stops as soon as the state
-    // transitions away from pending_pairing.
-    refetchInterval: (q) =>
-      q.state.data?.data.state === 'pending_pairing' ? 10_000 : false,
+    // the operator scans an expired one. Keep polling through the
+    // post-scan connecting handshake so the card lands on "connected"
+    // on its own; stop once the session settles.
+    refetchInterval: (q) => {
+      const st = q.state.data?.data.state;
+      return st && PAIRING_IN_PROGRESS.includes(st) ? 10_000 : false;
+    },
   });
   const session = statusQuery.data?.data ?? null;
   const setSession = (s: BaileysChannelStatus) => qc.setQueryData(sessionKey, { data: s });
@@ -256,6 +276,17 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
             <InfoCell label="הודעה אחרונה נכנסת" value={formatDateTime(channel.lastInboundAt)} />
             <InfoCell label="הודעה אחרונה יוצאת" value={formatDateTime(channel.lastOutboundAt)} />
             <InfoCell label="סטטוס סשן" value={<Badge tone="neutral">{label('pairingStatus', state)}</Badge>} />
+            {typeof channel.autoReconnectCount === 'number' && channel.autoReconnectCount > 0 && (
+              <InfoCell
+                label="החלמה אוטומטית"
+                value={
+                  <span className="inline-flex items-center gap-1 text-emerald-700">
+                    <Activity className="h-3 w-3" />
+                    {channel.autoReconnectCount}× · {relTime(channel.lastAutoReconnectAt)}
+                  </span>
+                }
+              />
+            )}
           </div>
 
           {/* Reason banner */}
@@ -480,15 +511,20 @@ function QRPairingModal({
 }) {
   // Shares the same session-status cache entry the card uses, so a
   // refresh here also refreshes the card (and vice-versa). While the
-  // modal is open and still pairing, poll faster (3s) than the card's
-  // background interval so the rotating QR stays fresh under the eye.
+  // modal is open and the session is still moving toward "connected"
+  // we poll fast (3s): the QR rotates ~every 20s while pairing, and
+  // after a scan we keep polling so the modal advances through the
+  // connecting handshake to success on its own.
   const statusQuery = useQuery({
     queryKey: ['channel', channelId, 'session-status'] as const,
     queryFn: () => channelsApi.sessionStatus(channelId),
     enabled: open,
-    refetchInterval: (q) =>
-      open && q.state.data?.data.state === 'pending_pairing' ? 3000 : false,
+    refetchInterval: (q) => {
+      const st = q.state.data?.data.state;
+      return open && st && PAIRING_IN_PROGRESS.includes(st) ? 3000 : false;
+    },
   });
+  const navigate = useNavigate();
   const status = statusQuery.data?.data ?? null;
   const refresh = () => {
     void statusQuery.refetch().then((r) => {
@@ -496,20 +532,34 @@ function QRPairingModal({
     });
   };
 
+  // Once connected we DON'T auto-close — we leave the success panel up
+  // with a CTA into chat mapping, so pairing flows straight into picking
+  // which WhatsApp groups feed candidates instead of dead-ending here.
+  const goToMappings = () => { onClose(); navigate('/channels/mappings'); };
+
   useEffect(() => {
     if (!open) return;
-    if (status?.state === 'connected') {
-      toast.success('החיבור הושלם');
-      const t = setTimeout(onClose, 1000);
-      return () => clearTimeout(t);
-    }
+    if (status?.state === 'connected') toast.success('החיבור הושלם');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, status?.state]);
 
   if (!open) return null;
 
+  const state = status?.state ?? 'idle';
   const qr = status?.qr;
   const isBase64Png = qr && /^[A-Za-z0-9+/=]+$/.test(qr) && qr.length > 100;
+
+  // Map the raw session state onto what the operator actually needs to
+  // see, so the moment after a scan reads as forward progress — not as
+  // a "no QR / reconnecting" error.
+  //  - connected               → success, modal auto-closes
+  //  - connecting/reconnecting  → scan accepted, finishing the handshake
+  //  - pending_pairing + qr     → show the code to scan
+  //  - pending_pairing, no qr   → code is loading
+  //  - anything else            → no live code, offer to (re)generate
+  const isConnected = state === 'connected';
+  const isFinishing = state === 'connecting' || state === 'reconnecting';
+  const isAwaitingScan = state === 'pending_pairing';
 
   return (
     <Dialog
@@ -517,32 +567,69 @@ function QRPairingModal({
       onClose={onClose}
       title="חיבור WhatsApp"
       description="סרוק את הקוד מהטלפון שמחזיק בחשבון כדי לחבר אותו לשדכנAI."
-      primaryAction={{ label: 'סגור', onClick: onClose }}
+      primaryAction={
+        isConnected
+          ? { label: 'המשך למיפוי קבוצות →', onClick: goToMappings }
+          : { label: 'סגור', onClick: onClose }
+      }
+      secondaryAction={isConnected ? { label: 'סגור', onClick: onClose } : undefined}
     >
       <div className="space-y-3">
-        <ol className="list-decimal ps-5 text-xs text-ink-muted space-y-1">
-          <li>פתח WhatsApp בטלפון שמחזיק בחשבון.</li>
-          <li>Settings → Linked Devices → Link a Device.</li>
-          <li>סרוק את הקוד המוצג כאן.</li>
-        </ol>
+        {isAwaitingScan && qr && (
+          <ol className="list-decimal ps-5 text-xs text-ink-muted space-y-1">
+            <li>פתח WhatsApp בטלפון שמחזיק בחשבון.</li>
+            <li>Settings → Linked Devices → Link a Device.</li>
+            <li>סרוק את הקוד המוצג כאן.</li>
+          </ol>
+        )}
 
-        <div className="flex items-center justify-center rounded-md border border-border bg-white p-3 min-h-[220px]">
-          {qr ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-md border border-border bg-white p-4 min-h-[220px] text-center">
+          {isConnected ? (
+            <>
+              <CheckCircle2 className="h-12 w-12 text-emerald-500" />
+              <div className="text-sm font-medium text-emerald-700">החיבור הושלם בהצלחה!</div>
+              <div className="text-xs text-ink-muted">
+                הטלפון מחובר לשדכנAI. השלב הבא: לבחור אילו קבוצות ווטסאפ יזינו מועמדים — לחץ "המשך למיפוי קבוצות".
+              </div>
+            </>
+          ) : isFinishing ? (
+            <>
+              <Spinner className="h-8 w-8 text-brand-600" />
+              <div className="text-sm font-medium">הסריקה התקבלה — מתחבר ל-WhatsApp…</div>
+              <div className="text-xs text-ink-muted">משלים את ההתחברות ומאמת את החשבון. אין צורך לסרוק שוב.</div>
+            </>
+          ) : isAwaitingScan && qr ? (
             isBase64Png ? (
               <img src={`data:image/png;base64,${qr}`} alt="QR" className="h-56 w-56 object-contain" />
             ) : (
               <QRCodeSVG value={qr} size={224} level="M" />
             )
+          ) : isAwaitingScan ? (
+            <>
+              <Spinner className="h-8 w-8 text-brand-600" />
+              <div className="text-sm font-medium">טוען קוד QR…</div>
+            </>
           ) : (
-            <div className="text-xs text-ink-muted">אין QR זמין כרגע — נסה לרענן.</div>
+            <>
+              <QrCode className="h-10 w-10 text-ink-faint" />
+              <div className="text-sm font-medium">אין קוד QR פעיל כרגע</div>
+              <div className="text-xs text-ink-muted">לחץ "רענן QR" כדי להפיק קוד חדש לסריקה.</div>
+            </>
           )}
         </div>
 
         <div className="flex items-center justify-between text-xs text-ink-muted">
-          <span>סטטוס: {label('pairingStatus', status?.state ?? 'idle')}</span>
-          <Button size="sm" variant="secondary" onClick={refresh} loading={statusQuery.isFetching} leftIcon={<RefreshCcw className="h-3.5 w-3.5" />}>
-            רענן QR
-          </Button>
+          <span className="inline-flex items-center gap-1.5">
+            סטטוס:
+            <Badge tone={isConnected ? 'success' : isFinishing ? 'info' : 'neutral'}>
+              {label('pairingStatus', state)}
+            </Badge>
+          </span>
+          {!isConnected && (
+            <Button size="sm" variant="secondary" onClick={refresh} loading={statusQuery.isFetching} leftIcon={<RefreshCcw className="h-3.5 w-3.5" />}>
+              רענן QR
+            </Button>
+          )}
         </div>
       </div>
     </Dialog>

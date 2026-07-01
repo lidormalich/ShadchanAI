@@ -7,6 +7,7 @@ import {
   DisconnectChannelSchema,
   ChannelIdParamSchema,
   AssignChatRoleSchema,
+  ChatJidBodySchema,
   DeleteChannelSchema,
   ForceReleaseLockSchema,
 } from './channel.validator.js';
@@ -48,6 +49,14 @@ channelRouter.post(
 // ── Pre-pilot discovery + mapping + safe delete ──────────
 channelRouter.get('/:channelId/chats', validate({ params: ChannelIdParamSchema }), ctrl.listChatsHandler);
 channelRouter.patch('/:channelId/chats/role', validate({ params: ChannelIdParamSchema, body: AssignChatRoleSchema }), ctrl.assignChatRoleHandler);
+
+// ── Pending channels (held-back chats) ───────────────────
+// Unmapped chats that already have messages waiting for a decision,
+// plus the actions to act on them: backfill the held-back messages
+// into extraction, or pull older history from WhatsApp (best-effort).
+channelRouter.get('/:channelId/pending', validate({ params: ChannelIdParamSchema }), ctrl.listPendingChatsHandler);
+channelRouter.post('/:channelId/chats/backfill', validate({ params: ChannelIdParamSchema, body: ChatJidBodySchema }), ctrl.backfillChatHandler);
+channelRouter.post('/:channelId/chats/history-sync', validate({ params: ChannelIdParamSchema, body: ChatJidBodySchema }), ctrl.historySyncHandler);
 // Using POST (not DELETE) so the operator-confirmation body is
 // trivially accepted by the standard API client. The body still
 // requires confirmChannelId to match — the guard is unchanged.

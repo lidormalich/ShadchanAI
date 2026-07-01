@@ -157,13 +157,43 @@ export async function assignChatRoleHandler(req: Request, res: Response, next: N
     const user = ensureUser(req.user);
     canManageChannels(user);
     const { channelId } = getValidatedParams<{ channelId: string }>(req);
-    const { chatJid, chatName, chatType, role } = req.body as {
+    const { chatJid, chatName, chatType, role, backfillExisting } = req.body as {
       chatJid: string;
       chatName?: string;
       chatType: 'group' | 'private';
       role: 'profiles_source' | 'match_sending' | 'ignore' | null;
+      backfillExisting?: boolean;
     };
-    ok(res, await svc.assignChatRole(channelId, chatJid, chatType, role, user.id, chatName));
+    ok(res, await svc.assignChatRole(channelId, chatJid, chatType, role, user.id, chatName, backfillExisting));
+  } catch (e) { next(e); }
+}
+
+export async function listPendingChatsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    ok(res, await svc.listPendingChats(channelId));
+  } catch (e) { next(e); }
+}
+
+export async function backfillChatHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    const { chatJid } = req.body as { chatJid: string };
+    const enqueued = await svc.backfillChatExtraction(channelId, chatJid, user.id);
+    ok(res, { channelId, chatJid, enqueued });
+  } catch (e) { next(e); }
+}
+
+export async function historySyncHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    const { chatJid } = req.body as { chatJid: string };
+    ok(res, await svc.requestChatHistorySync(channelId, chatJid, user.id));
   } catch (e) { next(e); }
 }
 
@@ -172,13 +202,17 @@ export async function deleteChannelHandler(req: Request, res: Response, next: Ne
     const user = ensureUser(req.user);
     canManageChannels(user);
     const { channelId } = getValidatedParams<{ channelId: string }>(req);
-    const { confirmChannelId } = req.body as { confirmChannelId: string };
+    const { confirmChannelId, reassignHistoryTo, orphanHistory } = req.body as {
+      confirmChannelId: string;
+      reassignHistoryTo?: string;
+      orphanHistory?: boolean;
+    };
     if (confirmChannelId !== channelId) {
       throw new (await import('../../utils/errors.js')).ValidationError(
         'confirmChannelId must match the URL param',
       );
     }
-    await svc.deleteChannelSafely(channelId, user.id);
+    await svc.deleteChannelSafely(channelId, user.id, { reassignHistoryTo, orphanHistory });
     res.status(204).end();
   } catch (e) { next(e); }
 }
