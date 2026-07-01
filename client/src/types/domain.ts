@@ -257,6 +257,10 @@ export interface MatchSuggestion {
   _id: string;
   internalCandidateId: string;
   externalCandidateId: string;
+  // Resolved candidate names (added by listMatches); optional for endpoints
+  // that don't enrich.
+  internalName?: string;
+  externalName?: string;
   eligible: boolean;
   status: MatchSuggestionStatus;
   matchScore: number;
@@ -406,6 +410,9 @@ export interface Channel {
   lastOutboundAt?: string;
   replacesChannelId?: string;
   replacedByChannelId?: string;
+  // Self-heal telemetry — set by the connection watchdog on auto-revival.
+  lastAutoReconnectAt?: string;
+  autoReconnectCount?: number;
   createdAt: string;
   updatedAt: string;
 }

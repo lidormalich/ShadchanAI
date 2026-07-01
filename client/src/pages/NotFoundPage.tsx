@@ -1,13 +1,12 @@
-import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui/primitives';
-import { EmptyState } from '@/components/states/states';
+import { NotFoundState } from '@/components/states/states';
 
 export function NotFoundPage() {
   return (
-    <EmptyState
-      title="לא נמצא"
+    <NotFoundState
+      title="דף לא נמצא"
       description="הכתובת המבוקשת לא קיימת או הוסרה."
-      action={<Link to="/"><Button>חזרה לדשבורד</Button></Link>}
+      backTo="/"
+      backLabel="חזרה לדשבורד"
     />
   );
 }

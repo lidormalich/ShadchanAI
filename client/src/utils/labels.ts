@@ -35,6 +35,16 @@ const MATCH_STATUS: Record<string, string> = {
   closed: 'סגור',
 };
 
+const CLOSURE_REASON: Record<string, string> = {
+  engaged: 'התארס/ה',
+  married: 'התחתן/ה',
+  not_interested: 'לא מעוניין/ת',
+  taking_break: 'בהפסקה',
+  left_system: 'עזב/ה את המערכת',
+  shadchan_decision: 'החלטת שדכן',
+  other: 'אחר',
+};
+
 const CANDIDATE_STATUS: Record<string, string> = {
   active: 'פעיל',
   paused: 'בהשהיה',
@@ -324,6 +334,7 @@ const LOOKUPS: Record<string, Record<string, string>> = {
   riskLevel: RISK_LEVEL,
   matchStatus: MATCH_STATUS,
   candidateStatus: CANDIDATE_STATUS,
+  closureReason: CLOSURE_REASON,
   availabilityStatus: AVAILABILITY_STATUS,
   channelRole: CHANNEL_ROLE,
   channelStatus: CHANNEL_STATUS,

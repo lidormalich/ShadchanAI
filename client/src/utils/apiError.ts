@@ -1,5 +1,11 @@
 import { ApiError } from '@/types/api';
 
+// True when the failure is a 404 (or the backend's not_found envelope) —
+// lets detail pages show a friendly "X not found" instead of a generic error.
+export function isNotFoundError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 404 || err.code === 'not_found');
+}
+
 // Human-readable error text for a toast. For a server validation_error
 // the envelope carries the Zod issues in `details` — surface the offending
 // field(s) instead of the generic "Invalid request data", so the operator

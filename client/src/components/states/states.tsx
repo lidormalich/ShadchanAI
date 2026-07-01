@@ -3,8 +3,9 @@
 // ═══════════════════════════════════════════════════════════
 
 import { clsx } from 'clsx';
-import { AlertCircle, Inbox, RefreshCw } from 'lucide-react';
+import { AlertCircle, Inbox, RefreshCw, SearchX } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '../ui/primitives';
 
 export function EmptyState({
@@ -52,6 +53,29 @@ export function ErrorState({
         </Button>
       )}
     </div>
+  );
+}
+
+// A friendly "not found" block for missing entities / routes, with a
+// back link. Distinct icon from ErrorState so a 404 doesn't look like a crash.
+export function NotFoundState({
+  title,
+  description,
+  backTo = '/',
+  backLabel = 'חזרה לדשבורד',
+}: {
+  title: string;
+  description?: string;
+  backTo?: string;
+  backLabel?: string;
+}) {
+  return (
+    <EmptyState
+      icon={<SearchX className="h-10 w-10 text-ink-faint" />}
+      title={title}
+      description={description}
+      action={<Link to={backTo}><Button variant="secondary">{backLabel}</Button></Link>}
+    />
   );
 }
 

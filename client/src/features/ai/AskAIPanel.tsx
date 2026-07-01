@@ -20,11 +20,18 @@ export function AskAIPanel({
   open,
   onClose,
   initialQuery,
+  contextId,
 }: {
   open: boolean;
   onClose: () => void;
   /** Optional pre-filled query text (contextual entry points) */
   initialQuery?: string;
+  /**
+   * Optional record id (card/match) tied to this question. Hidden from the
+   * visible query — appended automatically to the text sent to the AI so the
+   * user sees the word "כרטיס" instead of a raw id.
+   */
+  contextId?: string;
 }) {
   const [query, setQuery] = useState(initialQuery ?? '');
   useEffect(() => {
@@ -33,6 +40,14 @@ export function AskAIPanel({
   const ask = useMutation({
     mutationFn: (q: string) => aiApi.ask({ query: q }),
   });
+
+  // Append the hidden context id (if any) to the visible query before sending.
+  const submit = () => {
+    const q = query.trim();
+    if (!q) return;
+    const withContext = contextId ? `${q} (מזהה כרטיס: ${contextId})` : q;
+    ask.mutate(withContext);
+  };
 
   const result = ask.data?.data;
 
@@ -49,7 +64,7 @@ export function AskAIPanel({
             ⓘ Ask AI מייעץ בלבד — לא מבצע פעולות.
           </div>
           <Button
-            onClick={() => query.trim() && ask.mutate(query.trim())}
+            onClick={submit}
             loading={ask.isPending}
             disabled={!query.trim()}
             leftIcon={<Sparkles className="h-4 w-4" />}
@@ -99,6 +114,18 @@ export function AskAIPanel({
   );
 }
 
+// Hebrew labels for the detected Ask AI intent (the engine returns enum codes).
+const INTENT_LABELS_HE: Record<string, string> = {
+  find_matching_candidates: 'חיפוש התאמות',
+  find_unhandled_candidates: 'כרטיסים שלא טופלו',
+  find_high_potential_matches: 'התאמות בעלות פוטנציאל גבוה',
+  find_stale_candidates: 'כרטיסים שהתיישנו',
+  find_similar_candidates: 'כרטיסים דומים',
+  find_active_issues: 'נושאים הדורשים טיפול',
+  summarize_candidate: 'סיכום כרטיס',
+  unknown: 'כוונה לא ברורה',
+};
+
 export function AskAIResults({ result }: { result: AskAIResult }) {
   return (
     <div className="space-y-4">
@@ -108,7 +135,7 @@ export function AskAIResults({ result }: { result: AskAIResult }) {
             כוונה שזוהתה
           </div>
           <div className="flex items-center gap-2">
-            <Badge tone="brand">{result.intent}</Badge>
+            <Badge tone="brand">{INTENT_LABELS_HE[result.intent] ?? result.intent}</Badge>
             {Object.entries(result.appliedFilters).slice(0, 6).map(([k, v]) => (
               <Badge key={k} tone="neutral">{k}: {String(v)}</Badge>
             ))}

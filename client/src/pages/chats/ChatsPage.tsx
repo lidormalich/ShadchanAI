@@ -13,10 +13,14 @@ import { useSafeMode } from '@/features/safe-mode/useSafeMode';
 import { label } from '@/utils/labels';
 import type { Conversation, Message } from '@/types/domain';
 
-type RoleFilter = 'all' | 'profiles_source' | 'match_sending';
+// The chat inbox is scoped to real outbound activity: by default it shows
+// match proposals the system actually SENT (channelRole match_sending +
+// at least one outbound message). The raw incoming profile-card chats live
+// under a separate tab so they don't drown the proposal threads.
+type Tab = 'proposals' | 'profiles_source';
 
 export function ChatsPage() {
-  const [role, setRole] = useState<RoleFilter>('all');
+  const [tab, setTab] = useState<Tab>('proposals');
   const [searchParams] = useSearchParams();
   const urlConversation = searchParams.get('conversation');
   const [selected, setSelected] = useState<string | null>(urlConversation);
@@ -33,10 +37,11 @@ export function ChatsPage() {
   useRealtimeEvents(true);
 
   const list = useQuery({
-    queryKey: ['conversations', role],
-    queryFn: () => role === 'all'
-      ? conversationsApi.list({ limit: 100 })
-      : conversationsApi.byRole(role, { limit: 100 }),
+    queryKey: ['conversations', tab],
+    queryFn: () => tab === 'proposals'
+      // Only proposals the system actually sent (has an outbound message).
+      ? conversationsApi.list({ channelRole: 'match_sending', hasOutbound: true, limit: 100 })
+      : conversationsApi.byRole('profiles_source', { limit: 100 }),
   });
 
   const thread = useQuery({
@@ -61,14 +66,13 @@ export function ChatsPage() {
           <h3 className="text-sm font-semibold">שיחות</h3>
           <div className="mt-2 flex gap-1 rounded-md bg-bg-subtle border border-border p-0.5">
             {([
-              { id: 'all', label: 'הכול' },
+              { id: 'proposals', label: 'הצעות' },
               { id: 'profiles_source', label: 'מקור פרופילים' },
-              { id: 'match_sending', label: 'שליחת הצעות' },
             ] as const).map((r) => (
               <button
                 key={r.id}
-                onClick={() => setRole(r.id as RoleFilter)}
-                className={`flex-1 text-xs py-1 rounded ${role === r.id ? 'bg-white shadow-sm font-medium' : 'text-ink-muted'}`}
+                onClick={() => { setTab(r.id as Tab); setSelected(null); }}
+                className={`flex-1 text-xs py-1 rounded ${tab === r.id ? 'bg-white shadow-sm font-medium' : 'text-ink-muted'}`}
               >
                 {r.label}
               </button>
@@ -84,7 +88,13 @@ export function ChatsPage() {
                 ))}
               </ul>
             ) : (
-              <EmptyState icon={<Inbox className="h-8 w-8 text-ink-faint" />} title="אין שיחות" />
+              <EmptyState
+                icon={<Inbox className="h-8 w-8 text-ink-faint" />}
+                title={tab === 'proposals' ? 'עדיין לא נשלחו הצעות' : 'אין שיחות'}
+                description={tab === 'proposals'
+                  ? 'שיחה תופיע כאן לאחר שתישלח הצעת שידוך מהמערכת.'
+                  : undefined}
+              />
             )}
         </div>
       </Card>
