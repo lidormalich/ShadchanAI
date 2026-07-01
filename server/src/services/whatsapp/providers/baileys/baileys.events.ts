@@ -88,6 +88,33 @@ export function wireEvents(sock: WASocket, ctx: EventBridgeContext): void {
     }
   });
 
+  // ── History sync (older messages pushed by WhatsApp) ───
+  // Fires on initial connect and in response to fetchMessageHistory
+  // (see BaileysClient.requestHistorySync). We route each historical
+  // message through the SAME inbound path as live messages, so it lands
+  // subject to the ingestion gate: unmapped chats accumulate as pending,
+  // mapped profiles_source chats extract. Idempotent via externalMessageId.
+  sock.ev.on('messaging-history.set', async (payload) => {
+    const messages = (payload as { messages?: unknown[] })?.messages ?? [];
+    for (const raw of messages) {
+      const msg = raw as Parameters<typeof mapInboundMessage>[0];
+      try {
+        if (msg?.key?.fromMe === true) continue;
+        const normalized = mapInboundMessage(msg, channel);
+        if (!normalized) continue;
+        await ingestInboundMessage(normalized);
+      } catch (err) {
+        logWhatsApp({
+          event: 'error',
+          channelId: channel.channelId,
+          channelRole: channel.role,
+          externalMessageId: msg?.key?.id ?? undefined,
+          errorMessage: `history-set handler: ${(err as Error).message}`,
+        });
+      }
+    }
+  });
+
   // ── Message status updates ─────────────────────────────
   sock.ev.on('messages.update', async (updates: WAMessageUpdate[]) => {
     for (const u of updates) {

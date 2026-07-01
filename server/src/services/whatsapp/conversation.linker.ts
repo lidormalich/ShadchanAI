@@ -147,6 +147,16 @@ async function fillInCandidateLinks(
   input: LinkConversationInput,
 ): Promise<void> {
   const patch: Record<string, unknown> = {};
+  // Backfill chat identity on conversations created before chatJid/chatType
+  // were threaded through (or by a legacy path). Without this an old group
+  // conversation keeps chatJid=null forever and discovery can't place it on
+  // its real "@g.us" jid — so it never shows in mappings/pending correctly.
+  if (!conversation.chatJid && input.chatJid) {
+    patch['chatJid'] = input.chatJid;
+  }
+  if (!conversation.chatType && input.chatType) {
+    patch['chatType'] = input.chatType;
+  }
   if (!conversation.internalCandidateId && input.internalCandidateId) {
     patch['internalCandidateId'] = toObjectId(input.internalCandidateId);
   }

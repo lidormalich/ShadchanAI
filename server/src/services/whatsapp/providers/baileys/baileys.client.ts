@@ -24,7 +24,7 @@ import makeWASocket, {
   DisconnectReason,
 } from '@whiskeysockets/baileys';
 import type { proto } from '@whiskeysockets/baileys';
-import { Channel, Message, type IChannel } from '../../../../models/index.js';
+import { Channel, Conversation, Message, type IChannel } from '../../../../models/index.js';
 import { ChannelStatus, WebhookStatus } from '@shadchanai/shared';
 import { BAILEYS } from '../../whatsapp.constants.js';
 import { logWhatsApp } from '../../whatsapp.logger.js';
@@ -183,9 +183,18 @@ export class BaileysClient {
    * available without a long-running chat-store; private chats
    * become visible via conversations we've already received.
    * The channel-service merges both sources.
+   *
+   * Returns the groups AND any fetch error / not-connected reason so
+   * the discovery layer can tell the operator WHY the list is empty
+   * instead of silently showing zero groups.
    */
-  async listGroupChats(): Promise<Array<{ jid: string; name: string; participantCount?: number }>> {
-    if (this.state !== 'connected' || !this.sock) return [];
+  async listGroupChats(): Promise<{
+    groups: Array<{ jid: string; name: string; participantCount?: number }>;
+    error?: string;
+  }> {
+    if (this.state !== 'connected' || !this.sock) {
+      return { groups: [], error: `session not connected (state=${this.state})` };
+    }
     try {
       const groups = await this.sock.groupFetchAllParticipating();
       const out: Array<{ jid: string; name: string; participantCount?: number }> = [];
@@ -196,15 +205,78 @@ export class BaileysClient {
           participantCount: (meta as { participants?: unknown[] }).participants?.length,
         });
       }
-      return out;
+      logWhatsApp({
+        event: 'channel_connected',
+        channelId: this.channel.channelId,
+        channelRole: this.channel.role,
+        groupsFetched: out.length,
+      });
+      return { groups: out };
     } catch (err) {
+      const message = (err as Error).message;
       logWhatsApp({
         event: 'error',
         channelId: this.channel.channelId,
         channelRole: this.channel.role,
-        errorMessage: `groupFetchAllParticipating: ${(err as Error).message}`,
+        errorMessage: `groupFetchAllParticipating: ${message}`,
       });
-      return [];
+      return { groups: [], error: message };
+    }
+  }
+
+  /**
+   * Best-effort request for older WhatsApp history of a single chat.
+   *
+   * WhatsApp returns history asynchronously via the `messaging-history.set`
+   * event (wired in baileys.events.ts → ingest), so this just kicks off the
+   * request. We anchor on the OLDEST message we already have for the chat —
+   * fetchMessageHistory returns messages older than that anchor. With no
+   * stored message there's no valid anchor, so we report it and skip.
+   */
+  async requestHistorySync(chatJid: string): Promise<{ requested: boolean; reason?: string }> {
+    if (this.state !== 'connected' || !this.sock) {
+      return { requested: false, reason: 'session_not_connected' };
+    }
+    const sock = this.sock as WASocket & {
+      fetchMessageHistory?: (count: number, key: WAMessageKey, ts: number) => Promise<string>;
+    };
+    if (typeof sock.fetchMessageHistory !== 'function') {
+      return { requested: false, reason: 'unsupported_by_provider' };
+    }
+
+    // Resolve the chat's conversations (Message has no chatJid), then the
+    // oldest message among them to use as the history anchor.
+    const convs = await Conversation.find({ channelId: this.channel.channelId, chatJid })
+      .select('_id')
+      .lean()
+      .exec();
+    if (convs.length === 0) return { requested: false, reason: 'no_anchor_message' };
+
+    const oldest = await Message.findOne({ conversationId: { $in: convs.map((c) => c._id) } })
+      .select('+rawPayload externalMessageId createdAt')
+      .sort({ createdAt: 1 })
+      .lean()
+      .exec();
+    if (!oldest) return { requested: false, reason: 'no_anchor_message' };
+
+    const rawKey = (oldest as { rawPayload?: { key?: WAMessageKey } }).rawPayload?.key;
+    const key: WAMessageKey | undefined = rawKey?.id
+      ? rawKey
+      : (oldest.externalMessageId
+          ? { remoteJid: chatJid, id: oldest.externalMessageId, fromMe: false }
+          : undefined);
+    const tsMs = oldest.createdAt ? new Date(oldest.createdAt).getTime() : undefined;
+    if (!key?.id || !tsMs) return { requested: false, reason: 'no_anchor_message' };
+
+    try {
+      await sock.fetchMessageHistory(BAILEYS.HISTORY_FETCH_COUNT, key, Math.floor(tsMs / 1000));
+      log.info(
+        { channelId: this.channel.channelId, chatJid },
+        'requested whatsapp history sync',
+      );
+      return { requested: true };
+    } catch (err) {
+      return { requested: false, reason: (err as Error).message };
     }
   }
 
@@ -256,7 +328,9 @@ export class BaileysClient {
         printQRInTerminal: false,
         browser: ['ShadchanAI', 'Chrome', '120.0'],
         markOnlineOnConnect: false,
-        syncFullHistory: false,
+        // Opt-in fuller history pull on link (see WA_SYNC_FULL_HISTORY).
+        // History lands via the messaging-history.set handler → ingestion.
+        syncFullHistory: env.WA_SYNC_FULL_HISTORY,
         // Required for reliable delivery: Baileys calls this to recover a
         // message for retry-receipt resends (outbound) and poll decryption.
         // Without it, an outbound proposal the recipient's device asks to
@@ -343,6 +417,13 @@ export class BaileysClient {
 
     if (update.connection === 'close') {
       this.clearHeartbeatTimer();
+      // A close that arrives while we're still showing the QR means the
+      // operator just scanned: Baileys tears down the unauthenticated
+      // socket and immediately restarts it (status 515 / restartRequired)
+      // to come back up WITH the freshly-paired credentials. That's the
+      // pairing handshake finishing — NOT a lost connection — so we keep
+      // the UX on "connecting" instead of the alarming "reconnecting".
+      const wasPairing = this.state === 'pending_pairing';
       const err = update.lastDisconnect?.error;
       const classification = classifyDisconnect(err);
       this.lastError = classification.message;
@@ -388,9 +469,10 @@ export class BaileysClient {
       // Transient: reconnect if we haven't been explicitly stopped
       // and the reason isn't a final DisconnectReason.loggedOut sneaking through
       if (this.shouldRun && (err as Boom | undefined)?.output?.statusCode !== DisconnectReason.loggedOut) {
-        this.setState('reconnecting');
+        this.setState(wasPairing ? 'connecting' : 'reconnecting');
         await updateChannelStatus(this.channel.channelId, {
-          connectionHealth: 'degraded',
+          // A post-scan restart is healthy progress, not degradation.
+          connectionHealth: wasPairing ? 'healthy' : 'degraded',
         });
         this.scheduleReconnect();
       } else {

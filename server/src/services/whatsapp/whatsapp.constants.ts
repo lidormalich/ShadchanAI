@@ -41,4 +41,7 @@ export const BAILEYS = {
 
   /** How long to hold a QR before abandoning the pairing attempt (ms). */
   QR_EXPIRY_MS: 60_000,
+
+  /** How many older messages to request per on-demand history sync. */
+  HISTORY_FETCH_COUNT: 50,
 } as const;

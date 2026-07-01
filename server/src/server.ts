@@ -25,6 +25,7 @@ dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 
 import { buildApp } from './app.js';
 import { connectDB, disconnectDB } from './config/db.js';
+import { reconcileIndexes } from './config/index-migrations.js';
 import { env } from './config/env.js';
 import { runBootChecks } from './config/boot-checks.js';
 import { startJobScheduler, stopJobScheduler } from './services/jobs/job.scheduler.js';
@@ -58,6 +59,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T | {
 async function main(): Promise<void> {
   await runBootChecks();
   await connectDB();
+  await reconcileIndexes();
   const app = buildApp();
   startJobScheduler();
 
