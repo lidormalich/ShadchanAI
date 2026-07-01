@@ -6,3 +6,4 @@ export const insightsRouter = Router();
 insightsRouter.use(requireAuth);
 
 insightsRouter.get('/summary', ctrl.summaryHandler);
+insightsRouter.get('/gender-quality', ctrl.genderQualityHandler);

@@ -16,3 +16,10 @@ export async function summaryHandler(req: Request, res: Response, next: NextFunc
     ok(res, await svc.getSummary());
   } catch (e) { next(e); }
 }
+
+export async function genderQualityHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    ok(res, await svc.getGenderQuality());
+  } catch (e) { next(e); }
+}
