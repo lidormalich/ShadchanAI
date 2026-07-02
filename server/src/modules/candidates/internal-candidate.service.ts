@@ -29,6 +29,7 @@ import type {
   UpdateInternalCandidateInput,
   ListInternalCandidatesQuery,
 } from './internal-candidate.validator.js';
+import type { SourceCardDTO } from './external-candidate.service.js';
 
 // ── Readiness computation ────────────────────────────────
 // Lives here so it stays in sync with business definition.
@@ -134,6 +135,17 @@ export async function getInternalCandidateById(id: string): Promise<IInternalCan
   const doc = await InternalCandidate.findById(id).exec();
   if (!doc) throw new NotFoundError('InternalCandidate', id);
   return doc;
+}
+
+// ── Source card ("כרטיס מקורי") ───────────────────────────
+// Internal candidates are created manually — they have no original
+// WhatsApp "card" the AI extracted. We still expose the endpoint so the
+// detail page can render the same tab, returning hasSource: false so the
+// UI shows a "no details" state. Shares the DTO shape with externals.
+export async function getInternalSourceCard(id: string): Promise<SourceCardDTO> {
+  const doc = await InternalCandidate.findById(id).select('_id').lean().exec();
+  if (!doc) throw new NotFoundError('InternalCandidate', id);
+  return { hasSource: false, messages: [] };
 }
 
 export async function createInternalCandidate(

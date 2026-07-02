@@ -253,6 +253,17 @@ export interface IMatchSuggestion extends Document {
   closedAt?: Date;
   closeReason?: string;
 
+  // Status-change journal — one entry per operator/auto transition, with
+  // the operator's WHY. This is the learning corpus the per-candidate
+  // insight agent reads to understand what the candidate responds to.
+  statusHistory?: Array<{
+    status: MatchSuggestionStatus;
+    reason?: string;
+    at: Date;
+    by?: Types.ObjectId;
+    auto?: boolean;
+  }>;
+
   // Proposal message drafts — persisted per side so AI-generated
   // text survives navigation and prefills the send modal.
   drafts?: {
@@ -418,6 +429,23 @@ const matchSuggestionSchema = new Schema<IMatchSuggestion>(
     // ── Closure ───────────────────────────────────────────
     closedAt: { type: Date },
     closeReason: { type: String },
+
+    // ── Status-change journal (learning corpus) ───────────
+    statusHistory: {
+      type: [
+        new Schema(
+          {
+            status: { type: String, enum: Object.values(MatchSuggestionStatus), required: true },
+            reason: { type: String, maxlength: 1000 },
+            at: { type: Date, required: true },
+            by: { type: Schema.Types.ObjectId, ref: 'User' },
+            auto: { type: Boolean },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
 
     // ── Proposal drafts (per side) ────────────────────────
     drafts: { type: draftsSchema },

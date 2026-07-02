@@ -27,7 +27,37 @@ import { publishMatchUpdate } from './match.events.js';
 
 // ── Lifecycle transitions ────────────────────────────────
 
-export async function approveSuggestion(id: string, performedBy: string, actor?: AuthUser): Promise<IMatchSuggestion> {
+/**
+ * Append the transition (+ the operator's WHY) to the suggestion's
+ * status journal. Every transition records here — the per-candidate
+ * learning agent reads this corpus to understand what each candidate
+ * responds to and refine future match direction.
+ */
+function recordStatusChange(
+  doc: IMatchSuggestion,
+  status: MatchSuggestionStatus,
+  reason: string | undefined,
+  performedBy?: string,
+  auto = false,
+): void {
+  doc.statusHistory = [
+    ...(doc.statusHistory ?? []),
+    {
+      status,
+      reason: reason?.trim() || undefined,
+      at: new Date(),
+      by: performedBy ? new Types.ObjectId(performedBy) : undefined,
+      auto: auto || undefined,
+    },
+  ];
+}
+
+export async function approveSuggestion(
+  id: string,
+  performedBy: string,
+  actor?: AuthUser,
+  reason?: string,
+): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
   if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   if (doc.status !== MatchSuggestionStatus.DRAFT && doc.status !== MatchSuggestionStatus.PENDING_APPROVAL) {
@@ -37,6 +67,7 @@ export async function approveSuggestion(id: string, performedBy: string, actor?:
   doc.status = MatchSuggestionStatus.APPROVED;
   doc.approvedBy = new Types.ObjectId(performedBy);
   doc.approvedAt = new Date();
+  recordStatusChange(doc, MatchSuggestionStatus.APPROVED, reason, performedBy);
   await doc.save();
 
   await audit({
@@ -72,6 +103,7 @@ export async function declineSuggestion(
     doc.sideBResponse = sideResponse as IMatchSuggestion['sideBResponse'];
     doc.status = MatchSuggestionStatus.DECLINED_SIDE_B;
   }
+  recordStatusChange(doc, doc.status, [reason, notes].filter(Boolean).join(' — ') || undefined, performedBy);
   await doc.save();
 
   await audit({
@@ -104,6 +136,7 @@ export async function deferSuggestion(
   doc.deferredAt = new Date();
   doc.deferredReason = reason;
   doc.status = MatchSuggestionStatus.DEFERRED;
+  recordStatusChange(doc, MatchSuggestionStatus.DEFERRED, reason, performedBy);
   await doc.save();
 
   await audit({
@@ -129,6 +162,7 @@ export async function reopenFromDeferred(id: string, performedBy: string, actor?
   doc.isDeferred = false;
   doc.reopenedFromDeferredAt = new Date();
   doc.status = doc.approvedBy ? MatchSuggestionStatus.APPROVED : MatchSuggestionStatus.DRAFT;
+  recordStatusChange(doc, doc.status, 'נפתח מחדש מהשהיה', performedBy);
   await doc.save();
 
   await audit({
@@ -144,12 +178,18 @@ export async function reopenFromDeferred(id: string, performedBy: string, actor?
   return doc;
 }
 
-export async function markMatchDating(id: string, performedBy: string, actor?: AuthUser): Promise<IMatchSuggestion> {
+export async function markMatchDating(
+  id: string,
+  performedBy: string,
+  actor?: AuthUser,
+  reason?: string,
+): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
   if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
   const before = doc.toObject();
   doc.status = MatchSuggestionStatus.DATING;
   doc.datingStartedAt = new Date();
+  recordStatusChange(doc, MatchSuggestionStatus.DATING, reason, performedBy);
   await doc.save();
 
   await audit({
@@ -177,6 +217,7 @@ export async function closeSuggestion(
   doc.status = MatchSuggestionStatus.CLOSED;
   doc.closedAt = new Date();
   doc.closeReason = reason;
+  recordStatusChange(doc, MatchSuggestionStatus.CLOSED, reason, performedBy);
   await doc.save();
 
   await audit({
@@ -302,6 +343,16 @@ export async function applyInboundResponse(
     }
   }
   // 'considering' leaves the match state machine untouched.
+
+  if (status !== 'considering') {
+    recordStatusChange(
+      doc,
+      doc.status,
+      metadata.rawText ? `תגובה נכנסת (${side === 'a' ? 'צד א' : 'צד ב'}): ${metadata.rawText.slice(0, 200)}` : undefined,
+      undefined,
+      true,
+    );
+  }
 
   await doc.save();
 

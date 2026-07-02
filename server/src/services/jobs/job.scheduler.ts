@@ -35,6 +35,10 @@ interface RegisteredJob extends JobDef {
 
 const jobs: RegisteredJob[] = [];
 let timer: ReturnType<typeof setInterval> | null = null;
+/** In-flight guard: a tick that outlives the interval (slow job) must not
+ *  be joined by the next tick — the same job would run concurrently with
+ *  itself (e.g. two replay-failed-inbound runs racing the same rows). */
+let ticking = false;
 
 export function registerJob(job: JobDef): void {
   jobs.push({ ...job });
@@ -55,6 +59,16 @@ export function stopJobScheduler(): void {
 }
 
 async function tick(): Promise<void> {
+  if (ticking) return;
+  ticking = true;
+  try {
+    await runReadyJobs();
+  } finally {
+    ticking = false;
+  }
+}
+
+async function runReadyJobs(): Promise<void> {
   const now = Date.now();
   for (const job of jobs) {
     const ready = !job.nextRunAt || job.nextRunAt.getTime() <= now;

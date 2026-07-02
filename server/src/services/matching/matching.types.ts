@@ -280,6 +280,12 @@ export interface MatchResult {
   attentionPoints: string[];
   overrideReasons: string[];
   flexibilityOverrideApplied: boolean;
+  /**
+   * Either side's stated age preference is violated beyond the ±tolerance.
+   * Soft flag: the pair stays eligible and is still surfaced, but the UI
+   * marks it as an out-of-range exception.
+   */
+  ageOutOfRange: boolean;
 
   recommendedAction: RecommendedAction;
   sendStrategy: SendStrategy;

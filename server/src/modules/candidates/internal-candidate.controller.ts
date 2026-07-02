@@ -15,6 +15,7 @@ import type {
   ListInternalCandidatesQuery,
 } from './internal-candidate.validator.js';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
+import { getCandidateInsight, rebuildCandidateInsight } from '../../services/ai/candidate-learning.service.js';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -31,6 +32,15 @@ export async function getHandler(req: Request, res: Response, next: NextFunction
     const { id } = getValidatedParams<{ id: string }>(req);
     const doc = await svc.getInternalCandidateById(id);
     ok(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function sourceCardHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const card = await svc.getInternalSourceCard(id);
+    ok(res, card);
   } catch (e) { next(e); }
 }
 
@@ -128,6 +138,25 @@ export async function readinessHandler(req: Request, res: Response, next: NextFu
     const { id } = getValidatedParams<{ id: string }>(req);
     const details = await svc.getCandidateReadiness(id);
     ok(res, details);
+  } catch (e) { next(e); }
+}
+
+// ── Learned insight (candidate learning agent) ─────────────
+
+export async function insightHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await getCandidateInsight(id));
+  } catch (e) { next(e); }
+}
+
+export async function rebuildInsightHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const doc = await rebuildCandidateInsight(id);
+    ok(res, doc ?? { rebuilt: false, reason: 'no_suggestion_history' });
   } catch (e) { next(e); }
 }
 

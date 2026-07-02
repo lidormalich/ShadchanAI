@@ -20,6 +20,7 @@
 
 import { Types } from 'mongoose';
 import {
+  AvailabilityStatus,
   ExtractionMethod,
   ExternalCandidateStatus,
   ExternalSourceType,
@@ -28,13 +29,17 @@ import {
 import {
   ExternalCandidate,
   Message,
+  ChatMapping,
   type IExternalCandidate,
   type IMessage,
 } from '../../models/index.js';
 import { extractProfileFromText, type ExtractedProfile } from './regex.extractor.js';
 import { findExistingCandidate, type MatchResult } from './candidate.matcher.js';
 import { extractProfileWithAI, type AIExtractedProfile } from './ai.extractor.js';
+import { extractProfileFromImage, visionExtractionAvailable } from './vision.extractor.js';
+import { downloadInboundMedia } from '../whatsapp/media.service.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
+import { getSettingCached } from '../../modules/settings/settings.service.js';
 import { normalizePhone } from '../../utils/phone.js';
 import { createLogger } from '../../utils/logger.js';
 
@@ -44,11 +49,23 @@ import { createLogger } from '../../utils/logger.js';
 const flow = createLogger('extraction.flow');
 const preview = (s: string): string => s.replace(/\s+/g, ' ').slice(0, 60);
 
-// Threshold tuning. Moved here rather than into env so the decisions
-// live next to the logic that makes them. Revisit after ~100 messages
-// of real traffic.
-const REGEX_CONFIDENCE_SKIP_AI = 0.8; // regex this good → trust, don't call AI
-const AI_CONFIDENCE_AUTO_CREATE = 0.7; // AI confidence below this → needs_review
+// Threshold defaults. Operator-tunable at runtime via Settings
+// ('extraction.regex_skip_ai_confidence' / 'extraction.auto_create_confidence');
+// these constants are only the fallbacks when settings reads fail.
+const REGEX_CONFIDENCE_SKIP_AI_DEFAULT = 0.8; // regex this good → trust, don't call AI
+const AI_CONFIDENCE_AUTO_CREATE_DEFAULT = 0.7; // AI confidence below this → needs_review
+
+async function resolveThresholds(): Promise<{ regexSkipAi: number; autoCreate: number }> {
+  try {
+    const [regexSkipAi, autoCreate] = await Promise.all([
+      getSettingCached('extraction.regex_skip_ai_confidence'),
+      getSettingCached('extraction.auto_create_confidence'),
+    ]);
+    return { regexSkipAi: regexSkipAi as number, autoCreate: autoCreate as number };
+  } catch {
+    return { regexSkipAi: REGEX_CONFIDENCE_SKIP_AI_DEFAULT, autoCreate: AI_CONFIDENCE_AUTO_CREATE_DEFAULT };
+  }
+}
 
 export interface ExtractionOutcome {
   status: MessageExtractionStatus;
@@ -58,6 +75,12 @@ export interface ExtractionOutcome {
   matchedFields: string[];
   failureReason?: string;
   matchResult?: MatchResult['strength'];
+  /** Merged regex+AI profile — persisted for the review/approve UI. */
+  extractedProfile?: ExtractedProfile;
+  /** Why the message needs review (drives the review-queue tabs). */
+  reviewReason?: string;
+  /** Existing candidate this profile may duplicate (name+age hit). */
+  suspectedCandidateId?: string;
 }
 
 /**
@@ -73,6 +96,8 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   const message = await Message.findById(messageId).exec();
   if (!message) return fail('message_not_found');
 
+  const thresholds = await resolveThresholds();
+
   // Phase 7: fall back to media caption when body is empty. An
   // image-with-caption profile ("שדכנים — שרה בת 24…" with photo)
   // was previously silently ignored; now we extract from the caption.
@@ -82,6 +107,13 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
     'flow_start',
   );
   if (!effectiveText) {
+    // Image-only card (no body, no caption) — the dominant profile format
+    // in many groups. Try vision extraction; the result ALWAYS goes to
+    // needs_review (pixels have no regex corroboration), with the image
+    // available to the reviewer via mediaUrl.
+    const visionOutcome = await tryVisionExtraction(message);
+    if (visionOutcome) return finalize(message, visionOutcome);
+
     flow.info({ messageId, contentType: message.contentType }, 'flow_stop: no_text (media without caption)');
     return finalize(message, {
       status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
@@ -124,7 +156,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 
   let match = await findExistingCandidate(profile);
   flow.info({ messageId, matchStrength: match.strength }, 'regex_match_lookup');
-  if (match.strength === 'exact' || (match.strength === 'strong' && regex.confidence >= 0.5)) {
+  if (match.strength === 'exact') {
     const updated = await linkToExisting(match.candidate!, message);
     flow.info({ messageId, candidateId: String(updated._id) }, 'flow_stop: matched_existing (linked, no new profile)');
     return finalize(message, {
@@ -136,31 +168,51 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       matchResult: match.strength,
     });
   }
+  // A 'strong' (name + age±1, no phone corroboration) hit is NOT auto-linked:
+  // two different people routinely share a common Hebrew name and adjacent
+  // age, and a silent merge makes the second person vanish. Carry the
+  // suspect forward — the message lands in the duplicates review tab where
+  // the operator decides link-to-existing vs create-new.
+  let suspectedDuplicate = match.strength === 'strong' ? match.candidate : undefined;
 
   // ── 3. Decide whether to call AI ──────────────────────
-  // Skip AI only when regex is strong AND we produced a name — because
-  // without a name there's nothing to deduplicate against in tier 2/3.
-  const regexSufficient =
-    regex.confidence >= REGEX_CONFIDENCE_SKIP_AI &&
+  // Skip AI ONLY when regex already produced a RICH profile (name + some
+  // free-text detail). Otherwise call AI — not just to classify, but to
+  // ENRICH: fill the fields regex couldn't pull (occupation, family,
+  // service, yeshiva, about, seeking). This is why sparse-but-confident
+  // cards still go through AI. (Cost: more AI calls; OpenAI fallback + the
+  // reconciler retry cover Groq rate limits.)
+  const regexRich =
+    regex.confidence >= thresholds.regexSkipAi &&
     regex.isLikelyProfile &&
-    !!profile.firstName;
+    !!profile.firstName &&
+    (!!profile.about || !!profile.whatSeeking || !!profile.occupation);
 
-  if (regexSufficient) {
-    flow.info({ messageId }, 'ai_skipped (regex confident + has name)');
+  if (regexRich) {
+    flow.info({ messageId }, 'ai_skipped (regex already rich)');
   } else {
     flow.info({ messageId }, 'ai_calling');
     try {
       const ai = await extractProfileWithAI(effectiveText, { messageId: String(message._id) });
       flow.info({ messageId, isProfile: ai.profile.isProfile, aiConfidence: ai.profile.confidence }, 'ai_result');
       if (!ai.profile.isProfile) {
-        flow.info({ messageId }, 'flow_stop: skipped_not_profile (AI says not a profile)');
-        return finalize(message, {
-          status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
-          method: ExtractionMethod.AI,
-          confidence: ai.profile.confidence,
-          matchedFields: regex.matchedFields,
-        });
-      }
+        // AI declined — override it ONLY when regex is at full-card
+        // confidence (name + several core fields, same bar that would have
+        // skipped AI entirely). A looser bar (any isLikelyProfile) let
+        // announcement/contact cards that quote a few labels become
+        // candidates against the AI's correct veto.
+        if (regex.confidence >= thresholds.regexSkipAi && regex.isLikelyProfile && profile.firstName) {
+          flow.info({ messageId }, 'ai_not_profile_overridden_by_regex (keeping regex data)');
+        } else {
+          flow.info({ messageId }, 'flow_stop: skipped_not_profile (AI says not a profile)');
+          return finalize(message, {
+            status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
+            method: ExtractionMethod.AI,
+            confidence: ai.profile.confidence,
+            matchedFields: regex.matchedFields,
+          });
+        }
+      } else {
       profile = mergeProfiles(regex.profile, ai.profile);
       combinedConfidence = Math.max(regex.confidence, ai.profile.confidence);
       method = ExtractionMethod.AI;
@@ -168,7 +220,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       // Re-match with the enriched profile (AI may have recovered a
       // name/phone the regex missed).
       match = await findExistingCandidate(profile);
-      if (match.strength === 'exact' || match.strength === 'strong') {
+      if (match.strength === 'exact') {
         const updated = await linkToExisting(match.candidate!, message);
         flow.info({ messageId, candidateId: String(updated._id) }, 'flow_stop: matched_existing (after AI)');
         return finalize(message, {
@@ -180,6 +232,10 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
           matchResult: match.strength,
         });
       }
+      if (match.strength === 'strong') {
+        suspectedDuplicate = match.candidate ?? suspectedDuplicate;
+      }
+      } // end else (AI returned a profile)
     } catch (err) {
       // AI failed — if regex gave us SOMETHING usable, proceed with it,
       // marked as needs_review. If not, bubble the failure for the
@@ -212,20 +268,58 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       confidence: combinedConfidence,
       matchedFields: Object.keys(profile),
       failureReason: 'no name or phone extracted',
+      extractedProfile: profile,
+      reviewReason: 'no_identifier',
     });
   }
 
-  const autoCreate = combinedConfidence >= AI_CONFIDENCE_AUTO_CREATE;
-  if (!autoCreate) {
+  // Suspected duplicate person → ALWAYS a human decision, regardless of
+  // confidence. The operator sees both cards side by side in the
+  // duplicates tab and picks "same person — link" or "new person — create".
+  if (suspectedDuplicate) {
     flow.info(
-      { messageId, confidence: combinedConfidence, threshold: AI_CONFIDENCE_AUTO_CREATE },
-      'flow_stop: needs_review (confidence below auto-create threshold → profile request)',
+      { messageId, suspectedCandidateId: String(suspectedDuplicate._id), confidence: combinedConfidence },
+      'flow_stop: needs_review (suspected duplicate — same name & age as an existing candidate)',
     );
     return finalize(message, {
       status: MessageExtractionStatus.NEEDS_REVIEW,
       method,
       confidence: combinedConfidence,
       matchedFields: Object.keys(profile),
+      matchResult: 'strong',
+      extractedProfile: profile,
+      reviewReason: 'suspected_duplicate',
+      suspectedCandidateId: String(suspectedDuplicate._id),
+    });
+  }
+
+  // Injection guard: auto-create must be corroborated by DETERMINISTIC
+  // signal (regex matched labeled fields / a phone), not by the model's
+  // self-reported confidence alone. A crafted message that manipulates the
+  // LLM into {"isProfile":true,"confidence":1} has no labeled card
+  // structure, so it lands in needs_review for a human gate instead of
+  // minting an ACTIVE candidate straight into the matching engine.
+  const deterministicSignal = regex.isLikelyProfile || regex.matchedFields.length >= 2;
+  const autoCreate = combinedConfidence >= thresholds.autoCreate && deterministicSignal;
+  if (!autoCreate) {
+    flow.info(
+      {
+        messageId,
+        confidence: combinedConfidence,
+        threshold: thresholds.autoCreate,
+        deterministicSignal,
+      },
+      deterministicSignal
+        ? 'flow_stop: needs_review (confidence below auto-create threshold → profile request)'
+        : 'flow_stop: needs_review (AI confident but no deterministic corroboration — possible free-text/injected card)',
+    );
+    return finalize(message, {
+      status: MessageExtractionStatus.NEEDS_REVIEW,
+      method,
+      confidence: combinedConfidence,
+      matchedFields: Object.keys(profile),
+      extractedProfile: profile,
+      reviewReason: deterministicSignal ? 'low_confidence' : 'no_corroboration',
     });
   }
 
@@ -242,6 +336,68 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 
 // ── Helpers ──────────────────────────────────────────────
 
+/**
+ * Vision path for image-only cards. Returns a finalize-ready outcome, or
+ * null when vision is unavailable / the message has no image / extraction
+ * says not-a-profile with nothing usable. Vision profiles NEVER
+ * auto-create — the human reviews them next to the image.
+ */
+async function tryVisionExtraction(message: IMessage): Promise<Omit<ExtractionOutcome, never> | null> {
+  if (message.contentType !== 'image') return null;
+  if (!(await visionExtractionAvailable())) return null;
+  const messageId = String(message._id);
+
+  // Ensure the image is on disk (ingest download may still be in flight —
+  // downloadInboundMedia is idempotent, so awaiting it here is safe).
+  let filename = message.mediaUrl?.split('/').pop();
+  if (!filename) {
+    const dl = await downloadInboundMedia(messageId);
+    if (!dl.ok || !dl.filename) {
+      flow.info({ messageId, reason: dl.reason }, 'vision_skipped (no media file)');
+      return null;
+    }
+    filename = dl.filename;
+  }
+
+  try {
+    flow.info({ messageId, filename }, 'vision_calling');
+    const result = await extractProfileFromImage(filename);
+    if (!result) return null;
+    const ai = result.profile;
+    if (!ai.isProfile) {
+      flow.info({ messageId, confidence: ai.confidence }, 'flow_stop: skipped_not_profile (vision says not a profile)');
+      return {
+        status: MessageExtractionStatus.SKIPPED_NOT_PROFILE,
+        method: ExtractionMethod.AI,
+        confidence: ai.confidence,
+        matchedFields: [],
+      };
+    }
+    const profile = mergeProfiles({}, ai);
+    flow.info(
+      { messageId, confidence: ai.confidence, hasName: !!profile.firstName },
+      'flow_stop: needs_review (vision-extracted image card → human gate)',
+    );
+    return {
+      status: MessageExtractionStatus.NEEDS_REVIEW,
+      method: ExtractionMethod.AI,
+      confidence: ai.confidence,
+      matchedFields: Object.keys(profile),
+      extractedProfile: profile,
+      reviewReason: 'vision_image',
+    };
+  } catch (err) {
+    flow.warn({ messageId, error: (err as Error).message }, 'vision_failed');
+    return {
+      status: MessageExtractionStatus.FAILED,
+      method: ExtractionMethod.AI,
+      confidence: 0,
+      matchedFields: [],
+      failureReason: `vision: ${(err as Error).message}`,
+    };
+  }
+}
+
 function mergeProfiles(regexP: ExtractedProfile, ai: AIExtractedProfile): ExtractedProfile {
   // Prefer regex fields first (deterministic); fall back to AI for
   // anything regex didn't capture. Both-present → keep regex.
@@ -257,6 +413,9 @@ function mergeProfiles(regexP: ExtractedProfile, ai: AIExtractedProfile): Extrac
   if (!out.religiousLevelText && ai.religiousLevelText) out.religiousLevelText = ai.religiousLevelText;
   if (!out.personalStatus && ai.personalStatus) out.personalStatus = ai.personalStatus;
   if (!out.occupation && ai.occupation) out.occupation = ai.occupation;
+  if (!out.family && ai.family) out.family = ai.family;
+  if (!out.service && ai.service) out.service = ai.service;
+  if (!out.yeshiva && ai.yeshiva) out.yeshiva = ai.yeshiva;
   if (!out.about && ai.about) out.about = ai.about;
   if (!out.whatSeeking && ai.whatSeeking) out.whatSeeking = ai.whatSeeking;
   if (!out.seekingAgeMin && ai.seekingAgeMin) out.seekingAgeMin = ai.seekingAgeMin;
@@ -284,9 +443,14 @@ async function linkToExisting(candidate: IExternalCandidate, message: IMessage):
 async function createFromProfile(profile: ExtractedProfile, message: IMessage): Promise<IExternalCandidate> {
   const primaryPhone = profile.contactPhones?.[0];
   const normalizedPhone = normalizePhone(primaryPhone);
+  const source = await resolveWhatsAppSource(message);
   return ExternalCandidate.create({
     sourceType: ExternalSourceType.WHATSAPP_GROUP,
     sourceChannelId: message.channelId,
+    sourceChatJid: message.chatJid,
+    sourceGroupName: source.groupName,
+    sourceSenderName: message.senderName,
+    sourceSenderPhone: message.senderPhone,
     sourceImportedAt: message.createdAt,
     lastSourceUpdateAt: message.createdAt,
     contactPhone: primaryPhone,
@@ -300,13 +464,37 @@ async function createFromProfile(profile: ExtractedProfile, message: IMessage): 
     sectorGroup: profile.sectorGroup,
     personalStatus: profile.personalStatus,
     height: profile.height,
+    // Richer fields the regex/AI captured but that used to be dropped on
+    // create — so the card carries the full detail from the source card.
+    ethnicity: profile.edah,
+    familyBackground: profile.family,
+    currentOccupation: profile.occupation,
+    educationInstitution: profile.yeshiva,
+    armyService: profile.service,
     about: profile.about,
     whatSeeking: profile.whatSeeking,
+    additionalInfo: profile.religiousLevelText,
     agePreferences: (profile.seekingAgeMin || profile.seekingAgeMax)
       ? { min: profile.seekingAgeMin, max: profile.seekingAgeMax }
       : undefined,
     status: ExternalCandidateStatus.ACTIVE,
+    // A freshly-posted profile is, by definition, being offered for matches →
+    // available. Without this it defaults to 'unknown' and is hidden by the
+    // list's default "available" filter (operator "doesn't see new candidates").
+    availabilityStatus: AvailabilityStatus.AVAILABLE,
   });
+}
+
+// Resolve the human-readable WhatsApp group name for provenance. The group
+// subject isn't on the message (only known live), but the operator's
+// ChatMapping row carries chatName for mapped chats — use that.
+async function resolveWhatsAppSource(message: IMessage): Promise<{ groupName?: string }> {
+  if (!message.chatJid) return {};
+  const mapping = await ChatMapping.findOne({ channelId: message.channelId, chatJid: message.chatJid })
+    .select('chatName')
+    .lean()
+    .exec();
+  return { groupName: mapping?.chatName ?? undefined };
 }
 
 function dedupeObjectIds(ids: Types.ObjectId[]): Types.ObjectId[] {
@@ -344,6 +532,12 @@ async function finalize(
     failureReason: outcome.failureReason,
     matchedFields: outcome.matchedFields,
     retryCount,
+    extractedProfile: outcome.extractedProfile as Record<string, unknown> | undefined,
+    reviewReason: outcome.reviewReason,
+    suspectedCandidateId: outcome.suspectedCandidateId
+      ? new Types.ObjectId(outcome.suspectedCandidateId)
+      : undefined,
+    reviewClaimedAt: message.extraction?.reviewClaimedAt,
   };
   await message.save();
 

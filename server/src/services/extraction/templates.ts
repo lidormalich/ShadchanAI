@@ -45,22 +45,22 @@ export type FieldKey =
 // after emoji + punctuation stripping.
 
 export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
-  name: ['שם', 'שמי'],
-  age: ['גיל'],
-  height: ['גובה'],
-  city: ['מגורים', 'מקום מגורים', 'אזור מגורים', 'א. מגורים', 'א מגורים', 'מגורים בהווה', 'מגורים בהווה ומגורי המשפחה'],
-  edah: ['עדה', 'מוצא'],
-  sector: ['רמה דתית', 'מגזר', 'מגזר+רמה דתית', 'מגזר ורמה דתית', 'רמה דתית ומגזר'],
-  status: ['סטטוס', 'רווק/גרוש/אלמן', 'מצב משפחתי'],
-  occupation: ['עיסוק', 'עיסוק+מוסדות לימודים', 'עיסוק+ מוסדות לימוד', 'עיסוק ומוסדות לימוד'],
-  about: ['תכונות אופי', 'תכונות מאופי', 'תכונות', 'קצת עלי', 'קצת עליי', 'על עצמי'],
-  family: ['משפחה', 'קצת על משפחתך', 'תאר/י בקווים כלליים את משפחתך', 'תאר בקווים כלליים את משפחתך', 'תארי בקווים כלליים את משפחתך'],
-  service: ['שירות צבאי', 'שירות לאומי', 'שירות צבאי/לאומי', 'שירות צבאי/לאומי/ישיבה'],
-  yeshiva: ['ישיבה', 'ישיבה/ מדרשה', 'ישיבה/מדרשה', 'מדרשה'],
-  seeking: ['אני מחפש', 'אני מחפשת', 'אני מחפש/ת', 'מה אני מחפש/ת', 'מה אני מחפש', 'מה אני מחפשת', 'מה מחפש', 'מה מחפשת', 'מחפש/ת', 'מחפש', 'מחפשת'],
-  ageRange: ['טווח גילאים', 'טווח גילים', 'טווח הגילאים'],
+  name: ['שם', 'שמי', 'שם מלא', 'שם פרטי', 'שם המועמד', 'שם המועמדת'],
+  age: ['גיל', 'הגיל', 'גילי'],
+  height: ['גובה', 'הגובה'],
+  city: ['מגורים', 'מקום מגורים', 'אזור מגורים', 'איזור מגורים', 'א. מגורים', 'א מגורים', 'מגורים בהווה', 'מגורים בהווה ומגורי המשפחה', 'עיר', 'עיר מגורים', 'ישוב', 'יישוב', 'אזור'],
+  edah: ['עדה', 'מוצא', 'עדה/מוצא', 'מוצא עדתי', 'רקע עדתי'],
+  sector: ['רמה דתית', 'מגזר', 'מגזר+רמה דתית', 'מגזר ורמה דתית', 'רמה דתית ומגזר', 'השקפה', 'זרם', 'כיוון דתי', 'רמה רוחנית', 'רמת דתיות', 'הגדרה דתית'],
+  status: ['סטטוס', 'רווק/גרוש/אלמן', 'מצב משפחתי', 'מצב אישי', 'סטטוס אישי', 'סטטוס משפחתי'],
+  occupation: ['עיסוק', 'עיסוק+מוסדות לימודים', 'עיסוק+ מוסדות לימוד', 'עיסוק ומוסדות לימוד', 'תעסוקה', 'מקצוע', 'עבודה'],
+  about: ['תכונות אופי', 'תכונות מאופי', 'תכונות', 'קצת עלי', 'קצת עליי', 'על עצמי', 'אופי', 'תיאור אישי', 'מי אני'],
+  family: ['משפחה', 'קצת על משפחתך', 'קצת על המשפחה', 'רקע משפחתי', 'משפחתי', 'תאר/י בקווים כלליים את משפחתך', 'תאר בקווים כלליים את משפחתך', 'תארי בקווים כלליים את משפחתך'],
+  service: ['שירות צבאי', 'שירות לאומי', 'שירות צבאי/לאומי', 'שירות צבאי/לאומי/ישיבה', 'שירות', 'צבא', 'לאומי'],
+  yeshiva: ['ישיבה', 'ישיבה/ מדרשה', 'ישיבה/מדרשה', 'מדרשה', 'סמינר', 'השכלה', 'לימודים', 'מוסדות לימוד'],
+  seeking: ['אני מחפש', 'אני מחפשת', 'אני מחפש/ת', 'מה אני מחפש/ת', 'מה אני מחפש', 'מה אני מחפשת', 'מה מחפש', 'מה מחפשת', 'מחפש/ת', 'מחפש', 'מחפשת', 'מעוניין ב', 'מעוניינת ב', 'מה חשוב לי', 'ציפיות', 'דרישות'],
+  ageRange: ['טווח גילאים', 'טווח גילים', 'טווח הגילאים', 'טווח גיל', 'גילאים', 'גילים', 'גיל מבוקש'],
   photos: ['תמונות', 'תמונה'],
-  phone: ['טלפון', 'לפניות', 'לפרטים', 'השדכן', 'השדכנית'],
+  phone: ['טלפון', 'לפניות', 'לפרטים', 'השדכן', 'השדכנית', 'נייד', 'פלאפון', 'טל', 'ליצירת קשר', 'יצירת קשר', 'מספר טלפון', 'לבירורים', 'טלפון לבירורים'],
   selfIntro: [], // generated from free-text sentences
 };
 
@@ -106,13 +106,31 @@ export function resolveLabel(rawLine: string): LabelHit | null {
 
   const labelNorm = normalizeLabel(labelPart);
 
+  // Pass 1: exact match wins outright — prevents a short variant of one
+  // field ("גיל") from prefix-hijacking another field's label ("גילאים").
   for (const [field, variants] of Object.entries(LABEL_SYNONYMS) as [FieldKey, string[]][]) {
     for (const variant of variants) {
-      if (labelMatches(labelNorm, normalizeLabel(variant))) {
+      if (labelNorm === normalizeLabel(variant)) {
         return { field, value: valuePart, rawLabel: labelPart };
       }
     }
   }
+
+  // Pass 2: prefix match in either direction ("אני מחפש" ↔ "אני מחפש/ת").
+  // The LONGEST matching variant claims the label, so the most specific
+  // synonym wins regardless of declaration order in LABEL_SYNONYMS.
+  let best: { field: FieldKey; len: number } | null = null;
+  for (const [field, variants] of Object.entries(LABEL_SYNONYMS) as [FieldKey, string[]][]) {
+    for (const variant of variants) {
+      const v = normalizeLabel(variant);
+      if (v.length < 2) continue;
+      const hits = labelNorm.startsWith(v) || (labelNorm.length >= 2 && v.startsWith(labelNorm));
+      if (hits && (best === null || v.length > best.len)) {
+        best = { field, len: v.length };
+      }
+    }
+  }
+  if (best) return { field: best.field, value: valuePart, rawLabel: labelPart };
   return null;
 }
 
@@ -122,14 +140,6 @@ function normalizeLabel(s: string): string {
     .replace(/[״"׳']/g, '')
     .replace(/[\s]+/g, ' ')
     .trim();
-}
-
-function labelMatches(candidate: string, target: string): boolean {
-  if (candidate === target) return true;
-  // allow target to be a prefix of candidate ("אני מחפש" matches "אני מחפש/ת")
-  if (candidate.startsWith(target)) return true;
-  if (target.startsWith(candidate)) return true;
-  return false;
 }
 
 // ── Value parsers ────────────────────────────────────────
@@ -142,9 +152,10 @@ export function parseAge(raw: string): { age?: number; ageText?: string } {
   return { age: Math.round(n), ageText: raw };
 }
 
-/** Height: accepts "1.65", "1.65 מ'", "172", "172 ס\"מ". Always returns cm. */
+/** Height: accepts "1.65", "1,65", "1.65 מ'", "172", "172 ס\"מ". Always returns cm. */
 export function parseHeight(raw: string): number | undefined {
-  const cleaned = raw.replace(/[^\d.,]/g, ' ').trim();
+  // Normalize comma decimals ("1,65") to dots before matching.
+  const cleaned = raw.replace(/(\d),(\d)/g, '$1.$2').replace(/[^\d.,]/g, ' ').trim();
   // e.g. "1.65"
   const mFloat = cleaned.match(/^\s*(1\.\d{2})/);
   if (mFloat) return Math.round(Number(mFloat[1]) * 100);
@@ -198,7 +209,17 @@ export function parseSectorGroup(raw: string): SectorGroup | undefined {
 
 export function parseAgeRange(raw: string): { min?: number; max?: number } | undefined {
   const nums = raw.match(/\d{1,2}/g);
-  if (!nums || nums.length < 2) return undefined;
+  if (!nums || nums.length === 0) return undefined;
+
+  // Single-bound ranges: "עד 30" → max only; "27 ומעלה" / "27+" → min only.
+  if (nums.length === 1) {
+    const n = Number(nums[0]);
+    if (Number.isNaN(n) || n < 15 || n > 99) return undefined;
+    if (/עד|מקסימום/.test(raw)) return { max: n };
+    if (/ומעלה|מינימום|\+|מגיל/.test(raw)) return { min: n };
+    return undefined;
+  }
+
   const a = Number(nums[0]);
   const b = Number(nums[1]);
   if (Number.isNaN(a) || Number.isNaN(b)) return undefined;
@@ -212,7 +233,7 @@ export function parseAgeRange(raw: string): { min?: number; max?: number } | und
 export function parsePhones(raw: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const re = /(?:\+?972[-\s]?|0)(5\d)[-\s]?(\d{3})[-\s]?(\d{4})/g;
+  const re = /(?:\+?972[-.\s]?|0)(5\d)[-.\s]?(\d{3})[-.\s]?(\d{4})/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(raw)) !== null) {
     const normalized = `0${m[1]}${m[2]}${m[3]}`;
@@ -227,12 +248,18 @@ export function parsePhones(raw: string): string[] {
 /** Split raw name into first + last. Handles "הדס .ו" (initial) and single names. */
 export function parseName(raw: string): { firstName?: string; lastName?: string } {
   const cleaned = raw
-    .replace(/[״"׳']/g, '')
+    .replace(EMOJI_RE, ' ')
+    // Strip WhatsApp markdown (*bold* _italic_ ~strike~ `mono`) and quotes.
+    // A residual closing "*" from "*שם:*" used to become the whole name.
+    .replace(/[*_~`״"׳']/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return {};
-  // Split on whitespace. Keep initial (like ".ו") as lastName.
-  const parts = cleaned.split(' ').filter((p) => p.length > 0);
+  // Keep only tokens that contain a letter — drops stray punctuation like a
+  // lone "*" / "-" so it never becomes the firstName. Initials (like "ו׳")
+  // still contain a letter and are kept as lastName.
+  const parts = cleaned.split(' ').filter((p) => /\p{L}/u.test(p));
+  if (parts.length === 0) return {};
   if (parts.length === 1) return { firstName: parts[0] };
   return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
 }
@@ -260,6 +287,25 @@ export function inferGender(text: string, _status?: PersonalStatus): GenderSigna
   //    "אני מחפש/ת :  בחורה טובה" where slash+colon sit in between).
   if (/מחפש[^\n]{0,40}בחורה/.test(text)) male += 3;
   if (/מחפש[^\n]{0,40}(^|[^\wא-ת])בחור([^\wא-ת]|$)/.test(text)) female += 3;
+
+  // 2b) "בן 24" / "בת 24" self-descriptors. The digit requirement keeps
+  //     city names like "בת ים" and phrases like "בן אדם" from firing.
+  if (/(^|[\s,.:])בת\s*\d{2}/.test(text)) female += 3;
+  if (/(^|[\s,.:])בן\s*\d{2}/.test(text)) male += 3;
+
+  // 2c) Verb conjugation of the seeker: "מחפשת" = female speaker, bare
+  //     "מחפש" = male. The card-form "מחפש/ת" matches neither (next char
+  //     is '/'), so blank templates add no signal.
+  if (/מחפשת($|[\s:,.])/.test(text)) female += 2;
+  if (/מחפש($|[\s:,.])/.test(text)) male += 2;
+
+  // 2d) Partner-noun target: seeking a בת זוג → male; בן זוג → female.
+  if (/בת\s+זוג/.test(text)) male += 2;
+  if (/בן\s+זוג/.test(text)) female += 2;
+
+  // 2e) "חשוב לי בחור/ה" — preference statement without "מחפש".
+  if (/חשוב\s+לי\s+בחורה/.test(text)) male += 2;
+  if (/חשוב\s+לי\s+בחור([^\wא-ת]|$)/.test(text)) female += 2;
 
   // 3) Possessive phrases about target.
   if (/שיהיה\s+לה|שהיה\s+לה|שתהיה|\bשהיא\b/.test(text)) male += 2;

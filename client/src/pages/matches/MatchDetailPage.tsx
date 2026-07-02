@@ -13,6 +13,7 @@ import { ErrorState, LoadingSkeleton, NotFoundState } from '@/components/states/
 import { BlockedBanner } from '@/components/domain/banners';
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { AskAIPanel } from '@/features/ai/AskAIPanel';
+import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
@@ -64,7 +65,7 @@ export function MatchDetailPage() {
   useSetPageTitle(pairTitle);
 
   const approve = useMutation({
-    mutationFn: () => matchesApi.approve(id!),
+    mutationFn: (reason?: string) => matchesApi.approve(id!, reason ? { reason } : {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['match', id] });
       toast.success('ההצעה אושרה');
@@ -158,7 +159,8 @@ export function MatchDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['match', id] }),
   });
 
-  const [confirm, setConfirm] = useState<null | { type: 'approve' | 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [confirm, setConfirm] = useState<null | { type: 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [approveReasonOpen, setApproveReasonOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
@@ -304,7 +306,7 @@ export function MatchDetailPage() {
             <Button
               variant="secondary"
               leftIcon={<CheckCircle2 className="h-4 w-4" />}
-              onClick={() => setConfirm({ type: 'approve', title: 'אשר הצעה' })}
+              onClick={() => setApproveReasonOpen(true)}
               loading={approve.isPending}
             >
               אשר
@@ -500,10 +502,19 @@ export function MatchDetailPage() {
         description={confirm?.desc}
         onConfirm={() => {
           if (!confirm) return;
-          if (confirm.type === 'approve') approve.mutate();
           if (confirm.type === 'defer') defer.mutate('הוחלט להשהות');
           if (confirm.type === 'close') close.mutate('החלטת שדכן');
           setConfirm(null);
+        }}
+      />
+
+      <StatusReasonDialog
+        open={approveReasonOpen}
+        title="אשר הצעה"
+        onClose={() => setApproveReasonOpen(false)}
+        onConfirm={(reason) => {
+          setApproveReasonOpen(false);
+          approve.mutate(reason);
         }}
       />
 
@@ -521,7 +532,7 @@ export function MatchDetailPage() {
         open={askOpen}
         onClose={() => setAskOpen(false)}
         initialQuery="הצעת שידוך לכרטיס זה — איזה צעדים שווה לשקול? מה נקודות הלב העיקריות?"
-        contextId={id}
+        contextId={internalId}
       />
 
       <Dialog

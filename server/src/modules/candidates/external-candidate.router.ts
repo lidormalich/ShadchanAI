@@ -63,6 +63,12 @@ externalCandidateRouter.patch(
 );
 
 externalCandidateRouter.get(
+  '/:id/source-card',
+  validate({ params: IdParamSchema }),
+  ctrl.sourceCardHandler,
+);
+
+externalCandidateRouter.get(
   '/:id/matching-internals',
   validate({ params: IdParamSchema, query: FindMatchingInternalsQuerySchema }),
   ctrl.matchingInternalsHandler,

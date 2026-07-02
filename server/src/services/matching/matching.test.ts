@@ -299,11 +299,11 @@ describe('Age Scoring', () => {
     expect(ageDim!.score).toBe(0);
   });
 
-  it('gives neutral score when external age is unknown', () => {
+  it('treats unknown external age as a data gap (below neutral), not a free pass', () => {
     const external = makeExternal({ age: undefined });
     const result = scorePair(makeInternal(), external, makeContext());
     const ageDim = result.breakdown.find(d => d.dimension === 'age');
-    expect(ageDim!.score).toBe(50);
+    expect(ageDim!.score).toBe(40);
   });
 });
 
@@ -830,7 +830,7 @@ describe('Age Band Configuration', () => {
     const external = makeExternal({ age: 26 });
     const result = scorePair(internal, external, makeContext());
     const ageDim = result.breakdown.find(d => d.dimension === 'age')!;
-    expect(ageDim.detail).toMatch(/preferred|flexible|outer|hard-edge|beyond-hard/);
+    expect(ageDim.detail).toMatch(/מועדף|גמיש|רחב|גבולי|מעבר לטווח/);
   });
 });
 
@@ -1083,7 +1083,7 @@ describe('Bidirectional — soft scoring', () => {
     const me = scorePair(internal, external, makeContext())
       .breakdown.find((d) => d.dimension === 'mutual_expectations')!;
     expect(me.score).toBeLessThan(80);
-    expect(me.detail).toMatch(/both sides|reverse/i);
+    expect(me.detail).toMatch(/שני הצדדים|הפוך/);
   });
 
   it('either side willing to relocate boosts location score', () => {
@@ -1098,7 +1098,7 @@ describe('Bidirectional — soft scoring', () => {
     const loc = scorePair(internal, external, makeContext())
       .breakdown.find((d) => d.dimension === 'location')!;
     expect(loc.score).toBeGreaterThan(30);
-    expect(loc.detail).toMatch(/willing to relocate/i);
+    expect(loc.detail).toMatch(/מוכן לעבור|לעבור דירה/);
   });
 
   it('either side openToOtherSectors boosts low sector closeness', () => {

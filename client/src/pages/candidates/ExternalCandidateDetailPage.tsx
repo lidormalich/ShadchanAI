@@ -25,7 +25,9 @@ import { matchesApi } from '@/services/api/matches';
 import { pairReviewsApi } from '@/services/api/pair-reviews';
 import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { CreateSuggestionDialog } from '@/features/matching/CreateSuggestionDialog';
+import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
 import { FullProfile, ShareCardPreview } from './ExternalCandidateDrawer';
+import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { StaleBanner } from '@/components/domain/banners';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { NotesRail } from '@/features/notes/NotesRail';
@@ -163,6 +165,7 @@ export function ExternalCandidateDetailPage() {
                 content: <SuggestionsList items={suggestionItems} loading={suggestions.isLoading} />,
               },
               { id: 'share', label: 'תצוגה מקדימה לשיתוף', content: <ShareCardPreview c={c} /> },
+              { id: 'source', label: 'כרטיס מקורי', content: <SourceCardTab kind="external" candidateId={c._id} /> },
               { id: 'history', label: 'היסטוריה', content: <EntityTimeline entityType="external_candidate" entityId={c._id} title="יומן פעילות" asCard={false} /> },
             ]}
           />
@@ -176,6 +179,9 @@ export function ExternalCandidateDetailPage() {
               <MetricRow label="זמינות" value={label('availabilityStatus', c.availabilityStatus)} />
               <MetricRow label="מקור" value={c.sourceName ?? label('sourceType', c.sourceType)} />
               {c.sourceMatchmakerName && <MetricRow label="שדכן מקור" value={c.sourceMatchmakerName} />}
+              {c.sourceGroupName && <MetricRow label="קבוצת WhatsApp" value={c.sourceGroupName} />}
+              {c.sourceSenderName && <MetricRow label="נשלח ע״י" value={c.sourceSenderName} />}
+              {c.sourceSenderPhone && <MetricRow label="טלפון השולח" value={c.sourceSenderPhone} />}
               <Divider />
               <MetricRow label="עודכן ממקור" value={formatDate(c.lastSourceUpdateAt)} />
             </CardBody>
@@ -360,7 +366,8 @@ const DECIDABLE = new Set(['draft', 'pending_approval', 'deferred']);
 
 function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
   const qc = useQueryClient();
-  const [confirm, setConfirm] = useState<null | { type: 'approve' | 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [confirm, setConfirm] = useState<null | { type: 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [approveReasonOpen, setApproveReasonOpen] = useState(false);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['external', m.externalCandidateId, 'suggestions'] });
@@ -368,7 +375,7 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
   };
 
   const approve = useMutation({
-    mutationFn: () => matchesApi.approve(m._id),
+    mutationFn: (reason?: string) => matchesApi.approve(m._id, reason ? { reason } : {}),
     onSuccess: () => { toast.success('ההצעה אושרה'); invalidate(); },
     onError: (e) => toast.error('האישור נכשל', (e as Error).message),
   });
@@ -412,7 +419,7 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
         ) : canDecide && (
           <>
             <Button size="sm" leftIcon={<CheckCircle2 className="h-3.5 w-3.5" />} loading={approve.isPending} disabled={busy}
-              onClick={() => setConfirm({ type: 'approve', title: 'אשר הצעה' })}>אשר</Button>
+              onClick={() => setApproveReasonOpen(true)}>אשר</Button>
             <Button size="sm" variant="ghost" leftIcon={<Clock className="h-3.5 w-3.5" />} loading={defer.isPending} disabled={busy}
               onClick={() => setConfirm({ type: 'defer', title: 'השהה הצעה', desc: 'ההצעה תעבור לתור המושהות. ניתן להחזיר בהמשך.' })}>השהה</Button>
           </>
@@ -428,10 +435,19 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
         title={confirm?.title ?? ''}
         description={confirm?.desc}
         onConfirm={() => {
-          if (confirm?.type === 'approve') approve.mutate();
           if (confirm?.type === 'defer') defer.mutate();
           if (confirm?.type === 'close') close.mutate();
           setConfirm(null);
+        }}
+      />
+
+      <StatusReasonDialog
+        open={approveReasonOpen}
+        title="אשר הצעה"
+        onClose={() => setApproveReasonOpen(false)}
+        onConfirm={(reason) => {
+          setApproveReasonOpen(false);
+          approve.mutate(reason);
         }}
       />
     </li>

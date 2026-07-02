@@ -140,7 +140,10 @@ export async function approveHandler(req: Request, res: Response, next: NextFunc
     const user = ensureUser(req.user);
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    ok(res, await svc.approveSuggestion(id, user.id, user));
+    const reason = typeof (req.body as { reason?: unknown } | undefined)?.reason === 'string'
+      ? (req.body as { reason: string }).reason
+      : undefined;
+    ok(res, await svc.approveSuggestion(id, user.id, user, reason));
   } catch (e) { next(e); }
 }
 
@@ -178,7 +181,10 @@ export async function markDatingHandler(req: Request, res: Response, next: NextF
     const user = ensureUser(req.user);
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    ok(res, await svc.markMatchDating(id, user.id, user));
+    const reason = typeof (req.body as { reason?: unknown } | undefined)?.reason === 'string'
+      ? (req.body as { reason: string }).reason
+      : undefined;
+    ok(res, await svc.markMatchDating(id, user.id, user, reason));
   } catch (e) { next(e); }
 }
 

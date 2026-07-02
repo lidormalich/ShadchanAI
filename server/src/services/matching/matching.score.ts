@@ -56,6 +56,12 @@ export interface ScoreResult {
   attentionPoints: string[];
   overrideReasons: string[];
   flexibilityOverrideApplied: boolean;
+  /**
+   * True when either side's stated age preference is violated beyond the
+   * ±tolerance. This is a SOFT flag — the pair still surfaces (a Shadchan
+   * may want it anyway) — but the UI marks it as an out-of-range exception.
+   */
+  ageOutOfRange: boolean;
 }
 
 /**
@@ -91,12 +97,19 @@ export function scorePair(
 
   const rawScore = Math.round(dimensions.reduce((sum, d) => sum + d.weightedScore, 0));
 
-  // Collect strengths (score >= 75) and attention points (score <= 40)
+  // Collect strengths (score >= 75) and attention points (score <= 40).
+  // Location and life-stage are NEVER surfaced as "gaps"/reasons (operator
+  // rule): nearby cities / different community character and life-stage /
+  // education differences must not read as a concern. They still affect the
+  // numeric score and can appear as a strength when strong.
   const strengths: string[] = [];
   const attentionPoints: string[] = [];
   for (const dim of dimensions) {
     if (dim.score >= 75) strengths.push(dim.detail);
-    if (dim.score <= 40 && dim.weight > 0) attentionPoints.push(dim.detail);
+    const suppressedAsGap =
+      dim.dimension === ScoringDimension.LOCATION
+      || dim.dimension === ScoringDimension.LIFE_STAGE;
+    if (dim.score <= 40 && dim.weight > 0 && !suppressedAsGap) attentionPoints.push(dim.detail);
   }
 
   // Collect override reasons
@@ -124,6 +137,7 @@ export function scorePair(
     attentionPoints,
     overrideReasons,
     flexibilityOverrideApplied,
+    ageOutOfRange: pairAgeOutOfRange(internal, external),
   };
 }
 
@@ -173,7 +187,9 @@ function scoreAge(
   isDiscovery: boolean,
 ): DimensionScore {
   if (!external.age) {
-    return makeDimension(ScoringDimension.AGE, 50, 'External candidate age unknown — neutral score');
+    // Missing age is a genuine gap, not a neutral: a sparse profile should
+    // not score mid-range on age just because we can't compare it.
+    return makeDimension(ScoringDimension.AGE, 40, 'גיל המועמד החיצוני אינו ידוע — נתון חסר');
   }
 
   const internalAge = ageFromDob(internal.dateOfBirth);
@@ -216,13 +232,13 @@ function scoreAge(
   score = Math.round(Math.max(0, Math.min(100, score)));
 
   const bandLabel =
-    gap <= bands.preferred ? 'preferred'
-    : gap <= bands.flexible ? 'flexible'
-    : gap <= bands.outer ? 'outer'
-    : gap <= bands.hard ? 'hard-edge'
-    : 'beyond-hard';
+    gap <= bands.preferred ? 'מועדף'
+    : gap <= bands.flexible ? 'גמיש'
+    : gap <= bands.outer ? 'רחב'
+    : gap <= bands.hard ? 'גבולי'
+    : 'מעבר לטווח';
 
-  const detail = `Age gap: ${gap} years (${bandLabel} band; internal ${internalAge}, external ${external.age})${isSecondChapter ? ' [second-chapter]' : ''}`;
+  const detail = `פער גיל: ${gap} שנים (טווח ${bandLabel}; פנימי ${internalAge}, חיצוני ${external.age})${isSecondChapter ? ' [פרק ב׳]' : ''}`;
 
   return makeDimension(ScoringDimension.AGE, score, detail);
 }
@@ -255,7 +271,7 @@ function scoreSector(
   }
 
   const score = Math.round(closeness * 100);
-  const detail = `Sector closeness: ${(closeness * 100).toFixed(0)}% (${internal.sectorGroup}/${internal.subSector ?? '?'} ↔ ${external.sectorGroup ?? '?'}/${external.subSector ?? '?'})`;
+  const detail = `קרבת מגזר: ${(closeness * 100).toFixed(0)}%`;
 
   return makeDimension(ScoringDimension.SECTOR, score, detail);
 }
@@ -268,7 +284,7 @@ function scoreLifestyle(
 ): DimensionScore {
   const closeness = lifestyleCloseness(internal.lifestyleTone, external.lifestyleTone);
   const score = Math.round(closeness * 100);
-  const detail = `Lifestyle closeness: ${score}% (${internal.lifestyleTone ?? '?'} ↔ ${external.lifestyleTone ?? '?'})`;
+  const detail = `קרבת אורח חיים: ${score}%`;
 
   return makeDimension(ScoringDimension.LIFESTYLE, score, detail);
 }
@@ -281,7 +297,7 @@ function scoreStudyWork(
 ): DimensionScore {
   const closeness = studyWorkCloseness(internal.studyWorkDirection, external.studyWorkDirection);
   const score = Math.round(closeness * 100);
-  const detail = `Study-work closeness: ${score}% (${internal.studyWorkDirection ?? '?'} ↔ ${external.studyWorkDirection ?? '?'})`;
+  const detail = `קרבת כיוון לימודים/עבודה: ${score}%`;
 
   return makeDimension(ScoringDimension.STUDY_WORK, score, detail);
 }
@@ -298,7 +314,7 @@ function scoreLocation(
   // Same city always wins — exact-string identity is unambiguous.
   if (internalCity && externalCity && internalCity === externalCity) {
     return makeDimension(ScoringDimension.LOCATION, LOCATION.SAME_CITY_SCORE,
-      `Same city: ${internal.city}`);
+      `אותה עיר: ${internal.city}`);
   }
 
   // ── PRIMARY signal: region ──────────────────────────────
@@ -318,15 +334,15 @@ function scoreLocation(
     );
     if (eitherFlexible) score = Math.max(score, LOCATION.RELOCATE_FLOOR);
     const detail = internal.region === external.region
-      ? `Same region: ${internal.region}`
-      : `Region closeness: ${Math.round(regionClose * 100)}% (${internal.region} ↔ ${external.region})${eitherFlexible ? ' — flexible on distance' : ''}`;
+      ? `אותו אזור`
+      : `קרבת אזור: ${Math.round(regionClose * 100)}%${eitherFlexible ? ' — גמישות במרחק' : ''}`;
     return makeDimension(ScoringDimension.LOCATION, score, detail);
   }
 
   // ── Fallback: no region on at least one side → city logic ──
   if (!internalCity || !externalCity) {
     return makeDimension(ScoringDimension.LOCATION, LOCATION.MISSING_DATA_SCORE,
-      'Location data incomplete — neutral score');
+      'נתוני מיקום חלקיים — ציון ניטרלי');
   }
 
   // BIDIRECTIONAL: check each side's city against the OTHER side's preferred cities
@@ -336,7 +352,7 @@ function scoreLocation(
   const internalCityInExternalPrefs = externalPreferredCities.includes(internalCity);
   if (externalCityInInternalPrefs || internalCityInExternalPrefs) {
     return makeDimension(ScoringDimension.LOCATION, 90,
-      `Cities align with one side's preferences (${internal.city} ↔ ${external.city})`);
+      `הערים תואמות להעדפות אחד הצדדים (${internal.city} ↔ ${external.city})`);
   }
 
   // Region hint on either side
@@ -344,7 +360,7 @@ function scoreLocation(
     || (external.locationPreferences?.regions?.length ?? 0) > 0;
   if (anyRegionHint) {
     return makeDimension(ScoringDimension.LOCATION, LOCATION.SAME_REGION_SCORE,
-      `Different cities but region preferences specified`);
+      `ערים שונות אך צוינו העדפות אזור`);
   }
 
   // Either side willing to relocate / open to long distance (BIDIRECTIONAL)
@@ -353,18 +369,18 @@ function scoreLocation(
   );
   if (eitherWillingToRelocate) {
     return makeDimension(ScoringDimension.LOCATION, LOCATION.DIFFERENT_REGION_RELOCATE_WILLING,
-      `Different cities (${internal.city} ↔ ${external.city}) — at least one side willing to relocate`);
+      `ערים שונות (${internal.city} ↔ ${external.city}) — צד אחד לפחות מוכן לעבור דירה`);
   }
 
   const eitherOpenToDistance = internal.openness.openToLongDistance
     || external.openness?.openToLongDistance === true;
   if (eitherOpenToDistance) {
     return makeDimension(ScoringDimension.LOCATION, 50,
-      `Different cities (${internal.city} ↔ ${external.city}) — at least one side open to long distance`);
+      `ערים שונות (${internal.city} ↔ ${external.city}) — צד אחד לפחות פתוח למרחק`);
   }
 
   return makeDimension(ScoringDimension.LOCATION, LOCATION.DIFFERENT_REGION_SCORE,
-    `Different cities: ${internal.city} ↔ ${external.city}`);
+    `ערים שונות: ${internal.city} ↔ ${external.city}`);
 }
 
 // ── Dimension 6: Mutual expectations ──────────────────────
@@ -397,8 +413,11 @@ function scoreMutualExpectations(
   const goals = scoreSharedGoals(internal, external);
 
   if (!hasSoftPrefs && !goals.has) {
-    return makeDimension(ScoringDimension.MUTUAL_EXPECTATIONS, 60,
-      'No soft preferences or shared-goals data on either side — neutral score');
+    // No stated expectations on EITHER side is missing signal, not a strong
+    // match. Kept modest (below neutral) so pairs with real, aligned
+    // expectations rise above data-less pairs instead of clustering together.
+    return makeDimension(ScoringDimension.MUTUAL_EXPECTATIONS, 50,
+      'אין העדפות רכות או מטרות משותפות בשני הצדדים — נתון חסר');
   }
 
   const softScore = hasForward && hasReverse
@@ -410,13 +429,13 @@ function scoreMutualExpectations(
   if (hasSoftPrefs && goals.has) {
     // Blend: stated preferences lead (0.6), structured goals refine (0.4).
     score = Math.round(softScore * 0.6 + goals.score * 0.4);
-    detail = `Soft preferences ${softScore}% + ${goals.detail} → ${score}%`;
+    detail = `העדפות רכות ${softScore}% + ${goals.detail} → ${score}%`;
   } else if (hasSoftPrefs) {
     score = softScore;
     detail =
-      hasForward && hasReverse ? `Soft preferences (both sides): forward ${forward}%, reverse ${reverse}% → ${score}%`
-      : hasForward ? `Soft preferences (internal → external): ${score}%`
-      : `Soft preferences (external → internal): ${score}%`;
+      hasForward && hasReverse ? `העדפות רכות (שני הצדדים): ישיר ${forward}%, הפוך ${reverse}% → ${score}%`
+      : hasForward ? `העדפות רכות (פנימי → חיצוני): ${score}%`
+      : `העדפות רכות (חיצוני → פנימי): ${score}%`;
   } else {
     score = goals.score;
     detail = goals.detail;
@@ -440,24 +459,24 @@ function scoreSharedGoals(
   const childClose = childrenPreferenceCloseness(internal.childrenPreference, external.childrenPreference);
   if (childClose !== undefined) {
     parts.push(childClose);
-    labels.push(`children ${Math.round(childClose * 100)}%`);
+    labels.push(`ילדים ${Math.round(childClose * 100)}%`);
   }
   const careerClose = careerPriorityCloseness(internal.careerPriority, external.careerPriority);
   if (careerClose !== undefined) {
     parts.push(careerClose);
-    labels.push(`career ${Math.round(careerClose * 100)}%`);
+    labels.push(`קריירה ${Math.round(careerClose * 100)}%`);
   }
 
   if (parts.length === 0) return { score: 0, has: false, detail: '' };
   const avg = parts.reduce((a, b) => a + b, 0) / parts.length;
-  return { score: Math.round(avg * 100), has: true, detail: `Shared goals (${labels.join(', ')})` };
+  return { score: Math.round(avg * 100), has: true, detail: `מטרות משותפות (${labels.join(', ')})` };
 }
 
 function scoreSoftPrefs(
   prefs: Array<{ field: string; value: unknown; importance: string }>,
   subjectFields: Record<string, unknown>,
 ): number {
-  if (prefs.length === 0) return 60;
+  if (prefs.length === 0) return 50;
   const importanceWeights = { must_have: 4, important: 3, nice_to_have: 1.5, flexible: 0.5 };
   let totalWeight = 0;
   let weightedHits = 0;
@@ -475,7 +494,7 @@ function scoreSoftPrefs(
       weightedHits += w * 0.15;
     }
   }
-  return totalWeight > 0 ? Math.round((weightedHits / totalWeight) * 100) : 60;
+  return totalWeight > 0 ? Math.round((weightedHits / totalWeight) * 100) : 50;
 }
 
 // ── Dimension 7: Life stage / maturity ────────────────────
@@ -486,7 +505,7 @@ function scoreLifeStage(
 ): DimensionScore {
   const closeness = lifeStageCloseness(internal.lifeStage, external.lifeStage);
   const score = Math.round(closeness * 100);
-  const detail = `Life-stage closeness: ${score}% (${internal.lifeStage ?? '?'} ↔ ${external.lifeStage ?? '?'})`;
+  const detail = `קרבת שלב חיים: ${score}%`;
 
   return makeDimension(ScoringDimension.LIFE_STAGE, score, detail);
 }
@@ -514,36 +533,36 @@ function scoreFlexibility(
 
   if (sectorClose < 0.5 && lifestyleClose >= OVERRIDE.LIFESTYLE_OVERRIDES_SECTOR_MIN) {
     score += 30;
-    factors.push('High lifestyle compatibility overrides sector gap');
+    factors.push('התאמת אורח חיים גבוהה מפצה על פער מגזרי');
   }
 
   // Both candidates show openness
   if (internal.openness.openToOtherSectors) {
     score += 10;
-    factors.push('Internal candidate open to other sectors');
+    factors.push('המועמד/ת פתוח/ה למגזרים אחרים');
   }
   if (internal.openness.openToAgeDifference) {
     score += 5;
-    factors.push('Open to age difference');
+    factors.push('פתיחות לפער גיל');
   }
 
   // Semantic similarity boost (if provided from embeddings)
   const semanticScore = context.semanticSimilarities?.get(external._id);
   if (semanticScore !== undefined && semanticScore > 0.7) {
     score += 15;
-    factors.push(`High semantic similarity (${(semanticScore * 100).toFixed(0)}%)`);
+    factors.push(`דמיון סמנטי גבוה (${(semanticScore * 100).toFixed(0)}%)`);
   }
 
   // Discovery mode general boost
   if (context.mode === 'discovery') {
     score += 10;
-    factors.push('Discovery mode active');
+    factors.push('מצב גילוי פעיל');
   }
 
   score = Math.max(0, Math.min(100, score));
   const detail = factors.length > 0
-    ? `Flexibility factors: ${factors.join('; ')}`
-    : 'No special flexibility factors';
+    ? `גורמי גמישות: ${factors.join('; ')}`
+    : 'אין גורמי גמישות מיוחדים';
 
   return makeDimension(ScoringDimension.FLEXIBILITY, score, detail);
 }
@@ -629,6 +648,24 @@ function violatesAgePref(
   if (pref.min !== undefined && candidateAge < pref.min - flexYears) return true;
   if (pref.max !== undefined && candidateAge > pref.max + flexYears) return true;
   return false;
+}
+
+/**
+ * True when EITHER side's stated age preference is violated beyond the
+ * ±tolerance (default ±1 year — see violatesAgePref). Soft: the pair is
+ * still shown, but flagged as an out-of-range exception so the operator
+ * sees it's outside a stated range and can decide anyway.
+ */
+export function pairAgeOutOfRange(
+  internal: MatchableInternal,
+  external: MatchableExternal,
+): boolean {
+  if (!external.age) return false;
+  const internalAge = ageFromDob(internal.dateOfBirth);
+  const internalViolated = violatesAgePref(internal.agePreferences, external.age);
+  const externalViolated = external.agePreferences !== undefined
+    && violatesAgePref(external.agePreferences, internalAge);
+  return internalViolated || externalViolated;
 }
 
 function matchesSoftPreference(actual: unknown, expected: unknown): boolean {

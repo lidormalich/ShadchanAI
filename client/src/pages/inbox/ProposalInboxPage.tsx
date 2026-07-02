@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Clock, Inbox, Minus, RotateCcw, TrendingDown, TrendingUp, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Inbox, Minus, RotateCcw, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Card, Select } from '@/components/ui/primitives';
@@ -196,8 +196,11 @@ function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
 
   const busy = accept.isPending || hold.isPending || dismiss.isPending || restore.isPending;
 
+  const hasReasons = (row.strengths?.length ?? 0) > 0 || (row.attentionPoints?.length ?? 0) > 0;
+
   return (
-    <li className="py-2.5 px-3 flex items-center gap-3">
+    <li className="py-2.5 px-3">
+      <div className="flex items-center gap-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate">
           {row.internalName} <span className="text-ink-faint">·</span> {row.externalName}
@@ -205,6 +208,12 @@ function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
         <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap mt-0.5">
           <Badge tone={matchTypeTone(row.matchType)}>{label('matchType', row.matchType)}</Badge>
           <DeltaBadge row={row} />
+          {row.ageOutOfRange && (
+            <Badge tone="warning" icon={<AlertTriangle className="h-3 w-3" />}
+              title="הגיל חורג מטווח ההעדפה של אחד הצדדים (מעבר ל±1 שנה). ההצעה עדיין מוצגת — ההחלטה שלך.">
+              חריגת גיל
+            </Badge>
+          )}
         </div>
         {tab !== 'inbox' && row.reviewReason && (
           <div className="text-xs text-ink-faint mt-1 truncate" title={row.reviewReason}>
@@ -252,7 +261,41 @@ function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
           פרופיל
         </Link>
       </div>
+      </div>
+
+      {hasReasons && (
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <ReasonColumn tone="pos" title="למה מתאים" items={row.strengths} />
+          <ReasonColumn tone="neg" title="הפערים" items={row.attentionPoints} />
+        </div>
+      )}
     </li>
+  );
+}
+
+function ReasonColumn({ title, items, tone }: {
+  title: string;
+  items?: string[];
+  tone: 'pos' | 'neg';
+}) {
+  const titleColor = tone === 'pos' ? 'text-emerald-700' : 'text-amber-700';
+  const dotColor = tone === 'pos' ? 'bg-emerald-500' : 'bg-amber-500';
+  return (
+    <div className="rounded-md border border-border bg-bg-subtle p-2">
+      <div className={`text-[11px] font-semibold mb-1 ${titleColor}`}>{title}</div>
+      {items?.length ? (
+        <ul className="space-y-0.5">
+          {items.slice(0, 3).map((t, i) => (
+            <li key={i} className="text-xs text-ink-muted flex gap-1.5 items-start">
+              <span className={`mt-1.5 h-1 w-1 rounded-full shrink-0 ${dotColor}`} />
+              <span className="min-w-0">{t}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-xs text-ink-faint">—</div>
+      )}
+    </div>
   );
 }
 

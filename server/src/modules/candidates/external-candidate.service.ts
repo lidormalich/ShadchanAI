@@ -12,6 +12,7 @@ import {
   ExternalCandidate,
   InternalCandidate,
   MatchSuggestion,
+  Message,
   type IExternalCandidate,
 } from '../../models/index.js';
 import { audit } from '../../services/audit.service.js';
@@ -64,6 +65,110 @@ export async function getExternalCandidateById(id: string): Promise<IExternalCan
   const doc = await ExternalCandidate.findById(id).exec();
   if (!doc) throw new NotFoundError('ExternalCandidate', id);
   return doc;
+}
+
+// ── Source card ("כרטיס מקורי") ───────────────────────────
+// Returns the original WhatsApp message(s) a candidate profile was
+// extracted from — the raw "card" the AI received. Internal candidates
+// are created manually (no source), so their variant returns hasSource:
+// false and the UI shows a "no details" state. Shared shape so both
+// candidate detail pages render the same tab.
+
+export interface SourceCardMessageDTO {
+  _id: string;
+  contentType: string;
+  body?: string;
+  mediaUrl?: string;
+  mediaCaption?: string;
+  senderName?: string;
+  senderPhone?: string;
+  chatJid?: string;
+  createdAt: string;
+}
+
+export interface SourceCardDTO {
+  hasSource: boolean;
+  sourceType?: string;
+  sourceName?: string;
+  sourceGroupName?: string;
+  sourceSenderName?: string;
+  sourceSenderPhone?: string;
+  sourceImportedAt?: string;
+  lastSourceUpdateAt?: string;
+  messages: SourceCardMessageDTO[];
+  // Fallback original text when the linked messages are gone but the raw
+  // source payload preserved the card text.
+  rawText?: string;
+}
+
+/** Best-effort pull of the original card text from a preserved raw payload. */
+function rawPayloadText(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const p = payload as Record<string, unknown>;
+  for (const key of ['text', 'body', 'rawText', 'message', 'content', 'caption']) {
+    const v = p[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+export async function getExternalSourceCard(id: string): Promise<SourceCardDTO> {
+  const doc = await ExternalCandidate.findById(id)
+    .select(
+      'sourceType sourceName sourceGroupName sourceSenderName sourceSenderPhone ' +
+      'sourceImportedAt lastSourceUpdateAt sourceMessageIds rawSourcePayload',
+    )
+    .lean()
+    .exec();
+  if (!doc) throw new NotFoundError('ExternalCandidate', id);
+  const d = doc as unknown as {
+    sourceType?: string;
+    sourceName?: string;
+    sourceGroupName?: string;
+    sourceSenderName?: string;
+    sourceSenderPhone?: string;
+    sourceImportedAt?: Date;
+    lastSourceUpdateAt?: Date;
+    sourceMessageIds?: Types.ObjectId[];
+    rawSourcePayload?: unknown;
+  };
+
+  const ids = Array.isArray(d.sourceMessageIds) ? d.sourceMessageIds : [];
+  let messages: SourceCardMessageDTO[] = [];
+  if (ids.length) {
+    const msgs = await Message.find({ _id: { $in: ids } })
+      .select('contentType body mediaUrl mediaCaption senderName senderPhone chatJid createdAt')
+      .sort({ createdAt: 1 })
+      .lean()
+      .exec();
+    messages = (msgs as unknown as Array<Record<string, unknown>>).map((m) => ({
+      _id: String(m['_id']),
+      contentType: String(m['contentType']),
+      ...(m['body'] ? { body: String(m['body']) } : {}),
+      ...(m['mediaUrl'] ? { mediaUrl: String(m['mediaUrl']) } : {}),
+      ...(m['mediaCaption'] ? { mediaCaption: String(m['mediaCaption']) } : {}),
+      ...(m['senderName'] ? { senderName: String(m['senderName']) } : {}),
+      ...(m['senderPhone'] ? { senderPhone: String(m['senderPhone']) } : {}),
+      ...(m['chatJid'] ? { chatJid: String(m['chatJid']) } : {}),
+      createdAt: new Date(m['createdAt'] as Date).toISOString(),
+    }));
+  }
+
+  const rawText = messages.length ? undefined : rawPayloadText(d.rawSourcePayload);
+  const hasSource = messages.length > 0 || Boolean(rawText);
+
+  return {
+    hasSource,
+    ...(d.sourceType ? { sourceType: d.sourceType } : {}),
+    ...(d.sourceName ? { sourceName: d.sourceName } : {}),
+    ...(d.sourceGroupName ? { sourceGroupName: d.sourceGroupName } : {}),
+    ...(d.sourceSenderName ? { sourceSenderName: d.sourceSenderName } : {}),
+    ...(d.sourceSenderPhone ? { sourceSenderPhone: d.sourceSenderPhone } : {}),
+    ...(d.sourceImportedAt ? { sourceImportedAt: new Date(d.sourceImportedAt).toISOString() } : {}),
+    ...(d.lastSourceUpdateAt ? { lastSourceUpdateAt: new Date(d.lastSourceUpdateAt).toISOString() } : {}),
+    messages,
+    ...(rawText ? { rawText } : {}),
+  };
 }
 
 export async function createExternalCandidate(

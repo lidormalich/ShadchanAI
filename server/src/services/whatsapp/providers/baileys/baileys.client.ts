@@ -77,6 +77,7 @@ export class BaileysClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private currentQR: string | null = null;
+  private qrGeneratedAt = 0;
   private state: BaileysSessionState = 'idle';
   private lastError: string | undefined;
   private lastConnectedAt: Date | undefined;
@@ -87,10 +88,17 @@ export class BaileysClient {
 
   get channelId(): string { return this.channel.channelId; }
   get status(): BaileysChannelStatus {
+    // Only expose a FRESH QR. Baileys rotates the QR (~20s) while the
+    // pairing socket is alive and a reconnect cycle mints a new one after
+    // a pairing timeout — so a code older than QR_EXPIRY_MS is dead and
+    // scanning it can only fail. Hiding it makes the UI show "generating
+    // a new code" instead of a QR that will never work.
+    const qrFresh =
+      this.currentQR !== null && Date.now() - this.qrGeneratedAt < BAILEYS.QR_EXPIRY_MS;
     return {
       channelId: this.channel.channelId,
       state: this.state,
-      qr: this.state === 'pending_pairing' ? this.currentQR ?? undefined : undefined,
+      qr: this.state === 'pending_pairing' && qrFresh ? this.currentQR ?? undefined : undefined,
       lastError: this.lastError,
       lastConnectedAt: this.lastConnectedAt,
     };
@@ -99,6 +107,20 @@ export class BaileysClient {
   /** Start (or restart) the socket. Idempotent — safe to call multiple times. */
   async start(): Promise<void> {
     this.shouldRun = true;
+    // Guard against opening a SECOND socket on top of an in-flight/live one.
+    // At boot, startAllChannels and the watchdog's first pass can both call
+    // start() for the same channel; openSocket only marks 'connecting' AFTER
+    // an await (loadAuth), so without this both would proceed and open two
+    // sockets → WhatsApp drops one → "unknown disconnect" churn. We claim the
+    // 'connecting' state SYNCHRONOUSLY here so the second concurrent call
+    // sees it and bails.
+    if (
+      this.state === 'connecting' || this.state === 'connected'
+      || this.state === 'pending_pairing' || this.state === 'reconnecting'
+    ) {
+      return;
+    }
+    this.setState('connecting');
     await this.openSocket();
   }
 
@@ -119,6 +141,27 @@ export class BaileysClient {
   resetCircuit(): void {
     this.reconnectAttempts = 0;
     this.shouldRun = true;
+  }
+
+  /**
+   * Force a fresh socket: tear down whatever exists — including a client
+   * wedged in 'reconnecting'/'pending_pairing' with no pending timer — and
+   * start over. Operator/watchdog revives use this instead of start(),
+   * whose idempotency guard would no-op on a stuck state and leave the
+   * channel unrecoverable without a process restart.
+   */
+  async restart(): Promise<void> {
+    this.clearReconnectTimer();
+    this.clearHeartbeatTimer();
+    const s = this.sock;
+    this.sock = null;
+    try { s?.end(undefined); } catch { /* ignore */ }
+    this.shouldRun = true;
+    this.reconnectAttempt = 0;
+    this.reconnectAttempts = 0;
+    this.currentQR = null;
+    this.setState('connecting');
+    await this.openSocket();
   }
 
   /** Explicit logout: tear down socket AND purge on-disk credentials.
@@ -347,7 +390,13 @@ export class BaileysClient {
       // Wire message / status events + connection lifecycle
       wireEvents(sock, {
         channel: this.channel,
-        onConnectionUpdate: (update) => { void this.handleConnectionUpdate(update); },
+        onConnectionUpdate: (update) => {
+          // Ignore events from a superseded socket — a late 'close' fired
+          // by a torn-down socket after restart() would clobber the live
+          // socket's state and double-count circuit-breaker attempts.
+          if (this.sock !== sock) return;
+          void this.handleConnectionUpdate(update);
+        },
       });
     } catch (err) {
       this.lastError = (err as Error).message;
@@ -370,6 +419,7 @@ export class BaileysClient {
     // QR is emitted before connection opens
     if (update.qr) {
       this.currentQR = update.qr;
+      this.qrGeneratedAt = Date.now();
       this.setState('pending_pairing');
       logWhatsApp({
         event: 'channel_connected',
@@ -470,11 +520,16 @@ export class BaileysClient {
       // and the reason isn't a final DisconnectReason.loggedOut sneaking through
       if (this.shouldRun && (err as Boom | undefined)?.output?.statusCode !== DisconnectReason.loggedOut) {
         this.setState(wasPairing ? 'connecting' : 'reconnecting');
+        // Book the reconnect BEFORE the awaited DB write. If the status
+        // persist rejects (transient Mongo fault — likely at the exact
+        // moment connectivity wobbles), the timer must already exist;
+        // otherwise the client wedges in 'reconnecting' with no timer and
+        // no recovery path (the watchdog treats 'reconnecting' as healthy).
+        this.scheduleReconnect();
         await updateChannelStatus(this.channel.channelId, {
           // A post-scan restart is healthy progress, not degradation.
           connectionHealth: wasPairing ? 'healthy' : 'degraded',
         });
-        this.scheduleReconnect();
       } else {
         this.setState('disconnected');
       }
@@ -560,7 +615,25 @@ export class BaileysClient {
 const clients = new Map<string, BaileysClient>();
 
 export async function startChannelClient(channel: IChannel): Promise<BaileysClient> {
-  let client = clients.get(channel.channelId);
+  const existing = clients.get(channel.channelId);
+  if (existing && existing.status.state === 'connected') return existing;
+
+  // Acquire ownership BEFORE opening a socket — every start path (boot
+  // auto-start, watchdog revive, operator reconnect) funnels through here,
+  // so this is the single place that guarantees "if a client is running for
+  // this channel, this instance owns its lock". Previously the watchdog's
+  // reconnect path started a client without acquiring the lock; startAllChannels
+  // then saw it 'already_connected' and skipped acquiring too — leaving the
+  // client heartbeating into a lock nobody owned → heartbeat_lost_ownership
+  // ~20s later. acquireChannelLock is idempotent for our own id (reacquired_own).
+  const lock = await acquireChannelLock(channel.channelId);
+  if (!lock.acquired) {
+    throw new Error(
+      `channel ${channel.channelId} lock held by ${lock.previousOwner ?? 'another instance'}`,
+    );
+  }
+
+  let client = existing;
   if (!client) {
     client = new BaileysClient(channel);
     clients.set(channel.channelId, client);

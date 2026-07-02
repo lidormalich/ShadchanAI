@@ -108,6 +108,15 @@ export interface ExplainMatchInput {
   // deterministic reasons. The prompt uses these to ground notMatchReasons.
   eligible?: boolean;
   blockers?: Array<{ code: string; message: string; overridable?: string }>;
+  // Learned preference profile from the candidate-learning agent — what
+  // this internal candidate accepted/declined before and why. Advisory
+  // context for the narrative; never overrides the engine's scoring.
+  learnedInsight?: {
+    summary: string;
+    positiveSignals: string[];
+    negativeSignals: string[];
+    guidance: string[];
+  };
 }
 
 export interface ExplainMatchOutput {

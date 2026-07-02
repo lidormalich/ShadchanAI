@@ -15,11 +15,12 @@
 //
 // Recoverable  → revive (reset circuit + reconnect):
 //   - status SUSPENDED + statusReason 'reconnect_circuit_open'
-//   - status DISCONNECTED
 //   - status ACTIVE but the live client is missing / idle / disconnected
 //       (e.g. process restarted without auto-start)
 //
 // NOT recoverable → left for a human:
+//   - status DISCONNECTED        (operator EXPLICITLY disconnected it —
+//       reviving would silently override their intent)
 //   - status REPLACED            (another device owns the session)
 //   - status RATE_LIMITED        (must back off, not hammer)
 //   - live client state 'logged_out' (needs a fresh QR scan)
@@ -58,7 +59,6 @@ export async function runConnectionWatchdog(): Promise<WatchdogResult> {
   const candidates = await Channel.find({
     $or: [
       { status: ChannelStatus.ACTIVE },
-      { status: ChannelStatus.DISCONNECTED },
       { status: ChannelStatus.SUSPENDED, statusReason: CIRCUIT_OPEN_REASON },
     ],
   })

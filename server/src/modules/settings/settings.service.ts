@@ -31,7 +31,21 @@ export type SettingKey =
   | 'matching.scan_autocreate_min_score'
   // Which AI engine is primary. Overrides the AI_ENGINE env default at
   // runtime; consumed by services/ai/ai.service.ts.
-  | 'ai.engine';
+  | 'ai.engine'
+  // Daily cap on provider-hitting AI requests (cache hits are free).
+  // Overrides the AI_DAILY_REQUEST_BUDGET env default at runtime.
+  | 'ai.daily_request_budget'
+  // Vision extraction for image-only profile cards (OpenAI multimodal).
+  | 'ai.vision_extract_enabled'
+  // Pairs re-score automatically once their cached score is older than
+  // this many days (time-based penalties drift otherwise).
+  | 'matching.rescore_ttl_days'
+  // Extraction pipeline thresholds (services/extraction/orchestrator.ts).
+  | 'extraction.auto_create_confidence'
+  | 'extraction.regex_skip_ai_confidence'
+  // Candidate learning agent (services/ai/candidate-learning.service.ts).
+  | 'learning.refresh_enabled'
+  | 'learning.refresh_limit';
 
 export interface SettingDef {
   key: SettingKey;
@@ -70,8 +84,8 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
   },
   'matching.scan_min_score': {
     key: 'matching.scan_min_score',
-    type: 'number', min: 0, max: 100, default: 30,
-    description: 'ציון מינימלי לסריקה — זוגות מתחת אליו לא נשמרים כהתאמה כשירה',
+    type: 'number', min: 0, max: 100, default: 55,
+    description: 'ציון מינימלי להצעה — זוגות מתחת אליו לא מוצגים בתיבת ההצעות הממתינות (ניתן לעקוף עם מסנן הציון)',
   },
   'matching.scan_autocreate_enabled': {
     key: 'matching.scan_autocreate_enabled',
@@ -94,6 +108,44 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
     // The deploy-time env var is the default; this setting overrides it.
     default: env.AI_ENGINE,
     description: 'מנוע ה-AI הראשי: Groq (חינמי, מהיר) או OpenAI (בתשלום). המנוע השני משמש כגיבוי אוטומטי.',
+  },
+  'ai.daily_request_budget': {
+    key: 'ai.daily_request_budget',
+    type: 'number', min: 0, max: 100_000,
+    default: env.AI_DAILY_REQUEST_BUDGET,
+    description: 'תקרת בקשות AI יומית (הגנת עלות). 0 = ללא הגבלה. פגיעות cache לא נספרות.',
+  },
+  'ai.vision_extract_enabled': {
+    key: 'ai.vision_extract_enabled',
+    type: 'boolean',
+    default: env.WA_VISION_EXTRACT,
+    description: 'חילוץ פרופילים מכרטיסי-תמונה (ללא טקסט) באמצעות OpenAI. דורש מפתח OpenAI; התוצאה תמיד עוברת אישור ידני.',
+  },
+  'matching.rescore_ttl_days': {
+    key: 'matching.rescore_ttl_days',
+    type: 'number', min: 1, max: 90, default: 7,
+    description: 'כל כמה ימים לחשב מחדש ציון של זוג גם בלי שינוי בנתונים (קנסות תלויי-זמן מתעדכנים)',
+  },
+  'extraction.auto_create_confidence': {
+    key: 'extraction.auto_create_confidence',
+    type: 'number', min: 0, max: 1, default: 0.7,
+    description: 'סף ביטחון ליצירת מועמד אוטומטית מהודעת וואטסאפ; מתחתיו — לבדיקה ידנית',
+  },
+  'extraction.regex_skip_ai_confidence': {
+    key: 'extraction.regex_skip_ai_confidence',
+    type: 'number', min: 0, max: 1, default: 0.8,
+    description: 'סף ביטחון של חילוץ ה-regex שמעליו מדלגים על קריאת AI (כרטיס מלא ומובנה)',
+  },
+  'learning.refresh_enabled': {
+    key: 'learning.refresh_enabled',
+    type: 'boolean',
+    default: true,
+    description: 'סוכן הלמידה: רענון אוטומטי (שעתי) של תובנות "מה למדנו" למועמדים עם פידבק חדש',
+  },
+  'learning.refresh_limit': {
+    key: 'learning.refresh_limit',
+    type: 'number', min: 1, max: 100, default: 15,
+    description: 'כמה מועמדים לכל היותר לרענן בכל ריצת למידה (הגנת עלות)',
   },
 };
 

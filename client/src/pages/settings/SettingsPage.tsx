@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { ChevronLeft, Cpu, Gauge, Plug, Shield, Sliders } from 'lucide-react';
+import { Brain, ChevronLeft, Coins, Cpu, Gauge, Plug, Shield, Sliders } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Input, Select } from '@/components/ui/primitives';
 import { LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { settingsApi, type SettingRow, type SettingValue } from '@/services/api/settings';
+import { AiCostsSection } from './AiCostsSection';
 
 interface Section {
   id: string;
@@ -17,10 +18,12 @@ interface Section {
 
 function SectionsList(): Section[] {
   return [
-    { id: 'operational', label: 'ספי תפעול',   icon: <Gauge className="h-4 w-4" />,   content: <OperationalSettingsSection /> },
-    { id: 'matching',    label: 'כללי התאמה',  icon: <Sliders className="h-4 w-4" />, content: <MatchingRulesSection /> },
-    { id: 'ai',          label: 'מנוע AI',     icon: <Cpu className="h-4 w-4" />,     content: <AiEngineSection /> },
-    { id: 'channels',    label: 'ערוצים',      icon: <Plug className="h-4 w-4" />,    content: <ChannelsSettingsSection /> },
+    { id: 'operational', label: 'ספי תפעול',    icon: <Gauge className="h-4 w-4" />,   content: <OperationalSettingsSection /> },
+    { id: 'matching',    label: 'כללי התאמה',   icon: <Sliders className="h-4 w-4" />, content: <MatchingRulesSection /> },
+    { id: 'ai',          label: 'מנוע AI',      icon: <Cpu className="h-4 w-4" />,     content: <AiEngineSection /> },
+    { id: 'pipeline',    label: 'עיבוד ולמידה', icon: <Brain className="h-4 w-4" />,   content: <PipelineSettingsSection /> },
+    { id: 'ai-costs',    label: 'עלויות AI',    icon: <Coins className="h-4 w-4" />,   content: <AiCostsSection /> },
+    { id: 'channels',    label: 'ערוצים',       icon: <Plug className="h-4 w-4" />,    content: <ChannelsSettingsSection /> },
   ];
 }
 
@@ -86,7 +89,7 @@ function OperationalSettingsSection() {
           ) : (
             <ul className="space-y-3">
               {(list.data?.data ?? [])
-                .filter((row) => !row.key.startsWith('matching.') && !row.key.startsWith('ai.'))
+                .filter((row) => row.key.startsWith('dashboard.') || row.key.startsWith('outbound.'))
                 .map((row) => (
                   <SettingRowEditor
                     key={row.key}
@@ -182,6 +185,8 @@ function SettingRowEditor({ row, onSaved }: { row: SettingRow; onSaved: (value: 
   const numValue = typeof value === 'number' ? value : Number(value);
   const min = row.min ?? 0;
   const max = row.max ?? 100;
+  // Confidence-style thresholds (0–1) need decimal steps; everything else is integers.
+  const step = max <= 1 ? 0.05 : 1;
   const invalid = !Number.isFinite(numValue) || numValue < min || numValue > max;
 
   return (
@@ -193,6 +198,7 @@ function SettingRowEditor({ row, onSaved }: { row: SettingRow; onSaved: (value: 
           type="number"
           min={min}
           max={max}
+          step={step}
           value={Number.isFinite(numValue) ? numValue : ''}
           onChange={(e) => setValue(Number(e.target.value))}
           className="w-32 num"
@@ -332,6 +338,52 @@ function AiEngineSection() {
           <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
         ) : rows.length === 0 ? (
           <div className="text-xs text-ink-muted">אין הגדרות מנוע זמינות.</div>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map((row) => (
+              <SettingRowEditor
+                key={row.key}
+                row={row}
+                onSaved={(v) => {
+                  qc.setQueryData<{ data: SettingRow[]; meta?: unknown } | undefined>(
+                    ['settings'],
+                    (prev) => prev
+                      ? { ...prev, data: prev.data.map((r) => r.key === row.key ? { ...r, value: v } : r) }
+                      : prev,
+                  );
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function PipelineSettingsSection() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => settingsApi.list(),
+  });
+  const rows = (list.data?.data ?? []).filter(
+    (r) => r.key.startsWith('extraction.') || r.key.startsWith('learning.'),
+  );
+
+  return (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold">עיבוד ולמידה</h3></CardHeader>
+      <CardBody>
+        <div className="text-xs text-ink-muted mb-3">
+          ספי החילוץ שולטים מתי מועמד נוצר אוטומטית ומתי מדלגים על ה-AI; הגדרות הלמידה שולטות ברענון התובנות מהיסטוריית ההצעות. השינוי נכנס לתוקף מיד.
+        </div>
+        {list.isLoading ? (
+          <LoadingSkeleton rows={4} />
+        ) : list.isError ? (
+          <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
+        ) : rows.length === 0 ? (
+          <div className="text-xs text-ink-muted">אין הגדרות עיבוד ולמידה זמינות.</div>
         ) : (
           <ul className="space-y-3">
             {rows.map((row) => (

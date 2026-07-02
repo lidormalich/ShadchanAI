@@ -72,7 +72,7 @@ describe('createExternalCandidate', () => {
     expect(h.ExternalCandidate.create).not.toHaveBeenCalled();
   });
 
-  it('creates and audits when phone is unique, defaulting shareCard to not-approved', async () => {
+  it('creates and audits when phone is unique, defaulting shareCard to approved', async () => {
     stubFindOne(null);
     const created = fakeDoc({ _id: ID, firstName: 'New' });
     h.ExternalCandidate.create.mockResolvedValue(created);
@@ -81,7 +81,10 @@ describe('createExternalCandidate', () => {
 
     expect(result).toBe(created);
     const createArg = h.ExternalCandidate.create.mock.calls[0]![0] as Record<string, unknown>;
-    expect((createArg['shareCard'] as { approvedForShare: boolean }).approvedForShare).toBe(false);
+    // Product decision: share cards are approved-for-share by default so a
+    // manually-created candidate is immediately proposable; the operator
+    // opts OUT per candidate rather than opting in.
+    expect((createArg['shareCard'] as { approvedForShare: boolean }).approvedForShare).toBe(true);
     expect(createArg['contactPhoneNormalized']).toBe('+972521112222');
     expect(h.auditMock).toHaveBeenCalledTimes(1);
   });

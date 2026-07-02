@@ -14,6 +14,8 @@ import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList';
 import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
+import { SourceCardTab } from '@/features/candidates/SourceCardTab';
+import { CandidateInsightTab } from '@/features/candidates/CandidateInsightTab';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
 import { EmptyState, ErrorState, LoadingSkeleton, NotFoundState } from '@/components/states/states';
@@ -179,6 +181,16 @@ export function InternalCandidateDetailPage() {
                 label: 'שיחות',
                 badge: <Badge tone="neutral">{conversations.data?.data.length ?? 0}</Badge>,
                 content: <LinkedConversations items={conversations.data?.data ?? []} loading={conversations.isLoading} />,
+              },
+              {
+                id: 'insight',
+                label: 'מה למדנו',
+                content: <CandidateInsightTab candidateId={c._id} />,
+              },
+              {
+                id: 'source',
+                label: 'כרטיס מקורי',
+                content: <SourceCardTab kind="internal" candidateId={c._id} />,
               },
               {
                 id: 'history',

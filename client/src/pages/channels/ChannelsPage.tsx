@@ -171,7 +171,7 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
     // post-scan connecting handshake so the card lands on "connected"
     // on its own; stop once the session settles.
     refetchInterval: (q) => {
-      const st = q.state.data?.data.state;
+      const st = q.state.data?.data?.state;
       return st && PAIRING_IN_PROGRESS.includes(st) ? 10_000 : false;
     },
   });
@@ -204,7 +204,9 @@ function ChannelStatusCard({ channel }: { channel: Channel }) {
 
   const logoutMut = useMutation({
     mutationFn: () => channelsApi.sessionLogout(channel.channelId),
-    onSuccess: (r) => { setSession(r.data); toast.success('היציאה מהחשבון הושלמה'); invalidate(); },
+    // logout returns 204 (no body), so DON'T seed the session cache with
+    // undefined — re-fetch instead. The server now reports 'logged_out'.
+    onSuccess: () => { toast.success('היציאה מהחשבון הושלמה'); invalidate(); refreshStatus(); },
     onError: (e: Error) => toast.error('היציאה נכשלה', e.message),
   });
 
@@ -520,7 +522,7 @@ function QRPairingModal({
     queryFn: () => channelsApi.sessionStatus(channelId),
     enabled: open,
     refetchInterval: (q) => {
-      const st = q.state.data?.data.state;
+      const st = q.state.data?.data?.state;
       return open && st && PAIRING_IN_PROGRESS.includes(st) ? 3000 : false;
     },
   });

@@ -161,6 +161,11 @@ export interface ExternalCandidate {
   sourceName?: string;
   sourceMatchmakerName?: string;
   sourceChannelId?: string;
+  // WhatsApp provenance: group + actual sender (poster).
+  sourceChatJid?: string;
+  sourceGroupName?: string;
+  sourceSenderName?: string;
+  sourceSenderPhone?: string;
   sourceImportedAt: string;
   lastSourceUpdateAt?: string;
   firstName?: string;

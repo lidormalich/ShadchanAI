@@ -20,6 +20,13 @@ export interface IMessage extends Document {
   channelRole: ChannelRole;
   accountDisplayName: string;
 
+  // source provenance (denormalized): the chat/group and the ACTUAL sender.
+  // In a group the sender differs from the group; captured for candidate
+  // provenance ("who published this profile, in which group").
+  chatJid?: string;
+  senderName?: string;
+  senderPhone?: string;
+
   // message identity
   direction: MessageDirection;
   contentType: MessageContentType;
@@ -29,6 +36,10 @@ export interface IMessage extends Document {
   mediaUrl?: string;
   mediaCaption?: string;
   mediaMimeType?: string;
+  // Failed media-download attempts. The reconciler stops retrying once
+  // this hits its cap — expired WhatsApp media keys ("bad decrypt") can
+  // never succeed, so endless retries are pure log noise.
+  mediaDownloadAttempts?: number;
 
   // provider references
   externalMessageId?: string;
@@ -69,6 +80,20 @@ export interface IMessage extends Document {
     // Number of failed extraction attempts. The reconciler stops
     // auto-retrying once this hits the cap; manual /run still works.
     retryCount?: number;
+    // The merged regex+AI profile as of the last async run. Persisted so
+    // the approve path uses the enrichment the pipeline already paid for
+    // instead of re-running regex-only and dropping the AI fields.
+    extractedProfile?: Record<string, unknown>;
+    // Why this message sits in needs_review — drives the review UI tabs
+    // ('suspected_duplicate' | 'low_confidence' | 'no_identifier' | 'no_corroboration').
+    reviewReason?: string;
+    // Existing candidate a strong (name+age) match pointed at. Presence
+    // marks a "possible duplicate person" review item: the operator
+    // decides link-to-existing vs create-new. Never auto-merged.
+    suspectedCandidateId?: Types.ObjectId;
+    // Atomic approve claim — set once by the first approve request so a
+    // double-click / second operator can't create a twin candidate.
+    reviewClaimedAt?: Date;
   };
 
   // Ingestion routing verdict — persisted so operators can audit why a
@@ -114,6 +139,10 @@ const extractionSchema = new Schema(
     failureReason: { type: String },
     matchedFields: [{ type: String }],
     retryCount: { type: Number, default: 0 },
+    extractedProfile: { type: Schema.Types.Mixed },
+    reviewReason: { type: String },
+    suspectedCandidateId: { type: Schema.Types.ObjectId, ref: 'ExternalCandidate' },
+    reviewClaimedAt: { type: Date },
   },
   { _id: false },
 );
@@ -151,6 +180,11 @@ const messageSchema = new Schema<IMessage>(
     },
     accountDisplayName: { type: String, required: true },
 
+    // ── Source provenance (denormalized) ──────────────────
+    chatJid: { type: String },
+    senderName: { type: String, trim: true },
+    senderPhone: { type: String, trim: true },
+
     // ── Direction & type ──────────────────────────────────
     direction: {
       type: String,
@@ -169,6 +203,7 @@ const messageSchema = new Schema<IMessage>(
     mediaUrl: { type: String },
     mediaCaption: { type: String },
     mediaMimeType: { type: String },
+    mediaDownloadAttempts: { type: Number },
 
     // ── Provider references ───────────────────────────────
     externalMessageId: { type: String },

@@ -70,6 +70,12 @@ internalCandidateRouter.post(
 );
 
 internalCandidateRouter.get(
+  '/:id/source-card',
+  validate({ params: IdParamSchema }),
+  ctrl.sourceCardHandler,
+);
+
+internalCandidateRouter.get(
   '/:id/suggestions',
   validate({ params: IdParamSchema }),
   ctrl.suggestionsHandler,
@@ -85,6 +91,20 @@ internalCandidateRouter.get(
   '/:id/readiness',
   validate({ params: IdParamSchema }),
   ctrl.readinessHandler,
+);
+
+// ── Learned insight (candidate learning agent) ───────────────
+
+internalCandidateRouter.get(
+  '/:id/insight',
+  validate({ params: IdParamSchema }),
+  ctrl.insightHandler,
+);
+
+internalCandidateRouter.post(
+  '/:id/insight/rebuild',
+  validate({ params: IdParamSchema }),
+  ctrl.rebuildInsightHandler,
 );
 
 // ── Compatibility workspace ──────────────────────────────────

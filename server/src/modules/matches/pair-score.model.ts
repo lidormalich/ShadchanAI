@@ -38,6 +38,16 @@ export interface IPairScore extends Document {
   bucket: PairScoreBucket;
   blockerCodes: string[];
 
+  // Short engine rationale surfaced in the proposal inbox: why the pair
+  // fits (strengths) and where the gaps are (attention points). Capped to
+  // a few items each so the cache stays lean. Populated on scan; older
+  // rows are backfilled lazily on first listing.
+  strengths: string[];
+  attentionPoints: string[];
+  // Soft age-range exception: either side's stated age preference is
+  // violated beyond ±tolerance. The pair still surfaces; the UI flags it.
+  ageOutOfRange: boolean;
+
   // Delta tracking across scans.
   previousScore?: number;
   scoreDelta: number;
@@ -69,6 +79,10 @@ const pairScoreSchema = new Schema<IPairScore>(
     riskLevel: { type: String, enum: ['none', 'low', 'medium', 'high'], default: 'none' },
     bucket: { type: String, enum: ['suitable', 'weak', 'blocked'], required: true },
     blockerCodes: { type: [String], default: [] },
+
+    strengths: { type: [String], default: [] },
+    attentionPoints: { type: [String], default: [] },
+    ageOutOfRange: { type: Boolean, default: false },
 
     previousScore: { type: Number },
     scoreDelta: { type: Number, default: 0 },

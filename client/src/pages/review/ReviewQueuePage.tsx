@@ -17,11 +17,13 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Filter, Inbox, RefreshCw, X } from 'lucide-react';
+import { Check, Copy, Filter, Inbox, Link2, RefreshCw, UserPlus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
+import { Dialog } from '@/components/ui/Dialog';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
+import { AuthImage } from '@/components/AuthImage';
 import { toast } from '@/components/ui/Toast';
 import {
   extractionApi,
@@ -29,8 +31,19 @@ import {
   type IngestionDecision,
   type IngestionLogItem,
   type ReviewQueueItem,
+  type ReviewReason,
 } from '@/services/api/extraction';
 import { label } from '@/utils/labels';
+
+// Hebrew labels for the pipeline's review reason — why a message
+// landed in the queue instead of auto-creating a candidate.
+const REVIEW_REASON_LABEL: Record<ReviewReason, string> = {
+  suspected_duplicate: 'חשד לכפול',
+  low_confidence: 'ביטחון נמוך',
+  no_identifier: 'חסר שם/טלפון',
+  no_corroboration: 'ללא אימות מבני',
+  vision_image: 'חולץ מתמונה',
+};
 
 // Hebrew labels + tone for each ingestion routing verdict.
 const INGESTION_LABEL: Record<IngestionDecision, { text: string; tone: 'success' | 'neutral' | 'warning' | 'danger' }> = {
@@ -44,12 +57,16 @@ export function ReviewQueuePage() {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const focusMessageId = searchParams.get('messageId');
-  const [tab, setTab] = useState<'review' | 'filtered'>('review');
+  const [tab, setTab] = useState<'review' | 'duplicates' | 'filtered'>('review');
 
   const queue = useQuery({
     queryKey: ['extraction', 'review-queue'],
     queryFn: () => extractionApi.reviewQueue(100),
   });
+
+  const rows = queue.data?.data ?? [];
+  const pendingRows = rows.filter((r) => !r.suspectedCandidate);
+  const duplicateRows = rows.filter((r) => r.suspectedCandidate);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
@@ -57,9 +74,16 @@ export function ReviewQueuePage() {
   };
 
   const approve = useMutation({
-    mutationFn: ({ id, profile }: { id: string; profile: ExtractedProfileInput }) =>
-      extractionApi.approve(id, profile),
-    onSuccess: (res) => { toast.success('המועמד נוצר בהצלחה', `candidate: ${res.data.candidateId}`); invalidate(); },
+    mutationFn: ({ id, profile, linkToCandidateId }: { id: string; profile?: ExtractedProfileInput; linkToCandidateId?: string }) =>
+      extractionApi.approve(id, { profile, linkToCandidateId }),
+    onSuccess: (res) => {
+      if (res.data.linked) {
+        toast.success('ההודעה קושרה למועמד הקיים', `candidate: ${res.data.candidateId}`);
+      } else {
+        toast.success('המועמד נוצר בהצלחה', `candidate: ${res.data.candidateId}`);
+      }
+      invalidate();
+    },
     onError: (e: Error) => toast.error('האישור נכשל', e.message),
   });
   const reject = useMutation({
@@ -80,14 +104,18 @@ export function ReviewQueuePage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">{tab === 'review' ? 'תור סקירה' : 'הודעות שסוננו'}</h2>
+          <h2 className="text-lg font-semibold">
+            {tab === 'review' ? 'תור סקירה' : tab === 'duplicates' ? 'כפולים אפשריים' : 'הודעות שסוננו'}
+          </h2>
           <p className="text-sm text-ink-muted">
             {tab === 'review'
               ? 'הודעות פרופיל שה-AI לא היה בטוח בהן — אשר, דחה או הרץ מחדש.'
-              : 'הודעות שהגיעו אך לא נכנסו לחילוץ — וסיבת הסינון. אפשר לאלץ עיבוד מחדש.'}
+              : tab === 'duplicates'
+                ? 'פרופילים חדשים שדומים למועמד קיים — קשר לקיים או צור חדש.'
+                : 'הודעות שהגיעו אך לא נכנסו לחילוץ — וסיבת הסינון. אפשר לאלץ עיבוד מחדש.'}
           </p>
         </div>
-        {tab === 'review' && (
+        {tab !== 'filtered' && (
           <Button variant="secondary" onClick={() => queue.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
             רענן
           </Button>
@@ -96,8 +124,21 @@ export function ReviewQueuePage() {
 
       {/* Tab switcher */}
       <div className="flex gap-1 border-b border-border">
-        <TabButton active={tab === 'review'} onClick={() => setTab('review')} icon={<Inbox className="h-4 w-4" />}>
-          תור סקירה
+        <TabButton
+          active={tab === 'review'}
+          onClick={() => setTab('review')}
+          icon={<Inbox className="h-4 w-4" />}
+          count={pendingRows.length}
+        >
+          ממתינים לבדיקה
+        </TabButton>
+        <TabButton
+          active={tab === 'duplicates'}
+          onClick={() => setTab('duplicates')}
+          icon={<Copy className="h-4 w-4" />}
+          count={duplicateRows.length}
+        >
+          כפולים אפשריים
         </TabButton>
         <TabButton active={tab === 'filtered'} onClick={() => setTab('filtered')} icon={<Filter className="h-4 w-4" />}>
           הודעות שסוננו
@@ -110,7 +151,29 @@ export function ReviewQueuePage() {
         <ErrorState description={(queue.error as Error).message} onRetry={() => queue.refetch()} />
       ) : queue.isLoading ? (
         <LoadingSkeleton rows={6} />
-      ) : !queue.data?.data.length ? (
+      ) : tab === 'duplicates' ? (
+        !duplicateRows.length ? (
+          <EmptyState
+            icon={<Copy className="h-10 w-10 text-ink-faint" />}
+            title="אין כפולים אפשריים"
+            description="אף פרופיל חדש לא נחשד ככפול של מועמד קיים."
+          />
+        ) : (
+          <div className="space-y-3">
+            {duplicateRows.map((item) => (
+              <DuplicateCard
+                key={item.messageId}
+                item={item}
+                focused={focusMessageId === item.messageId}
+                onLinkExisting={() => approve.mutate({ id: item.messageId, linkToCandidateId: item.suspectedCandidate!.id })}
+                onCreateNew={() => approve.mutate({ id: item.messageId, profile: item.extractedFields })}
+                onReject={() => reject.mutate(item.messageId)}
+                busy={approve.isPending || reject.isPending}
+              />
+            ))}
+          </div>
+        )
+      ) : !pendingRows.length ? (
         <EmptyState
           icon={<Inbox className="h-10 w-10 text-ink-faint" />}
           title="התור ריק"
@@ -118,7 +181,7 @@ export function ReviewQueuePage() {
         />
       ) : (
         <div className="space-y-3">
-          {queue.data.data.map((item) => (
+          {pendingRows.map((item) => (
             <ReviewCard
               key={item.messageId}
               item={item}
@@ -135,10 +198,11 @@ export function ReviewQueuePage() {
   );
 }
 
-function TabButton({ active, onClick, icon, children }: {
+function TabButton({ active, onClick, icon, count, children }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
+  count?: number;
   children: React.ReactNode;
 }) {
   return (
@@ -151,6 +215,9 @@ function TabButton({ active, onClick, icon, children }: {
     >
       {icon}
       {children}
+      {count !== undefined && count > 0 && (
+        <Badge tone={active ? 'brand' : 'neutral'}>{count}</Badge>
+      )}
     </button>
   );
 }
@@ -308,6 +375,9 @@ function ReviewCard({
             {item.extraction?.method && (
               <Badge tone="neutral">{item.extraction.method}</Badge>
             )}
+            {item.reviewReason && (
+              <Badge tone="info">{REVIEW_REASON_LABEL[item.reviewReason] ?? item.reviewReason}</Badge>
+            )}
             <span className="text-xs text-ink-muted">
               confidence: {(item.regexConfidence * 100).toFixed(0)}%
             </span>
@@ -320,11 +390,14 @@ function ReviewCard({
       <CardBody className="space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Original body */}
-          <div>
-            <div className="text-xs text-ink-muted mb-1">ההודעה המקורית</div>
-            <div className="rounded-md border border-border bg-bg-subtle/40 p-2 text-sm whitespace-pre-wrap max-h-72 overflow-y-auto">
-              {item.body}
+          <div className="space-y-2">
+            <div>
+              <div className="text-xs text-ink-muted mb-1">ההודעה המקורית</div>
+              <div className="rounded-md border border-border bg-bg-subtle/40 p-2 text-sm whitespace-pre-wrap max-h-72 overflow-y-auto">
+                {item.body}
+              </div>
             </div>
+            {item.mediaUrl && <MediaThumb url={item.mediaUrl} />}
           </div>
           {/* Editable extracted fields */}
           <div>
@@ -360,6 +433,9 @@ function ReviewCard({
                 </Select>
               </EditRow>
               <EditRow label="עיסוק"><Input value={fields.occupation ?? ''} onChange={(e) => set('occupation', e.target.value || undefined)} /></EditRow>
+              <EditRow label="שירות צבאי/לאומי"><Input value={fields.service ?? ''} onChange={(e) => set('service', e.target.value || undefined)} /></EditRow>
+              <EditRow label="ישיבה/מדרשה"><Input value={fields.yeshiva ?? ''} onChange={(e) => set('yeshiva', e.target.value || undefined)} /></EditRow>
+              <EditRow label="רמה דתית (טקסט)"><Input value={fields.religiousLevelText ?? ''} onChange={(e) => set('religiousLevelText', e.target.value || undefined)} /></EditRow>
               <EditRow label="מגיל">
                 <Input type="number" value={fields.seekingAgeMin ?? ''} onChange={(e) => set('seekingAgeMin', e.target.value ? Number(e.target.value) : undefined)} />
               </EditRow>
@@ -380,6 +456,9 @@ function ReviewCard({
               </EditRow>
               <EditRow label="מה מחפש" full>
                 <Textarea rows={2} value={fields.whatSeeking ?? ''} onChange={(e) => set('whatSeeking', e.target.value || undefined)} />
+              </EditRow>
+              <EditRow label="משפחה" full>
+                <Textarea rows={2} value={fields.family ?? ''} onChange={(e) => set('family', e.target.value || undefined)} />
               </EditRow>
             </div>
           </div>
@@ -415,6 +494,138 @@ function EditRow({ label, full, children }: { label: string; full?: boolean; chi
     <div className={full ? 'col-span-2' : ''}>
       <div className="text-[11px] text-ink-muted mb-0.5">{label}</div>
       {children}
+    </div>
+  );
+}
+
+// ── Auth-aware media thumbnail → full-size Dialog ────────
+function MediaThumb({ url }: { url: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="block" title="הצג תמונה מוגדלת">
+        <AuthImage src={url} alt="תמונה מצורפת" className="h-24 w-24 object-cover rounded-md border border-border" />
+      </button>
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title="תמונה מצורפת"
+        secondaryAction={{ label: 'סגור', onClick: () => setOpen(false) }}
+      >
+        <AuthImage src={url} alt="תמונה מצורפת" className="max-h-[65vh] w-full object-contain rounded-md" />
+      </Dialog>
+    </>
+  );
+}
+
+// ── Duplicates tab: new extraction vs existing candidate ──
+// Side-by-side comparison so the operator can decide: same person
+// (link the message to the existing candidate) or a different one
+// (create a new candidate from the extracted fields).
+function DuplicateCard({
+  item, focused, onLinkExisting, onCreateNew, onReject, busy,
+}: {
+  item: ReviewQueueItem;
+  focused?: boolean;
+  onLinkExisting: () => void;
+  onCreateNew: () => void;
+  onReject: () => void;
+  busy: boolean;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [focused]);
+
+  const f = item.extractedFields;
+  const s = item.suspectedCandidate!;
+  const newName = `${f.firstName ?? ''} ${f.lastName ?? ''}`.trim() || 'ללא שם';
+  const existingName = `${s.firstName ?? ''} ${s.lastName ?? ''}`.trim() || 'ללא שם';
+
+  return (
+    <div ref={cardRef} className={focused ? 'ring-2 ring-brand-400 rounded-lg' : undefined}>
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge tone="warning">
+              {item.reviewReason ? REVIEW_REASON_LABEL[item.reviewReason] ?? item.reviewReason : REVIEW_REASON_LABEL.suspected_duplicate}
+            </Badge>
+            <span className="text-xs text-ink-muted">{new Date(item.createdAt).toLocaleString('he-IL')}</span>
+            <span className="text-xs text-ink-faint">מ־{item.accountDisplayName}</span>
+          </div>
+          <Link to={`/chats?conversation=${item.conversationId}`} className="text-xs underline text-brand">
+            פתח שיחה
+          </Link>
+        </div>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* The newly extracted profile */}
+          <div className="rounded-md border border-border bg-white p-3 space-y-2">
+            <div className="text-xs font-semibold text-brand-700 uppercase tracking-wide">הפרופיל החדש שחולץ</div>
+            <div className="text-sm font-medium">{newName}</div>
+            <dl className="space-y-1">
+              {f.age !== undefined && <CompareRow k="גיל" v={String(f.age)} />}
+              {f.city && <CompareRow k="עיר" v={f.city} />}
+              {f.sectorGroup && <CompareRow k="מגזר" v={label('sectorGroup', f.sectorGroup)} />}
+              {f.personalStatus && <CompareRow k="סטטוס" v={label('personalStatus', f.personalStatus)} />}
+              {f.contactPhones && f.contactPhones.length > 0 && <CompareRow k="טלפון" v={f.contactPhones.join(', ')} />}
+              {f.occupation && <CompareRow k="עיסוק" v={f.occupation} />}
+            </dl>
+            {item.mediaUrl && <MediaThumb url={item.mediaUrl} />}
+            {item.body && (
+              <div className="rounded-md border border-border bg-bg-subtle/40 p-2 text-xs whitespace-pre-wrap max-h-36 overflow-y-auto">
+                {item.body}
+              </div>
+            )}
+          </div>
+
+          {/* The suspected existing candidate */}
+          <div className="rounded-md border border-amber-200 bg-amber-50/40 p-3 space-y-2">
+            <div className="text-xs font-semibold text-amber-800 uppercase tracking-wide">המועמד הקיים במאגר</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-medium">{existingName}</div>
+              <Link to={`/candidates/external/${s.id}`} className="text-xs text-brand-700 hover:underline">
+                פתח פרופיל
+              </Link>
+            </div>
+            <dl className="space-y-1">
+              {s.age !== undefined && <CompareRow k="גיל" v={String(s.age)} />}
+              {s.city && <CompareRow k="עיר" v={s.city} />}
+              {s.sectorGroup && <CompareRow k="מגזר" v={label('sectorGroup', s.sectorGroup)} />}
+              {s.personalStatus && <CompareRow k="סטטוס" v={label('personalStatus', s.personalStatus)} />}
+              {s.contactPhone && <CompareRow k="טלפון" v={s.contactPhone} />}
+            </dl>
+          </div>
+        </div>
+
+        <Divider />
+
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Button variant="secondary" onClick={onReject} disabled={busy} leftIcon={<X className="h-4 w-4" />}>
+            דחה (לא פרופיל)
+          </Button>
+          <Button variant="secondary" onClick={onCreateNew} disabled={busy} leftIcon={<UserPlus className="h-4 w-4" />}>
+            אדם אחר — צור חדש
+          </Button>
+          <Button variant="primary" onClick={onLinkExisting} disabled={busy} leftIcon={<Link2 className="h-4 w-4" />}>
+            אותו אדם — קשר לקיים
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
+    </div>
+  );
+}
+
+function CompareRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex gap-2 text-xs">
+      <dt className="text-ink-faint min-w-[3.5rem]">{k}</dt>
+      <dd className="text-ink flex-1">{v}</dd>
     </div>
   );
 }

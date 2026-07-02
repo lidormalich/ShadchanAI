@@ -7,7 +7,7 @@ import { ApiError, type ApiEnvelope } from '@/types/api';
 
 const API_BASE = '/api';
 
-function getAuthHeaders(): HeadersInit {
+export function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('auth_token');
   if (token) return { Authorization: `Bearer ${token}` };
   // Dev fallback — backend accepts X-Dev-User in development

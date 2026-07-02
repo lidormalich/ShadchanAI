@@ -64,9 +64,31 @@ export interface MonitoringEvent {
   metadata?: Record<string, unknown>;
 }
 
+// ── AI usage / cost report (admin-only) ──────────────────
+
+export interface AiUsageBucket {
+  requests: number;
+  failures: number;
+  inputTokens: number;
+  outputTokens: number;
+  estCostUsd: number;
+  unpricedRequests: number;
+}
+
+export interface AiUsageReport {
+  days: number;
+  totals: AiUsageBucket;
+  byModel: Array<AiUsageBucket & { provider: string; model: string }>;
+  byRequestType: Array<AiUsageBucket & { requestType: string }>;
+  byDay: Array<AiUsageBucket & { day: string }>;
+  budget: { limit: number; usedToday: number; day: string };
+}
+
 export const monitoringApi = {
   overview: (windowHours = 24) =>
     api.get<MonitoringOverview>('/monitoring/overview', { windowHours }),
   events: (limit = 100) =>
     api.get<MonitoringEvent[]>('/monitoring/events', { limit }),
+  aiUsage: (days = 30) =>
+    api.get<AiUsageReport>('/monitoring/ai-usage', { days }),
 };

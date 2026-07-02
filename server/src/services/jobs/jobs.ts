@@ -12,6 +12,9 @@ import { registerJob } from './job.scheduler.js';
 import { enqueueExtraction } from '../extraction/queue.js';
 import { runScanNow } from '../matching/match-scan.service.js';
 import { replayFailedInboundMessages } from '../whatsapp/message.handler.js';
+import { downloadInboundMedia } from '../whatsapp/media.service.js';
+import { refreshStaleInsights } from '../ai/candidate-learning.service.js';
+import { getSettingCached } from '../../modules/settings/settings.service.js';
 import { runConnectionWatchdog } from '../whatsapp/connection.watchdog.js';
 import { env } from '../../config/env.js';
 import { createLogger } from '../../utils/logger.js';
@@ -44,16 +47,23 @@ registerJob({
   },
 });
 
-// ── AI enrichment refresh (placeholder) ──────────────────
-// Intentionally left as a shell: production will populate AI
-// summaries on new candidates. Keeping the job boundary clear
-// so the enrichment logic can land in one place without app wiring.
+// ── Candidate learning refresh ───────────────────────────
+// Rebuilds the learned per-candidate insight (CandidateInsight) for
+// internal candidates whose suggestion journal gained new entries
+// (status changes + operator reasons) since the last build. Cheap
+// no-op when nothing changed; capped per run to bound AI spend.
 registerJob({
-  name: 'ai-enrichment-refresh',
+  name: 'candidate-learning-refresh',
   intervalMs: 60 * 60 * 1000, // hourly
   async run() {
-    // Future: enqueue summaries for candidates missing aiEnrichment
-    // that passed a minimum profileCompletion threshold.
+    if (env.AI_DISABLED) return;
+    const enabled = await getSettingCached('learning.refresh_enabled').catch(() => true);
+    if (!enabled) return;
+    const limit = await getSettingCached('learning.refresh_limit').catch(() => 15);
+    const r = await refreshStaleInsights(Number(limit) || 15);
+    if (r.rebuilt > 0) {
+      log.info({ job: 'candidate-learning-refresh', ...r }, 'insights rebuilt');
+    }
   },
 });
 
@@ -80,7 +90,17 @@ registerJob({
     const candidates = await Message.find({
       channelRole: ChannelRole.PROFILES_SOURCE,
       direction: MessageDirection.INBOUND,
-      body: { $exists: true, $ne: '' },
+      // A caption-only image card is extractable (orchestrator falls back
+      // to mediaCaption) — the old body-only filter left such messages
+      // stuck in `pending` forever if the process died mid-extraction.
+      $and: [
+        {
+          $or: [
+            { body: { $exists: true, $ne: '' } },
+            { mediaCaption: { $exists: true, $ne: '' } },
+          ],
+        },
+      ],
       $or: [
         { 'extraction.status': MessageExtractionStatus.PENDING, 'extraction.attemptedAt': { $lt: stalePending } },
         {
@@ -141,6 +161,39 @@ registerJob({
         durationMs: summary.durationMs,
       }, 'scan complete');
     }
+  },
+});
+
+// ── Media-download reconciler ────────────────────────────
+// Retries image downloads that failed at ingest (transient network /
+// socket teardown). Only young messages are retried — WhatsApp media
+// keys expire, so after 24h a retry cannot succeed anyway.
+registerJob({
+  name: 'media-download-reconciler',
+  intervalMs: 10 * 60 * 1000, // every 10 minutes
+  async run() {
+    const youngCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const missing = await Message.find({
+      direction: MessageDirection.INBOUND,
+      contentType: 'image',
+      mediaUrl: { $exists: false },
+      createdAt: { $gt: youngCutoff },
+      // Give up after 3 failed attempts — an expired media key ("bad
+      // decrypt") will fail identically forever. $not/$gte also matches
+      // docs with no attempts field yet.
+      mediaDownloadAttempts: { $not: { $gte: 3 } },
+    })
+      .select('_id')
+      .limit(20)
+      .lean()
+      .exec();
+    if (missing.length === 0) return;
+    let ok = 0;
+    for (const doc of missing) {
+      const r = await downloadInboundMedia(String(doc._id));
+      if (r.ok) ok++;
+    }
+    if (ok > 0) log.info({ job: 'media-download-reconciler', downloaded: ok, attempted: missing.length }, 'media backfilled');
   },
 });
 

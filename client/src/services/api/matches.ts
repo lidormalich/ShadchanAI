@@ -54,6 +54,13 @@ export interface ScanResultItem {
   matchSuggestionId?: string;
   autoCreated: boolean;
   scoredAt: string;
+  // Short engine rationale: why the pair fits (strengths) and where the
+  // gaps are (attentionPoints). Rendered as columns in the proposal inbox.
+  strengths: string[];
+  attentionPoints: string[];
+  // Soft age-range exception: a stated age preference is violated beyond
+  // ±1yr. The pair is still surfaced; the inbox marks it with a warning badge.
+  ageOutOfRange?: boolean;
   // Operator reason recorded when held (review_later) or rejected (not_suitable).
   reviewReason?: string;
 }
@@ -108,13 +115,15 @@ export const matchesApi = {
     api.post<MatchSuggestion>('/matches', body),
   force: (body: { internalCandidateId: string; externalCandidateId: string; mode?: string; justification: string }) =>
     api.post<MatchSuggestion>('/matches/force', body),
-  approve: (id: string) => api.post<MatchSuggestion>(`/matches/${id}/approve`),
+  approve: (id: string, body: { reason?: string } = {}) =>
+    api.post<MatchSuggestion>(`/matches/${id}/approve`, body.reason ? { reason: body.reason } : undefined),
   decline: (id: string, body: { side: 'a' | 'b'; reason?: string; notes?: string }) =>
     api.post<MatchSuggestion>(`/matches/${id}/decline`, body),
   defer: (id: string, body: { reason: string }) =>
     api.post<MatchSuggestion>(`/matches/${id}/defer`, body),
   reopenDeferred: (id: string) => api.post<MatchSuggestion>(`/matches/${id}/reopen-deferred`),
-  markDating: (id: string) => api.post<MatchSuggestion>(`/matches/${id}/mark-dating`),
+  markDating: (id: string, body: { reason?: string } = {}) =>
+    api.post<MatchSuggestion>(`/matches/${id}/mark-dating`, body.reason ? { reason: body.reason } : undefined),
   close: (id: string, body: { reason: string }) =>
     api.post<MatchSuggestion>(`/matches/${id}/close`, body),
   explanation: (id: string) => api.get<Record<string, unknown>>(`/matches/${id}/explanation`),

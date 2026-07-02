@@ -26,6 +26,12 @@ export interface NormalizedInboundMessage {
   businessPhoneNumber: string;
   participantPhone: string;
   participantName?: string;
+  /** The ACTUAL sender of this message. In a group, participantPhone is the
+   *  group id, so the real poster's phone would otherwise be lost — captured
+   *  here from msg.key.participant. Used as source provenance on candidates
+   *  (who published the profile), distinct from the profile's inquiry phone. */
+  senderName?: string;
+  senderPhone?: string;
   /** Raw WhatsApp chat JID (e.g. "12345@s.whatsapp.net" or "9999-123@g.us").
    *  Authoritative key for the pre-pilot ChatMapping / ingestion gate. */
   chatJid: string;

@@ -103,6 +103,12 @@ export interface IExternalCandidate extends Document {
   sourceExternalId?: string;
   sourceMatchmakerName?: string;
   sourceChannelId?: string;
+  // WhatsApp provenance: which group the profile was posted in, and the
+  // ACTUAL sender (poster) — distinct from the profile's inquiry phone.
+  sourceChatJid?: string;
+  sourceGroupName?: string;
+  sourceSenderName?: string;
+  sourceSenderPhone?: string;
   sourceImportedAt: Date;
   lastSourceUpdateAt?: Date;
   // Contact phone as originally extracted from the profile card text
@@ -301,6 +307,10 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     sourceExternalId: { type: String, trim: true },
     sourceMatchmakerName: { type: String, trim: true },
     sourceChannelId: { type: String, trim: true },
+    sourceChatJid: { type: String, trim: true },
+    sourceGroupName: { type: String, trim: true },
+    sourceSenderName: { type: String, trim: true },
+    sourceSenderPhone: { type: String, trim: true },
     sourceImportedAt: { type: Date, required: true, default: Date.now },
     lastSourceUpdateAt: { type: Date },
     contactPhone: { type: String, trim: true },

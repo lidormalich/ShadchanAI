@@ -46,8 +46,11 @@ import {
   getSettingBoolean,
 } from '../../modules/settings/settings.service.js';
 import { ConflictError } from '../../utils/errors.js';
+import { createLogger } from '../../utils/logger.js';
 import type { MatchableInternal, MatchableExternal, MatchingContext } from './matching.types.js';
 import type { PairScoreBucket, ScoreDirection, ScanMode, ScanStatus } from '../../modules/matches/pair-score.model.js';
+
+const log = createLogger('match-scan');
 
 // Dependency inversion: the scan lives in services/ but auto-creates
 // draft suggestions, whose canonical creator (createManualSuggestion)
@@ -81,6 +84,27 @@ const PROGRESS_EVERY = 25;
 
 // Only one scan may run at a time (single-instance server).
 let scanInFlight = false;
+
+// Field projections for loading candidates into the matching engine.
+// Shared by the scan and by the lazy reasons-backfill so both feed the
+// engine the exact same inputs.
+const INTERNAL_SCAN_SELECT =
+  'firstName lastName gender dateOfBirth city region ethnicity lifeGoals height sectorGroup subSector ' +
+  'lifestyleTone religiousStyle personalStatus numberOfChildren lifeStage ' +
+  'readinessForMarriage studyWorkDirection hardConstraints softPreferences ' +
+  'agePreferences locationPreferences openness profileCompletion ' +
+  'missingCriticalFields sendReadinessBlockers profileQualityScore ' +
+  'dataReliabilityScore readinessScore status lastVerifiedAt lastActionAt ' +
+  'datingPartnerCandidateId deferredSuggestionsCount scoringHash ownerUserId';
+const EXTERNAL_SCAN_SELECT =
+  'firstName lastName gender age city region ethnicity lifeGoals height sectorGroup subSector ' +
+  'lifestyleTone personalStatus lifeStage studyWorkDirection ' +
+  'availabilityStatus status shareCard ageReliability hardConstraints ' +
+  'softPreferences agePreferences locationPreferences openness staleAt ' +
+  'lastConfirmedAvailableAt lastSourceUpdateAt sourceImportedAt scoringHash';
+
+// How many strengths / attention points to keep per pair in the cache.
+const REASONS_KEPT = 3;
 
 interface ScanOpts {
   trigger: 'manual' | 'job';
@@ -130,8 +154,26 @@ export interface ScanStateView {
 // serialized in a FIXED order so the hash is deterministic. Anything not
 // listed here (e.g. free-text notes, photos) does NOT trigger a re-scan.
 
+/**
+ * Bump whenever engine logic / weights / dimensions change. Salting the
+ * hash forces one full re-score after such a deploy — otherwise cached
+ * PairScore rows keep scores computed by the OLD engine indefinitely
+ * (the candidate-field hash alone can't see code changes).
+ */
+const ENGINE_VERSION = 'v2';
+
+/**
+ * Time-based penalties (stale externals, internal timing) and context
+ * inputs (active-suggestion load, recent declines) are functions of NOW
+ * and of suggestion churn — invisible to the candidate-field hashes. A
+ * forced periodic re-score bounds that drift: any pair whose row is older
+ * than this TTL is treated as dirty on the incremental scan. Fallback
+ * only — the operator tunes it via 'matching.rescore_ttl_days'.
+ */
+const RESCORE_TTL_DAYS_DEFAULT = 7;
+
 function hashOf(parts: unknown[]): string {
-  return createHash('sha1').update(JSON.stringify(parts)).digest('hex');
+  return createHash('sha1').update(JSON.stringify([ENGINE_VERSION, ...parts])).digest('hex');
 }
 
 function internalScoringHash(m: MatchableInternal): string {
@@ -144,6 +186,9 @@ function internalScoringHash(m: MatchableInternal): string {
     m.agePreferences, m.locationPreferences, m.openness,
     m.status, m.sendReadinessBlockers, m.datingPartnerCandidateId,
     m.profileCompletion, m.lastVerifiedAt,
+    // Penalty inputs — computeTimingPenalty reads lastActionAt; without it
+    // an operator action never dirtied the pair and the stale score stuck.
+    m.lastActionAt,
   ]);
 }
 
@@ -156,6 +201,9 @@ function externalScoringHash(m: MatchableExternal): string {
     m.availabilityStatus, m.status,
     m.hardConstraints, m.softPreferences, m.agePreferences,
     m.locationPreferences, m.openness, m.ageReliability, m.staleAt,
+    // Penalty inputs — computeStalePenalty's reference date chain. E.g.
+    // confirming availability should LIFT the stale penalty immediately.
+    m.lastConfirmedAvailableAt, m.lastSourceUpdateAt, m.sourceImportedAt,
   ]);
 }
 
@@ -259,24 +307,18 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
   const mode = opts.mode;
   const createSuggestion = opts.createSuggestion ?? defaultCreateSuggestion;
 
-  const [scanMinScore, autoEnabled, autoMinScore, fallbackOwner] = await Promise.all([
+  const [scanMinScore, autoEnabled, autoMinScore, rescoreTtlDays, fallbackOwner] = await Promise.all([
     getSettingNumber('matching.scan_min_score'),
     getSettingBoolean('matching.scan_autocreate_enabled'),
     getSettingNumber('matching.scan_autocreate_min_score'),
+    getSettingNumber('matching.rescore_ttl_days').catch(() => RESCORE_TTL_DAYS_DEFAULT),
     resolveFallbackOwner(opts.performedBy),
   ]);
+  const rescoreTtlMs = rescoreTtlDays * 24 * 60 * 60 * 1000;
 
   const [internals, externals] = await Promise.all([
     InternalCandidate.find({ status: 'active', archivedAt: { $exists: false } })
-      .select(
-        'firstName lastName gender dateOfBirth city region ethnicity lifeGoals height sectorGroup subSector ' +
-        'lifestyleTone religiousStyle personalStatus numberOfChildren lifeStage ' +
-        'readinessForMarriage studyWorkDirection hardConstraints softPreferences ' +
-        'agePreferences locationPreferences openness profileCompletion ' +
-        'missingCriticalFields sendReadinessBlockers profileQualityScore ' +
-        'dataReliabilityScore readinessScore status lastVerifiedAt lastActionAt ' +
-        'datingPartnerCandidateId deferredSuggestionsCount scoringHash ownerUserId',
-      )
+      .select(INTERNAL_SCAN_SELECT)
       .lean()
       .exec(),
     ExternalCandidate.find({
@@ -284,13 +326,7 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
       archivedAt: { $exists: false },
       availabilityStatus: { $in: ['available', 'unknown'] },
     })
-      .select(
-        'firstName lastName gender age city region ethnicity lifeGoals height sectorGroup subSector ' +
-        'lifestyleTone personalStatus lifeStage studyWorkDirection ' +
-        'availabilityStatus status shareCard ageReliability hardConstraints ' +
-        'softPreferences agePreferences locationPreferences openness staleAt ' +
-        'lastConfirmedAvailableAt lastSourceUpdateAt sourceImportedAt scoringHash',
-      )
+      .select(EXTERNAL_SCAN_SELECT)
       .lean()
       .exec(),
   ]);
@@ -311,13 +347,13 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
   // Preload existing PairScore rows for these internals → previousScore.
   const internalIds = internalRows.map((r) => new Types.ObjectId(r.m._id));
   const existing = await PairScore.find({ internalCandidateId: { $in: internalIds } })
-    .select('internalCandidateId externalCandidateId matchScore')
+    .select('internalCandidateId externalCandidateId matchScore scoredAt')
     .lean()
     .exec();
-  const prevByPair = new Map<string, number>();
+  const prevByPair = new Map<string, { score: number; scoredAt?: Date }>();
   for (const row of existing) {
     const key = `${String(row.internalCandidateId)}:${String(row.externalCandidateId)}`;
-    prevByPair.set(key, row.matchScore);
+    prevByPair.set(key, { score: row.matchScore, scoredAt: row.scoredAt });
   }
 
   // "missing" mode = pairs that do NOT yet have an active suggestion.
@@ -342,18 +378,28 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
   let pairsSkipped = 0;
   let truncated = false;
 
-  for (const ir of internalRows) {
+  const scanNow = Date.now();
+  outer: for (const ir of internalRows) {
     const internalGender = ir.m.gender;
     if (!internalGender) continue;
     const oppositeGender = internalGender === 'male' ? 'female' : 'male';
     for (const er of externalRows) {
       if (er.m.gender !== oppositeGender) continue;
       const pairKey = `${ir.m._id}:${er.m._id}`;
+      // TTL re-score: rows older than RESCORE_TTL_MS (or missing entirely,
+      // e.g. dropped by a past truncation) count as dirty so time-based
+      // penalties and context drift self-correct without a manual full scan.
+      const prev = prevByPair.get(pairKey);
+      const pairStale =
+        mode === 'incremental' &&
+        (!prev || !prev.scoredAt || scanNow - prev.scoredAt.getTime() > rescoreTtlMs);
       const include = mode === 'missing'
         ? !suggestedKeys.has(pairKey)
-        : (mode === 'full' || ir.dirty || er.dirty);
+        : (mode === 'full' || ir.dirty || er.dirty || pairStale);
       if (!include) { pairsSkipped++; continue; }
-      if (work.length >= MAX_PAIRS_PER_SCAN) { truncated = true; continue; }
+      // Cap reached → stop building the work-list entirely instead of
+      // spinning through the rest of the cross-product doing nothing.
+      if (work.length >= MAX_PAIRS_PER_SCAN) { truncated = true; break outer; }
       work.push({ ir, er, pairKey });
     }
   }
@@ -386,7 +432,7 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
     touchedInternal.add(ir.m._id);
     touchedExternal.add(er.m._id);
 
-    const previousScore = prevByPair.get(pairKey);
+    const previousScore = prevByPair.get(pairKey)?.score;
     let direction: ScoreDirection = 'new';
     let delta = 0;
     if (previousScore !== undefined) {
@@ -437,6 +483,9 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
       riskLevel: r.riskLevel,
       bucket: bucketOf(r.eligible, r.matchScore, r.confidenceScore),
       blockerCodes: r.blockers.map((b) => b.code),
+      strengths: r.strengths.slice(0, REASONS_KEPT),
+      attentionPoints: r.attentionPoints.slice(0, REASONS_KEPT),
+      ageOutOfRange: r.ageOutOfRange,
       scoreDelta: delta,
       scoreDirection: direction,
       autoCreated,
@@ -466,6 +515,22 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
 
   if (pairOps.length > 0) {
     await PairScore.bulkWrite(pairOps, { ordered: false });
+  }
+
+  // Sweep orphaned rows: pairs referencing candidates that are no longer
+  // in the active scan sets (archived / deleted / unavailable externals).
+  // Without this they surface forever in the inbox as nameless entries.
+  if (mode !== 'missing') {
+    const externalIdSet = externalRows.map((r) => new Types.ObjectId(r.m._id));
+    const removed = await PairScore.deleteMany({
+      $or: [
+        { internalCandidateId: { $nin: internalIds } },
+        { externalCandidateId: { $nin: externalIdSet } },
+      ],
+    }).exec();
+    if (removed.deletedCount > 0) {
+      log.info({ removed: removed.deletedCount }, 'pair_score_orphans_removed');
+    }
   }
 
   // Persist new scoring hashes so the next incremental scan can skip
@@ -567,6 +632,12 @@ export interface ScanResultItem {
   matchSuggestionId?: string;
   autoCreated: boolean;
   scoredAt: string;
+  // Short engine rationale: why the pair fits, and where the gaps are.
+  strengths: string[];
+  attentionPoints: string[];
+  // Soft age-range exception: a stated age preference is violated beyond
+  // ±tolerance. The pair is still shown; the UI marks it as an exception.
+  ageOutOfRange: boolean;
   // The operator's reason recorded when this pair was held (review_later)
   // or dismissed (not_suitable). Empty for pending proposals.
   reviewReason?: string;
@@ -596,7 +667,16 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
   if (query.eligibleOnly) filter['eligible'] = true;
   if (query.bucket) filter['bucket'] = query.bucket;
   if (query.autoCreated !== undefined) filter['autoCreated'] = query.autoCreated;
-  if (query.minScore !== undefined) filter['matchScore'] = { $gte: query.minScore };
+  // Score floor: an explicit filter wins; otherwise the pending inbox applies
+  // the configurable matching.scan_min_score so weak pairs don't flood the
+  // proposals. Decision tabs (held/rejected) are never floored — the operator
+  // already acted on those, so they must stay visible regardless of score.
+  if (query.minScore !== undefined) {
+    filter['matchScore'] = { $gte: query.minScore };
+  } else if (view === 'inbox') {
+    const floor = await getSettingNumber('matching.scan_min_score');
+    filter['matchScore'] = { $gte: floor };
+  }
 
   const want = Math.min(query.limit ?? 100, 500);
   // Over-fetch for any post-filtered view so the page still fills after culling.
@@ -637,6 +717,18 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
   }
   visible = visible.slice(0, want);
 
+  // Backfill rationale for rows scored before strengths/attentionPoints or the
+  // ageOutOfRange flag were cached, so the inbox is never stale for legacy
+  // pairs. Also re-backfill rows whose cached reasons still hold the old
+  // English engine text (migrate to the current Hebrew details).
+  const holdsEnglish = (r: PairScoreRow) =>
+    [...(r.strengths ?? []), ...(r.attentionPoints ?? [])].some((s) => /[A-Za-z]/.test(s));
+  await backfillReasons(visible.filter(
+    (r) => (!r.strengths?.length && !r.attentionPoints?.length)
+      || (r as { ageOutOfRange?: boolean }).ageOutOfRange === undefined
+      || holdsEnglish(r as PairScoreRow),
+  ));
+
   const internalIds = [...new Set(visible.map((r) => String(r.internalCandidateId)))];
   const externalIds = [...new Set(visible.map((r) => String(r.externalCandidateId)))];
   const [internals, externals] = await Promise.all([
@@ -664,8 +756,64 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
     ...(r.matchSuggestionId ? { matchSuggestionId: String(r.matchSuggestionId) } : {}),
     autoCreated: r.autoCreated,
     scoredAt: r.scoredAt.toISOString(),
+    strengths: r.strengths ?? [],
+    attentionPoints: r.attentionPoints ?? [],
+    ageOutOfRange: r.ageOutOfRange ?? false,
     ...(reviewReasons.get(keyOf(r)) ? { reviewReason: reviewReasons.get(keyOf(r)) } : {}),
   }));
+}
+
+/**
+ * Lazily compute + persist strengths/attentionPoints for pairs whose cache
+ * row predates those fields. Mutates the passed rows in place so the current
+ * response is complete, and writes the values back so the next listing is a
+ * cache hit. A best-effort backfill — failures never break the listing.
+ */
+type PairScoreRow = {
+  _id: unknown;
+  internalCandidateId: unknown;
+  externalCandidateId: unknown;
+  strengths?: string[];
+  attentionPoints?: string[];
+  ageOutOfRange?: boolean;
+};
+
+async function backfillReasons(rows: PairScoreRow[]): Promise<void> {
+  if (!rows.length) return;
+  try {
+    const internalIds = [...new Set(rows.map((r) => String(r.internalCandidateId)))];
+    const externalIds = [...new Set(rows.map((r) => String(r.externalCandidateId)))];
+    const [internals, externals] = await Promise.all([
+      InternalCandidate.find({ _id: { $in: internalIds } }).select(INTERNAL_SCAN_SELECT).lean().exec(),
+      ExternalCandidate.find({ _id: { $in: externalIds } }).select(EXTERNAL_SCAN_SELECT).lean().exec(),
+    ]);
+    const intMap = new Map(internals.map((d) => [String(d._id), toMatchableInternal(d as Record<string, unknown>)]));
+    const extMap = new Map(externals.map((d) => [String(d._id), toMatchableExternal(d as Record<string, unknown>)]));
+
+    const ctxCache = new Map<string, MatchingContext>();
+    const ops: Parameters<typeof PairScore.bulkWrite>[0] = [];
+    for (const row of rows) {
+      const im = intMap.get(String(row.internalCandidateId));
+      const em = extMap.get(String(row.externalCandidateId));
+      if (!im || !em) continue;
+      let ctx = ctxCache.get(im._id);
+      if (!ctx) {
+        ctx = await buildEngineContext(im._id, SourceMode.DISCOVERY);
+        ctxCache.set(im._id, ctx);
+      }
+      const r = engineEvaluatePair(im, em, ctx);
+      const strengths = r.strengths.slice(0, REASONS_KEPT);
+      const attentionPoints = r.attentionPoints.slice(0, REASONS_KEPT);
+      const ageOutOfRange = r.ageOutOfRange;
+      row.strengths = strengths;
+      row.attentionPoints = attentionPoints;
+      row.ageOutOfRange = ageOutOfRange;
+      ops.push({ updateOne: { filter: { _id: row._id }, update: { $set: { strengths, attentionPoints, ageOutOfRange } } } });
+    }
+    if (ops.length) await PairScore.bulkWrite(ops, { ordered: false });
+  } catch {
+    // Backfill is best-effort; leave the affected rows with empty reasons.
+  }
 }
 
 export async function getScanState(): Promise<ScanStateView | null> {

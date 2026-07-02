@@ -33,6 +33,7 @@ import { ChannelRole, MessageDeliveryStatus, MessageDirection, MessageIngestionD
 import { enqueueExtraction } from '../extraction/queue.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
 import { classifyAndApplyInboundResponse } from '../../modules/matches/match.response.js';
+import { downloadInboundMedia } from './media.service.js';
 
 // ── Inbound message handling ─────────────────────────────
 
@@ -89,10 +90,13 @@ export async function handleInboundMessage(
       channelId: channel.channelId,
       channelRole: channel.role,
       accountDisplayName: channel.accountDisplayName,
+      chatJid: msg.chatJid,
+      senderName: msg.senderName,
+      senderPhone: msg.senderPhone,
       direction: msg.direction,
       contentType: msg.contentType,
       body: msg.body,
-      mediaUrl: undefined, // resolved later by media-fetch job
+      mediaUrl: undefined, // set by downloadInboundMedia right after persist
       mediaCaption: msg.media?.caption,
       mediaMimeType: msg.media?.mimeType,
       externalMessageId: msg.externalMessageId,
@@ -129,6 +133,14 @@ export async function handleInboundMessage(
       },
     },
   ).exec();
+
+  // ── 5b. Fetch image media NOW (non-blocking best-effort) ─
+  // WhatsApp media keys expire — deferring the download means losing the
+  // image. Failure is tolerable (reconciler retries young messages); the
+  // message itself is already safely persisted.
+  if (msg.contentType === 'image') {
+    void downloadInboundMedia(String(saved._id)).catch(() => {});
+  }
 
   // ── 6. Touch channel activity (non-blocking best-effort) ─
   void touchChannelActivity(channel.channelId, 'inbound').catch(() => {});

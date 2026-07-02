@@ -7,3 +7,4 @@ monitoringRouter.use(requireAuth);
 
 monitoringRouter.get('/overview', ctrl.overviewHandler);
 monitoringRouter.get('/events', ctrl.eventsHandler);
+monitoringRouter.get('/ai-usage', ctrl.aiUsageHandler);

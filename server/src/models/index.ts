@@ -65,3 +65,6 @@ export type { IUser, UserRole } from '../modules/users/user.model.js';
 
 export { FailedInboundMessage } from '../modules/conversations/failed-inbound-message.model.js';
 export type { IFailedInboundMessage, FailedInboundStatus } from '../modules/conversations/failed-inbound-message.model.js';
+
+export { CandidateInsight } from '../modules/candidates/candidate-insight.model.js';
+export type { ICandidateInsight } from '../modules/candidates/candidate-insight.model.js';

@@ -1,6 +1,58 @@
 import { api } from './client';
 import type { InternalCandidate, ExternalCandidate, ReadinessDetails, MatchSuggestion, Conversation } from '@/types/domain';
 
+// ── Source card ("כרטיס מקורי") ──────────────────────────
+// The original WhatsApp message(s) a profile was extracted from — the raw
+// "card" the AI received. Internal candidates are created manually, so
+// hasSource is false and the tab shows a "no details" state.
+
+export interface SourceCardMessage {
+  _id: string;
+  contentType: string;
+  body?: string;
+  mediaUrl?: string;
+  mediaCaption?: string;
+  senderName?: string;
+  senderPhone?: string;
+  chatJid?: string;
+  createdAt: string;
+}
+
+export interface SourceCard {
+  hasSource: boolean;
+  sourceType?: string;
+  sourceName?: string;
+  sourceGroupName?: string;
+  sourceSenderName?: string;
+  sourceSenderPhone?: string;
+  sourceImportedAt?: string;
+  lastSourceUpdateAt?: string;
+  messages: SourceCardMessage[];
+  rawText?: string;
+}
+
+// ── Learned insight ("מה למדנו") ─────────────────────────
+// What the learning agent derived from the candidate's suggestion
+// history — real preferences beyond the static profile.
+
+export interface CandidateInsight {
+  candidateId: string;
+  summary: string;
+  positiveSignals: string[];
+  negativeSignals: string[];
+  guidance: string[];
+  confidence: number;
+  basedOnSuggestions: number;
+  lastActivityAt?: string;
+  learningModel?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CandidateInsightRebuildResult =
+  | CandidateInsight
+  | { rebuilt: false; reason: string };
+
 // ── Internal candidates ──────────────────────────────────
 
 export const internalCandidatesApi = {
@@ -23,6 +75,10 @@ export const internalCandidatesApi = {
   conversations: (id: string) =>
     api.get<Conversation[]>(`/candidates/internal/${id}/conversations`),
   readiness: (id: string) => api.get<ReadinessDetails>(`/candidates/internal/${id}/readiness`),
+  sourceCard: (id: string) => api.get<SourceCard>(`/candidates/internal/${id}/source-card`),
+  insight: (id: string) => api.get<CandidateInsight | null>(`/candidates/internal/${id}/insight`),
+  rebuildInsight: (id: string) =>
+    api.post<CandidateInsightRebuildResult>(`/candidates/internal/${id}/insight/rebuild`),
 };
 
 // ── External candidates ──────────────────────────────────
@@ -42,4 +98,5 @@ export const externalCandidatesApi = {
     api.patch<ExternalCandidate>(`/candidates/external/${id}/availability`, body),
   matchingInternals: (id: string, query: Record<string, unknown> = {}) =>
     api.get<unknown[]>(`/candidates/external/${id}/matching-internals`, query),
+  sourceCard: (id: string) => api.get<SourceCard>(`/candidates/external/${id}/source-card`),
 };

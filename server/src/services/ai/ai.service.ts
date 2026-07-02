@@ -41,6 +41,7 @@ import type {
   AskAIOutput,
   AskAIIntent,
   EmbeddingResponse,
+  ProviderChatOptions,
 } from './ai.types.js';
 
 import {
@@ -63,6 +64,8 @@ import {
   parseAndValidate,
 } from './ai.validators.js';
 
+import { Types } from 'mongoose';
+import { CandidateInsight } from '../../models/index.js';
 import { cacheGet, cacheSet, hashKey } from './ai.cache.js';
 import { logAIRequest } from './ai.logger.js';
 import { groqProvider } from './providers/groq.provider.js';
@@ -73,7 +76,7 @@ import * as tools from './ai.tools.js';
 import { env } from '../../config/env.js';
 import { BusinessRuleError } from '../../utils/errors.js';
 import { createLogger } from '../../utils/logger.js';
-import { getSettingStringCached } from '../../modules/settings/settings.service.js';
+import { getSettingStringCached, getSettingCached } from '../../modules/settings/settings.service.js';
 
 const log = createLogger('ai');
 
@@ -102,15 +105,52 @@ interface ExecuteOptions<T> {
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
   /** Stable cache key; omit to skip caching */
   cacheKey?: string;
+  /** Per-call provider options (e.g. a larger maxTokens for long extractions) */
+  chatOptions?: ProviderChatOptions;
   userId?: string;
   relatedEntityType?: string;
   relatedEntityId?: string;
 }
 
+// ── Daily budget guard ────────────────────────────────────
+// Counts provider-hitting requests (cache hits don't consume budget).
+// The limit is operator-tunable at runtime ('ai.daily_request_budget'
+// setting); the env var is only the default.
+let budgetDay = '';
+let budgetUsed = 0;
+
+async function resolveDailyBudgetLimit(): Promise<number> {
+  try {
+    return (await getSettingCached('ai.daily_request_budget')) as number;
+  } catch {
+    return env.AI_DAILY_REQUEST_BUDGET;
+  }
+}
+
+async function consumeDailyBudget(requestType: string): Promise<void> {
+  const limit = await resolveDailyBudgetLimit();
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== budgetDay) {
+    budgetDay = today;
+    budgetUsed = 0;
+  }
+  if (limit > 0 && budgetUsed >= limit) {
+    throw new BusinessRuleError(
+      `AI daily request budget exhausted (${limit}/day)`,
+      { code: 'ai_budget_exhausted', requestType },
+    );
+  }
+  budgetUsed += 1;
+}
+
+export async function aiBudgetSnapshot(): Promise<{ limit: number; usedToday: number; day: string }> {
+  return { limit: await resolveDailyBudgetLimit(), usedToday: budgetUsed, day: budgetDay };
+}
+
 export async function executeWithFallback<T>(
   opts: ExecuteOptions<T>,
 ): Promise<AIResponse<T>> {
-  const { requestType, buildPrompt, schema, cacheKey, userId, relatedEntityType, relatedEntityId } = opts;
+  const { requestType, buildPrompt, schema, cacheKey, chatOptions, userId, relatedEntityType, relatedEntityId } = opts;
 
   if (env.AI_DISABLED) {
     throw new BusinessRuleError('AI is disabled by configuration', { code: 'ai_disabled' });
@@ -126,6 +166,9 @@ export async function executeWithFallback<T>(
       };
     }
   }
+
+  // ── 1b. Daily spend guard (provider-hitting requests only) ─
+  await consumeDailyBudget(requestType);
 
   const { primary: primaryProvider, secondary: secondaryProvider } = await resolveEngines();
 
@@ -144,7 +187,7 @@ export async function executeWithFallback<T>(
   // ── 2. Try the primary engine (AI_ENGINE) ─────────────
   if (primaryProvider.isAvailable()) {
     try {
-      const response = await primaryProvider.chat(buildPrompt(false), { jsonMode: true });
+      const response = await primaryProvider.chat(buildPrompt(false), { jsonMode: true, ...chatOptions });
       const parsed = parseAndValidate(response.content, schema);
       if (parsed.ok && parsed.data !== undefined) {
         result = parsed.data;
@@ -156,7 +199,7 @@ export async function executeWithFallback<T>(
         retryCount = 1;
         lastError = parsed.error;
         try {
-          const retry = await primaryProvider.chat(buildPrompt(true), { jsonMode: true });
+          const retry = await primaryProvider.chat(buildPrompt(true), { jsonMode: true, ...chatOptions });
           const reparsed = parseAndValidate(retry.content, schema);
           if (reparsed.ok && reparsed.data !== undefined) {
             result = reparsed.data;
@@ -186,8 +229,12 @@ export async function executeWithFallback<T>(
     );
     fallbackUsed = true;
     provider = secondaryProvider;
+    // Attribute the attempt to the model actually being called — without
+    // this, a failed fallback logs provider=secondary with the PRIMARY's
+    // model id (e.g. "openai/llama-3.3-70b"), which garbles the cost report.
+    finalModel = secondaryProvider.model;
     try {
-      const response = await secondaryProvider.chat(buildPrompt(false), { jsonMode: true });
+      const response = await secondaryProvider.chat(buildPrompt(false), { jsonMode: true, ...chatOptions });
       const parsed = parseAndValidate(response.content, schema);
       if (parsed.ok && parsed.data !== undefined) {
         result = parsed.data;
@@ -283,12 +330,42 @@ export async function explainMatch(
   input: ExplainMatchInput,
   options: { userId?: string; suggestionId?: string } = {},
 ): Promise<AIResponse<ExplainMatchOutput>> {
+  // Fold in the candidate's LEARNED preference profile (built by the
+  // learning agent from status-change reasons) so the explanation is
+  // grounded in what this candidate actually accepted/declined before.
+  if (!input.learnedInsight) {
+    try {
+      // Model import (not candidate-learning.service) — that service
+      // imports executeWithFallback from THIS module; going through it
+      // here would create an import cycle.
+      const insight = Types.ObjectId.isValid(input.internal.id)
+        ? await CandidateInsight.findOne({ candidateId: new Types.ObjectId(input.internal.id) })
+            .select('summary positiveSignals negativeSignals guidance')
+            .lean()
+            .exec()
+        : null;
+      if (insight) {
+        input = {
+          ...input,
+          learnedInsight: {
+            summary: insight.summary,
+            positiveSignals: insight.positiveSignals,
+            negativeSignals: insight.negativeSignals,
+            guidance: insight.guidance,
+          },
+        };
+      }
+    } catch { /* advisory — never block the explanation */ }
+  }
+
   const cacheKey = hashKey('explainMatch', {
     internalId: input.internal.id,
     externalId: input.external.id,
     matchScore: input.matchScore,
     confidenceScore: input.confidenceScore,
     matchType: input.matchType,
+    // Insight changes must bust the cached explanation.
+    insight: input.learnedInsight?.summary ?? null,
   });
 
   return executeWithFallback<ExplainMatchOutput>({

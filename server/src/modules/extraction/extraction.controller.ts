@@ -67,8 +67,10 @@ export async function approveHandler(req: Request, res: Response, next: NextFunc
     const user = ensureUser(req.user);
     canManageChannels(user);
     const messageId = String(req.params['messageId'] ?? '');
-    const bodyProfile = (req.body as { profile?: Record<string, unknown> } | undefined)?.profile;
-    ok(res, await svc.approveExtraction(messageId, bodyProfile, user.id));
+    const body = req.body as { profile?: Record<string, unknown>; linkToCandidateId?: string } | undefined;
+    ok(res, await svc.approveExtraction(messageId, body?.profile, user.id, {
+      linkToCandidateId: typeof body?.linkToCandidateId === 'string' ? body.linkToCandidateId : undefined,
+    }));
   } catch (e) { next(e); }
 }
 

@@ -33,6 +33,7 @@ import {
   startChannelClient,
   setChannelStatusPersister,
 } from './providers/baileys/baileys.client.js';
+import { acquireChannelLock } from './instance.lock.js';
 
 // ── Transport → domain status persistence ────────────────
 //
@@ -135,8 +136,22 @@ export async function reconnectChannel(channelId: string): Promise<IChannel> {
 
   const client = getChannelClient(channelId);
   if (client) {
+    // Re-acquire ownership BEFORE reviving: openCircuit()/stop() release
+    // the channel lock but leave the client in the registry. Reviving via
+    // this branch without the lock made the heartbeat find no owned lock
+    // ~20s after connect → self-stop → watchdog revive → indefinite flap
+    // with recurring message-loss windows.
+    const lock = await acquireChannelLock(channelId);
+    if (!lock.acquired) {
+      throw new Error(
+        `channel ${channelId} lock held by ${lock.previousOwner ?? 'another instance'}`,
+      );
+    }
     client.resetCircuit();
-    await client.start();
+    // restart() (not start()) — start()'s idempotency guard no-ops on a
+    // client wedged in 'reconnecting'/'pending_pairing', which is exactly
+    // the state operator reconnects need to recover from.
+    await client.restart();
   } else {
     await startChannelClient(channel);
   }

@@ -85,6 +85,15 @@ export async function availabilityHandler(req: Request, res: Response, next: Nex
   } catch (e) { next(e); }
 }
 
+export async function sourceCardHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const card = await svc.getExternalSourceCard(id);
+    ok(res, card);
+  } catch (e) { next(e); }
+}
+
 export async function matchingInternalsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     ensureUser(req.user);

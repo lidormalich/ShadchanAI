@@ -18,7 +18,7 @@ import express, { type Express } from 'express';
 import { resolve as resolvePath } from 'node:path';
 
 import { errorMiddleware } from './middleware/error.middleware.js';
-import { optionalAuth } from './middleware/auth.middleware.js';
+import { optionalAuth, requireAuth } from './middleware/auth.middleware.js';
 import {
   corsMiddleware,
   helmetMiddleware,
@@ -52,6 +52,7 @@ import { insightsRouter } from './modules/insights/insights.router.js';
 import { settingsRouter } from './modules/settings/settings.router.js';
 import { monitoringRouter } from './modules/monitoring/monitoring.router.js';
 import { safeModeRouter } from './modules/safe-mode/safe-mode.router.js';
+import { mediaRouter } from './modules/media/media.router.js';
 import { ensureNotificationsStarted } from './services/notifications/notifications.service.js';
 
 export function buildApp(): Express {
@@ -92,7 +93,10 @@ export function buildApp(): Express {
 
   // ── 9. Routers ────────────────────────────────────────
   app.use('/api/auth', authRouter);
-  app.use('/api/ai', aiRateLimiter, aiRouter);
+  // requireAuth here is load-bearing: the AI router dispatches DB tools
+  // that return real candidate PII and invokes paid LLM providers — it
+  // must never be reachable without a valid session.
+  app.use('/api/ai', requireAuth, aiRateLimiter, aiRouter);
   app.use('/api/candidates/internal', internalCandidateRouter);
   app.use('/api/candidates/external', externalCandidateRouter);
   app.use('/api/matches', matchRouter);
@@ -113,6 +117,7 @@ export function buildApp(): Express {
   app.use('/api/settings', settingsRouter);
   app.use('/api/monitoring', monitoringRouter);
   app.use('/api/safe-mode', safeModeRouter);
+  app.use('/api/media', mediaRouter);
 
   // Start the notifications feed subscription as part of app bootstrap
   // so events are captured even before the first /api/notifications GET.

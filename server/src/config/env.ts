@@ -70,6 +70,15 @@ const envSchema = z.object({
   GROQ_TIMEOUT_MS: z.coerce.number().int().positive().default(12_000),
   GROQ_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
 
+  // ── AI spend guard ───────────────────────────────────
+  // Hard daily cap on provider-hitting AI requests (cache hits are free).
+  // A runaway (busy group + history backfill, retry loop) stops burning
+  // money at this line; extraction failures park for the reconciler and
+  // resume after midnight. 0 = unlimited. Counter is in-memory (resets on
+  // restart) — a deliberate v1 tradeoff: worst case a restart re-grants
+  // the day's budget, it can never block legitimate traffic incorrectly.
+  AI_DAILY_REQUEST_BUDGET: z.coerce.number().int().min(0).default(2000),
+
   // ── OpenAI (paid engine) ─────────────────────────────
   // Dedicated OpenAI token + model. `OPENAI` is accepted as an alias for
   // OPENAI_API_KEY; the legacy FALLBACK_API_KEY is used as a last resort
@@ -96,6 +105,17 @@ const envSchema = z.object({
   //   - file permissions 0600 recommended
   //   - exclude from public backups or encrypt at rest
   WA_SESSIONS_DIR: z.string().default('./data/wa-sessions'),
+
+  // ── WhatsApp media storage ───────────────────────────
+  // Inbound image profile-cards are downloaded at receive time (WhatsApp
+  // media keys expire, so "later" often means "never") and stored on disk;
+  // the message gets mediaUrl=/api/media/<file>. In production this dir
+  // must live on the same persistent volume as WA_SESSIONS_DIR.
+  WA_MEDIA_DIR: z.string().default('./data/wa-media'),
+  WA_MEDIA_MAX_BYTES: z.coerce.number().int().positive().default(8_000_000),
+  // Vision extraction for image-only profile cards (OpenAI multimodal).
+  // Auto-skipped when no OpenAI key is configured.
+  WA_VISION_EXTRACT: booleanString(true),
 
   // Optional display-name defaults per role — only used as a fallback
   // when an operator creates a channel via a seed/script path.

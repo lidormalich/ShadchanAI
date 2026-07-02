@@ -10,12 +10,31 @@ export interface ExtractionOutcome {
   matchResult?: 'exact' | 'strong' | 'weak' | 'none';
 }
 
+export type ReviewReason =
+  | 'suspected_duplicate'
+  | 'low_confidence'
+  | 'no_identifier'
+  | 'no_corroboration'
+  | 'vision_image';
+
+export interface SuspectedCandidate {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  city?: string;
+  sectorGroup?: string;
+  personalStatus?: string;
+  contactPhone?: string;
+}
+
 export interface ReviewQueueItem {
   messageId: string;
   conversationId: string;
   channelId: string;
   accountDisplayName: string;
   body?: string;
+  mediaUrl?: string;
   createdAt: string;
   extraction?: {
     status: string;
@@ -40,8 +59,14 @@ export interface ReviewQueueItem {
     seekingAgeMin?: number;
     seekingAgeMax?: number;
     contactPhones?: string[];
+    family?: string;
+    service?: string;
+    yeshiva?: string;
+    religiousLevelText?: string;
   };
   regexConfidence: number;
+  reviewReason?: ReviewReason;
+  suspectedCandidate?: SuspectedCandidate;
 }
 
 export type ExtractedProfileInput = ReviewQueueItem['extractedFields'];
@@ -74,10 +99,12 @@ export const extractionApi = {
     api.get<ReviewQueueItem[]>('/extraction/review-queue', { limit }),
   ingestionLog: (decision: IngestionDecision | 'ignored' | 'all' = 'ignored', limit = 100) =>
     api.get<IngestionLogItem[]>('/extraction/ingestion-log', { decision, limit }),
-  approve: (messageId: string, profile?: ExtractedProfileInput) =>
-    api.post<{ candidateId: string; messageId: string }>(
+  approve: (messageId: string, opts: { profile?: ExtractedProfileInput; linkToCandidateId?: string } = {}) =>
+    api.post<{ candidateId: string; messageId: string; linked?: boolean }>(
       `/extraction/messages/${messageId}/approve`,
-      profile ? { profile } : undefined,
+      opts.profile || opts.linkToCandidateId
+        ? { profile: opts.profile, linkToCandidateId: opts.linkToCandidateId }
+        : undefined,
     ),
   reject: (messageId: string) =>
     api.post<{ messageId: string; status: string }>(`/extraction/messages/${messageId}/reject`),
