@@ -291,6 +291,7 @@ export function MatchDetailPage() {
             <Button
               variant="subtle"
               leftIcon={<Sparkles className="h-4 w-4" />}
+              disabled={!internalId}
               onClick={() => setAskOpen(true)}
               title="Ask AI מייעץ בלבד"
             >
