@@ -34,6 +34,8 @@ temp/
 
 # Local tool caches
 .context-brain.db
+.context-brain.db-shm
+.context-brain.db-wal
 .fastembed_cache/
 .claude/settings.local.json
 
