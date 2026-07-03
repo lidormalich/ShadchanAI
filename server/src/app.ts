@@ -15,8 +15,11 @@
 // ═══════════════════════════════════════════════════════════
 
 import express, { type Express } from 'express';
+import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+import { logger } from './utils/logger.js';
 import { errorMiddleware } from './middleware/error.middleware.js';
 import { optionalAuth, requireAuth } from './middleware/auth.middleware.js';
 import {
@@ -124,20 +127,38 @@ export function buildApp(): Express {
   ensureNotificationsStarted();
 
   // ── 9b. Static client SPA (production single-origin) ──
-  // When CLIENT_DIST_DIR is set, serve the built client from the same
-  // origin as the API. The client calls a hardcoded relative `/api`, so
-  // same-origin hosting is required in production. Unset in local dev
-  // (Vite serves the client and proxies /api).
-  if (env.CLIENT_DIST_DIR) {
-    const clientDir = resolvePath(env.CLIENT_DIST_DIR);
+  // Serve the built client from the same origin as the API. The client
+  // calls a hardcoded relative `/api`, so same-origin hosting is required
+  // in production.
+  //
+  // CLIENT_DIST_DIR overrides the location, but it is NOT required: when
+  // unset we auto-detect the built client relative to this compiled file
+  // (server/dist/app.js → ../../client/dist). This means the site is
+  // served whenever a build exists, even if the deploy env forgot to set
+  // CLIENT_DIST_DIR — otherwise every non-/api request (including `/`)
+  // falls through to the JSON 404 below and the website never loads.
+  //
+  // If no build is present (typical local dev — Vite serves the client and
+  // proxies /api), the directory won't exist and we skip serving it.
+  const clientDir = env.CLIENT_DIST_DIR
+    ? resolvePath(env.CLIENT_DIST_DIR)
+    : resolvePath(fileURLToPath(new URL('../../client/dist', import.meta.url)));
+  const clientIndexHtml = resolvePath(clientDir, 'index.html');
+
+  if (existsSync(clientIndexHtml)) {
     app.use(express.static(clientDir, { index: false }));
     // SPA fallback: any non-API GET returns index.html so client-side
     // routing works on deep links / refresh. API 404s are handled below.
     // The lookahead excludes both "/api/..." and a bare "/api" so a
     // mistyped API path returns a JSON 404, not index.html with a 200.
     app.get(/^(?!\/api(\/|$)).*/, (_req, res) => {
-      res.sendFile(resolvePath(clientDir, 'index.html'));
+      res.sendFile(clientIndexHtml);
     });
+    logger.info({ clientDir }, 'client_spa_serving');
+  } else {
+    // Non-fatal: the API still runs, but no website will be served. Loud
+    // enough to explain a "Route not found" at `/` in production logs.
+    logger.warn({ clientDir }, 'client_dist_not_found_spa_disabled');
   }
 
   // ── 10. 404 ────────────────────────────────────────────
