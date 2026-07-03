@@ -30,7 +30,15 @@ export const corsMiddleware: RequestHandler = cors({
     if (corsOrigins.includes(origin) || corsOrigins.includes('*')) {
       return callback(null, true);
     }
-    return callback(new Error(`Origin not allowed: ${origin}`));
+    // Disallowed origin: DO NOT throw. Throwing here surfaces as a 500 from
+    // the error middleware on EVERY request that carries an Origin header —
+    // including the browser's own same-origin requests for module scripts and
+    // stylesheets (Vite marks them crossorigin, so the browser sends Origin
+    // even same-origin). That crashed all static asset loads under single-
+    // origin hosting. Returning `false` simply omits the CORS headers: same-
+    // origin requests don't need them and proceed normally (200), while a
+    // genuine cross-origin caller is still blocked by the browser.
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
