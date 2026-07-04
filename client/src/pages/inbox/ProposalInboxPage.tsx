@@ -200,7 +200,11 @@ function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
 
   return (
     <li className="py-2.5 px-3">
-      <div className="flex items-center gap-3">
+      {/* Stack on mobile so the action buttons wrap to their own row instead
+          of squeezing the name down to a single truncated letter. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+      {/* Name + score keep sharing the top row; the name gets the full width. */}
+      <div className="flex items-start gap-3 min-w-0 flex-1">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate">
           {row.internalName} <span className="text-ink-faint">·</span> {row.externalName}
@@ -226,8 +230,9 @@ function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
         <div className="text-lg font-semibold num text-brand-700">{row.matchScore}</div>
         <div className="text-[11px] text-ink-faint num">ביטחון {row.confidenceScore}</div>
       </div>
+      </div>
 
-      <div className="shrink-0 flex items-center gap-1.5">
+      <div className="shrink-0 flex items-center flex-wrap gap-1.5">
         <Button size="sm" loading={accept.isPending} disabled={busy}
           onClick={() => accept.mutate()} leftIcon={<Check className="h-3.5 w-3.5" />}>
           מתאים
