@@ -117,6 +117,21 @@ const envSchema = z.object({
   // Auto-skipped when no OpenAI key is configured.
   WA_VISION_EXTRACT: booleanString(true),
 
+  // ── Cloudflare R2 object storage (durable candidate photos) ──
+  // Render's disk is ephemeral (wiped on each deploy), so candidate photos
+  // stored only under WA_MEDIA_DIR are lost on redeploy. When all four R2
+  // values are present the photo pipeline mirrors each candidate's photo to
+  // R2 under a lifecycle-folder key and serves it back (auth-gated) through
+  // /api/media/candidate/*. When any is missing the whole feature is a no-op
+  // and the server keeps serving from local disk exactly as before — same
+  // "unconfigured => graceful skip" pattern as the AI/embeddings providers.
+  R2_ACCOUNT_ID: optionalConfig(),
+  R2_ACCESS_KEY_ID: optionalConfig(),
+  R2_SECRET_ACCESS_KEY: optionalConfig(),
+  R2_BUCKET: optionalConfig(),
+  // Days a photo may linger under junk/ before the cleanup job deletes it.
+  R2_JUNK_RETENTION_DAYS: z.coerce.number().int().min(0).default(30),
+
   // Optional display-name defaults per role — only used as a fallback
   // when an operator creates a channel via a seed/script path.
   WA_PROFILES_SOURCE_DISPLAY_NAME: z.string().optional(),
@@ -276,6 +291,14 @@ export type Env = z.infer<typeof envSchema>;
 
 /** Parsed list of CORS origins */
 export const corsOrigins: string[] = env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean);
+
+/**
+ * True only when every R2 credential is present. The photo pipeline checks
+ * this once to decide whether to mirror/serve from R2 or stay disk-only.
+ */
+export const r2Enabled: boolean = Boolean(
+  env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && env.R2_BUCKET,
+);
 
 // Dev-only soft warning for missing AI keys
 if (env.NODE_ENV !== 'production' && !env.AI_DISABLED && !env.GROQ_API_KEY && !env.OPENAI_API_KEY && !env.OPENAI && !env.FALLBACK_API_KEY) {

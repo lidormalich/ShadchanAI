@@ -1,5 +1,31 @@
-import { api } from './client';
+import { api, getAuthHeaders } from './client';
+import { ApiError, type ApiEnvelope } from '@/types/api';
 import type { InternalCandidate, ExternalCandidate, ReadinessDetails, MatchSuggestion, Conversation } from '@/types/domain';
+
+// Raw image upload — bypasses the JSON api client to send the file bytes
+// with an image/* content-type (the server route uses express.raw). Auth
+// header is attached exactly like every other request.
+async function uploadCandidatePhoto(path: string, file: File): Promise<InternalCandidate> {
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': file.type },
+    body: file,
+  });
+  let envelope: ApiEnvelope<InternalCandidate>;
+  try {
+    envelope = (await res.json()) as ApiEnvelope<InternalCandidate>;
+  } catch {
+    throw new ApiError(res.status, 'parse_error', 'Invalid JSON response');
+  }
+  if (!res.ok || !envelope.success) {
+    throw new ApiError(
+      res.status,
+      envelope.error?.code ?? 'upload_failed',
+      envelope.error?.message ?? 'העלאת התמונה נכשלה',
+    );
+  }
+  return envelope.data as InternalCandidate;
+}
 
 // ── Source card ("כרטיס מקורי") ──────────────────────────
 // The original WhatsApp message(s) a profile was extracted from — the raw
@@ -76,6 +102,8 @@ export const internalCandidatesApi = {
     api.get<Conversation[]>(`/candidates/internal/${id}/conversations`),
   readiness: (id: string) => api.get<ReadinessDetails>(`/candidates/internal/${id}/readiness`),
   sourceCard: (id: string) => api.get<SourceCard>(`/candidates/internal/${id}/source-card`),
+  uploadPhoto: (id: string, file: File) =>
+    uploadCandidatePhoto(`/candidates/internal/${id}/photo`, file),
   insight: (id: string) => api.get<CandidateInsight | null>(`/candidates/internal/${id}/insight`),
   rebuildInsight: (id: string) =>
     api.post<CandidateInsightRebuildResult>(`/candidates/internal/${id}/insight/rebuild`),

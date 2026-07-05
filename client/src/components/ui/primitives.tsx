@@ -8,6 +8,7 @@ import { clsx } from 'clsx';
 import {
   forwardRef,
   useState,
+  useEffect,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
@@ -318,7 +319,25 @@ export function Avatar({
         .toUpperCase()
     : '•';
 
+  const fallback = (
+    <div
+      style={{ width: size, height: size, fontSize: size * 0.4 }}
+      className={clsx(
+        'rounded-full bg-brand-100 text-brand-700 font-semibold inline-flex items-center justify-center',
+        className,
+      )}
+    >
+      {initials}
+    </div>
+  );
+
   if (src) {
+    // Auth-gated media (/api/...) can't be loaded by a plain <img src> — the
+    // Bearer token lives in a header, not a cookie. Fetch it as a blob first;
+    // fall back to initials while loading or if it fails.
+    if (src.startsWith('/api/')) {
+      return <AuthAvatarImage src={src} name={name} size={size} className={className} fallback={fallback} />;
+    }
     return (
       <img
         src={src}
@@ -329,16 +348,67 @@ export function Avatar({
     );
   }
 
+  return fallback;
+}
+
+function AuthAvatarImage({
+  src,
+  name,
+  size,
+  className,
+  fallback,
+}: {
+  src: string;
+  name?: string;
+  size: number;
+  className?: string;
+  fallback: ReactNode;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setUrl(null);
+    setFailed(false);
+    // Header attach mirrors services/api/client.getAuthHeaders without the
+    // import cycle: primitives must not depend on the api layer.
+    const token = localStorage.getItem('auth_token');
+    const devUser = localStorage.getItem('dev_user');
+    const headers: Record<string, string> = token
+      ? { Authorization: `Bearer ${token}` }
+      : devUser
+        ? { 'X-Dev-User': devUser }
+        : {};
+    fetch(src, { headers })
+      .then((res) => {
+        if (!res.ok) throw new Error(`avatar_fetch_failed_${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  if (failed) return <>{fallback}</>;
+  if (!url) return <>{fallback}</>;
   return (
-    <div
-      style={{ width: size, height: size, fontSize: size * 0.4 }}
-      className={clsx(
-        'rounded-full bg-brand-100 text-brand-700 font-semibold inline-flex items-center justify-center',
-        className,
-      )}
-    >
-      {initials}
-    </div>
+    <img
+      src={url}
+      alt={name ?? 'avatar'}
+      style={{ width: size, height: size }}
+      className={clsx('rounded-full object-cover', className)}
+    />
   );
 }
 

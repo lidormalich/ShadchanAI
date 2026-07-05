@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Calendar, Mail, MapPin, Phone, RotateCcw, Search, Sparkles, UserX } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, TBody, THead, Table, Td, Textarea, Th, Tr, Tabs } from '@/components/ui/primitives';
+import { Badge, Button, Card, CardBody, CardHeader, Divider, Select, TBody, THead, Table, Td, Textarea, Th, Tr, Tabs } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi, type FindMatchItem } from '@/services/api/matches';
@@ -15,6 +15,7 @@ import { OwnerChip } from '@/features/users/OwnerChip';
 import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList';
 import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
+import { CandidatePhoto } from '@/features/candidates/CandidatePhoto';
 import { CandidateInsightTab } from '@/features/candidates/CandidateInsightTab';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
@@ -95,7 +96,7 @@ export function InternalCandidateDetailPage() {
       {/* Sticky header */}
       <Card className="sticky top-0 z-10">
         <CardBody className="flex items-center gap-4">
-          <Avatar name={`${c.firstName} ${c.lastName}`} size={56} src={c.photoApproved ? c.photoUrl : undefined} />
+          <CandidatePhoto candidateId={c._id} name={`${c.firstName} ${c.lastName}`} photoUrl={c.photoUrl} size={56} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-semibold">{c.firstName} {c.lastName}</h1>

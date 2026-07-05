@@ -14,6 +14,7 @@ import { runScanNow } from '../matching/match-scan.service.js';
 import { replayFailedInboundMessages } from '../whatsapp/message.handler.js';
 import { downloadInboundMedia } from '../whatsapp/media.service.js';
 import { refreshStaleInsights } from '../ai/candidate-learning.service.js';
+import { runPhotoStorageMaintenance } from '../storage/photo-maintenance.service.js';
 import { getSettingCached } from '../../modules/settings/settings.service.js';
 import { runConnectionWatchdog } from '../whatsapp/connection.watchdog.js';
 import { env } from '../../config/env.js';
@@ -235,6 +236,21 @@ if (env.WA_WATCHDOG_ENABLED) {
     },
   });
 }
+
+// ── Candidate photo storage maintenance ──────────────────
+// Backfills external photos to R2, relocates objects whose candidate
+// changed lifecycle folder, and deletes junk/ photos past retention.
+// No-op when R2 is unconfigured (env.r2Enabled === false).
+registerJob({
+  name: 'photo-storage-maintenance',
+  intervalMs: 30 * 60 * 1000, // every 30 minutes
+  async run() {
+    const r = await runPhotoStorageMaintenance();
+    if (r && (r.backfilled > 0 || r.reconciled > 0 || r.junkDeleted > 0)) {
+      log.info({ job: 'photo-storage-maintenance', ...r }, 'photo maintenance complete');
+    }
+  },
+});
 
 // ── Task reminder sweep (placeholder) ────────────────────
 // Future: scan overdue tasks and write a per-owner digest.

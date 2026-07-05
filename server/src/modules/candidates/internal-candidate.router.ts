@@ -2,7 +2,7 @@
 // ShadchanAI — Internal Candidate Router
 // ═══════════════════════════════════════════════════════════
 
-import { Router } from 'express';
+import { Router, raw } from 'express';
 import * as ctrl from './internal-candidate.controller.js';
 import {
   CreateInternalCandidateSchema,
@@ -49,6 +49,15 @@ internalCandidateRouter.post(
   '/:id/archive',
   validate({ params: IdParamSchema }),
   ctrl.archiveHandler,
+);
+
+// Photo upload — raw image bytes (the global express.json() ignores
+// non-JSON content-types, so the body stream is intact for express.raw).
+internalCandidateRouter.post(
+  '/:id/photo',
+  raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '6mb' }),
+  validate({ params: IdParamSchema }),
+  ctrl.uploadPhotoHandler,
 );
 
 internalCandidateRouter.post(

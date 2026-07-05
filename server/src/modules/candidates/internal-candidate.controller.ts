@@ -63,6 +63,31 @@ export async function updateHandler(req: Request, res: Response, next: NextFunct
   } catch (e) { next(e); }
 }
 
+const PHOTO_EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+export async function uploadPhotoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const ext = PHOTO_EXT_BY_MIME[req.header('content-type')?.split(';')[0]?.trim() ?? ''];
+    const body = req.body as Buffer;
+    if (!ext || !Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'invalid_image', message: 'נדרשת תמונה בפורמט JPG / PNG / WEBP' },
+      });
+      return;
+    }
+    const doc = await svc.setInternalCandidatePhoto(id, body, ext);
+    ok(res, doc);
+  } catch (e) { next(e); }
+}
+
 export async function archiveHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = ensureUser(req.user);

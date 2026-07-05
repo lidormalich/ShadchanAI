@@ -20,6 +20,8 @@ import {
 import { InternalCandidate, MatchSuggestion, Conversation, type IInternalCandidate } from '../../models/index.js';
 import { audit } from '../../services/audit.service.js';
 import { BusinessRuleError, NotFoundError } from '../../utils/errors.js';
+import { isStorageEnabled } from '../../services/storage/storage.service.js';
+import { syncCandidatePhoto } from '../../services/storage/candidate-photo.service.js';
 import { toSkipLimit, buildSort, makeMeta, type PaginationQuery } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
 import { assertOwnership } from '../../utils/ownership.assert.js';
@@ -134,6 +136,44 @@ export async function listInternalCandidates(
 export async function getInternalCandidateById(id: string): Promise<IInternalCandidate> {
   const doc = await InternalCandidate.findById(id).exec();
   if (!doc) throw new NotFoundError('InternalCandidate', id);
+  return doc;
+}
+
+// ── Photo upload ──────────────────────────────────────────
+// Stores an operator-uploaded profile photo to durable R2 (when configured)
+// and points the candidate at the auth-gated proxy URL. Returns the updated
+// candidate. When R2 is unconfigured the upload is rejected with a clear
+// message rather than silently dropping the bytes.
+export async function setInternalCandidatePhoto(
+  id: string,
+  data: Buffer,
+  ext: string,
+): Promise<IInternalCandidate> {
+  const doc = await InternalCandidate.findById(id).exec();
+  if (!doc) throw new NotFoundError('InternalCandidate', id);
+  if (!isStorageEnabled()) {
+    throw new BusinessRuleError('אחסון התמונות (R2) לא מוגדר — לא ניתן להעלות תמונה');
+  }
+  const res = await syncCandidatePhoto({
+    type: 'internal',
+    id: String(doc._id),
+    lifecycleInput: {
+      type: 'internal',
+      status: doc.status,
+      archivedAt: doc.archivedAt ?? null,
+      // An operator uploading a photo implicitly approves it for storage.
+      photoApproved: true,
+    },
+    data,
+    ext,
+  });
+  if (!res.ok || !res.storageKey) {
+    throw new BusinessRuleError('העלאת התמונה נכשלה');
+  }
+  doc.photoUrl = res.proxyUrl;
+  doc.photoStorageKey = res.storageKey;
+  doc.photoApproved = true;
+  await doc.save();
   return doc;
 }
 

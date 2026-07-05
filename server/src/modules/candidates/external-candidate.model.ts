@@ -184,6 +184,9 @@ export interface IExternalCandidate extends Document {
   referenceName?: string;
   referencePhone?: string;
   photoUrl?: string;
+  // Exact R2 object key the photo lives at (e.g. review/external/<id>.jpg).
+  // Persisted so serving/reconcile never has to guess folder or extension.
+  photoStorageKey?: string;
 
   // sharing permissions
   sharePhoto: boolean;
@@ -380,6 +383,7 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     referenceName: { type: String, trim: true },
     referencePhone: { type: String, trim: true },
     photoUrl: { type: String },
+    photoStorageKey: { type: String },
 
     // ── Preferences (optional — bidirectional matching) ───
     hardConstraints: {

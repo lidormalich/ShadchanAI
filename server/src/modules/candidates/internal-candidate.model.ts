@@ -148,6 +148,8 @@ export interface IInternalCandidate extends Document {
   email?: string;
   photoUrl?: string;
   photoApproved: boolean;
+  // Exact R2 object key the photo lives at (see candidate-photo.service).
+  photoStorageKey?: string;
 
   // demographics
   city?: string;
@@ -315,6 +317,7 @@ const internalCandidateSchema = new Schema<IInternalCandidate>(
     email: { type: String, trim: true, lowercase: true },
     photoUrl: { type: String },
     photoApproved: { type: Boolean, default: false },
+    photoStorageKey: { type: String },
 
     // ── Demographics ──────────────────────────────────────
     city: { type: String, trim: true },
