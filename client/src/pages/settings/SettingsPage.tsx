@@ -222,6 +222,7 @@ function MatchingRulesSection() {
   return (
     <div className="space-y-4">
       <ScanThresholdsCard />
+      <SemanticMatchingCard />
       <Card>
         <CardHeader><h3 className="text-base font-semibold">משקלי ניתוח דטרמיניסטי</h3></CardHeader>
         <CardBody>
@@ -259,7 +260,9 @@ function ScanThresholdsCard() {
     queryKey: ['settings'],
     queryFn: () => settingsApi.list(),
   });
-  const rows = (list.data?.data ?? []).filter((r) => r.key.startsWith('matching.'));
+  const rows = (list.data?.data ?? []).filter(
+    (r) => r.key.startsWith('matching.') && !r.key.startsWith('matching.semantic_'),
+  );
 
   return (
     <Card>
@@ -272,6 +275,53 @@ function ScanThresholdsCard() {
           <LoadingSkeleton rows={3} />
         ) : list.isError ? (
           <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map((row) => (
+              <SettingRowEditor
+                key={row.key}
+                row={row}
+                onSaved={(v) => {
+                  qc.setQueryData<{ data: SettingRow[]; meta?: unknown } | undefined>(
+                    ['settings'],
+                    (prev) => prev
+                      ? { ...prev, data: prev.data.map((r) => r.key === row.key ? { ...r, value: v } : r) }
+                      : prev,
+                  );
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function SemanticMatchingCard() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => settingsApi.list(),
+  });
+  const rows = (list.data?.data ?? []).filter((r) => r.key.startsWith('matching.semantic_'));
+
+  return (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold">התאמה סמנטית (וקטורים)</h3></CardHeader>
+      <CardBody>
+        <div className="text-xs text-ink-muted mb-3">
+          תוסף אופציונלי: המערכת ממירה את הטקסטים החופשיים בפרופילים (תיאור עצמי, ציפיות, מה מחפש/ת)
+          לווקטורים ומחשבת דמיון סמנטי בין מועמדים. דמיון גבוה נותן בונוס בממד הגמישות של המנוע —
+          הוא <b>לא מחליף</b> את הכללים הקבועים (מגדר, גיל, מגזר). כיבוי מחזיר מיידית לניתוח
+          הדטרמיניסטי בלבד; וקטורים שכבר נוצרו נשמרים לשימוש עתידי. דורש מפתח OpenAI בצד השרת.
+        </div>
+        {list.isLoading ? (
+          <LoadingSkeleton rows={1} />
+        ) : list.isError ? (
+          <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
+        ) : rows.length === 0 ? (
+          <div className="text-xs text-ink-muted">אין הגדרות התאמה סמנטית זמינות.</div>
         ) : (
           <ul className="space-y-3">
             {rows.map((row) => (

@@ -173,10 +173,10 @@ const envSchema = z.object({
   WA_INSTANCE_ID: z.string().min(1).optional(),
 
   // ── Embeddings ───────────────────────────────────────
-  // Master switch. When false the embedding service is a no-op and
-  // the similarity pre-filter is bypassed (board returns all candidates
-  // exactly as before). Flip to true only after Atlas indexes + HF
-  // endpoint are configured and backfill has completed.
+  // Deploy-time DEFAULT for the admin setting `matching.semantic_enabled`
+  // (Settings → כללי התאמה). The setting is the runtime switch; this env
+  // only seeds it. The actual gate (setting + provider key) lives in
+  // services/embedding/embedding.gate.ts.
   EMBEDDINGS_ENABLED: booleanString(false),
 
   EMBEDDINGS_PROVIDER: optionalConfig(),

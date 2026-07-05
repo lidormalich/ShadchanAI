@@ -29,6 +29,10 @@ import {
   generatePhotoShareToken,
 } from '../../services/storage/candidate-photo.service.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
+import {
+  scheduleInitialEmbedding,
+  scheduleChunkInvalidation,
+} from '../../services/embedding/embedding.service.js';
 import type {
   CreateExternalCandidateInput,
   UpdateExternalCandidateInput,
@@ -262,6 +266,10 @@ export async function createExternalCandidate(
     performedBy,
     after: doc.toObject(),
   });
+
+  // Semantic add-on (no-op when the admin toggle is off).
+  scheduleInitialEmbedding(String(doc._id), 'external');
+
   return doc;
 }
 
@@ -292,6 +300,10 @@ export async function updateExternalCandidate(
     before,
     after: doc.toObject(),
   });
+
+  // Re-embed only the chunks the edited fields feed (no-op when the
+  // admin toggle is off).
+  scheduleChunkInvalidation(id, 'external', Object.keys(input));
 
   return doc;
 }

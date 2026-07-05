@@ -40,6 +40,11 @@ export type SettingKey =
   // Pairs re-score automatically once their cached score is older than
   // this many days (time-based penalties drift otherwise).
   | 'matching.rescore_ttl_days'
+  // Semantic matching add-on: profile free-text embeddings feed a cosine-
+  // similarity boost into the engine's flexibility dimension. Runtime
+  // kill-switch consumed via services/embedding/embedding.gate.ts —
+  // requires an embeddings API key (OpenAI or HuggingFace) to take effect.
+  | 'matching.semantic_enabled'
   // Extraction pipeline thresholds (services/extraction/orchestrator.ts).
   | 'extraction.auto_create_confidence'
   | 'extraction.regex_skip_ai_confidence'
@@ -125,6 +130,13 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
     key: 'matching.rescore_ttl_days',
     type: 'number', min: 1, max: 90, default: 7,
     description: 'כל כמה ימים לחשב מחדש ציון של זוג גם בלי שינוי בנתונים (קנסות תלויי-זמן מתעדכנים)',
+  },
+  'matching.semantic_enabled': {
+    key: 'matching.semantic_enabled',
+    type: 'boolean',
+    // Deploy-time env default; the admin toggle overrides it at runtime.
+    default: env.EMBEDDINGS_ENABLED,
+    description: 'התאמה סמנטית (וקטורים): דמיון בין הטקסטים החופשיים בפרופילים (תיאור עצמי, ציפיות, מה מחפש/ת) נותן בונוס בממד הגמישות. דורש מפתח OpenAI או HuggingFace; כיבוי מחזיר מיידית למנוע הדטרמיניסטי בלבד.',
   },
   'extraction.auto_create_confidence': {
     key: 'extraction.auto_create_confidence',

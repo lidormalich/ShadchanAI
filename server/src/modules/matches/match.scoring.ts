@@ -20,6 +20,7 @@ import {
 } from '../../services/matching/matchable.mapper.js';
 import { computeReadiness } from '../candidates/internal-candidate.service.js';
 import type { MatchResult } from '../../services/matching/matching.types.js';
+import { buildSemanticSimilarityMap } from '../../services/embedding/semantic-similarity.service.js';
 import { getMatchById } from './match.query.js';
 
 // Re-export the context builder so existing callers that imported it
@@ -41,6 +42,10 @@ export async function evaluatePair(
   if (!external) throw new NotFoundError('ExternalCandidate', externalId);
 
   const ctx = await buildEngineContext(internalId, mode);
+  // Optional semantic add-on (admin-gated, fail-soft): feeds the
+  // flexibility dimension; absent map = pure deterministic scoring.
+  const semantic = await buildSemanticSimilarityMap(internalId, [externalId]);
+  if (semantic) ctx.semanticSimilarities = semantic;
   return engineEvaluatePair(
     toMatchableInternal(internal),
     toMatchableExternal(external),
@@ -149,6 +154,11 @@ export async function findMatchesForInternal(
     .exec();
 
   const ctx = await buildEngineContext(internalId, mode);
+  const semantic = await buildSemanticSimilarityMap(
+    internalId,
+    externals.map((e) => String(e._id)),
+  );
+  if (semantic) ctx.semanticSimilarities = semantic;
   const matchable = toMatchableInternal(internal);
 
   const results: FindMatchItem[] = [];

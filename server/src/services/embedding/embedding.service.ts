@@ -22,7 +22,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { Types } from 'mongoose';
-import { env } from '../../config/env.js';
+import { isSemanticEnabled } from './embedding.gate.js';
 import { InternalCandidate, ExternalCandidate } from '../../models/index.js';
 import type { IInternalCandidate } from '../../modules/candidates/internal-candidate.model.js';
 import type { IExternalCandidate } from '../../modules/candidates/external-candidate.model.js';
@@ -37,7 +37,7 @@ import type {
   CandidateChunks,
   ChunkTexts,
 } from './embedding.types.js';
-import { ALL_CHUNK_TYPES } from './embedding.types.js';
+import { ALL_CHUNK_TYPES, CHUNK_INVALIDATION_MAP } from './embedding.types.js';
 import { createLogger } from '../../utils/logger.js';
 
 const log = createLogger('embedding.service');
@@ -77,7 +77,7 @@ export async function ensureAllChunks(
     doc?: IInternalCandidate | IExternalCandidate;
   } = {},
 ): Promise<void> {
-  if (!env.EMBEDDINGS_ENABLED) return;
+  if (!(await isSemanticEnabled())) return;
 
   const { forceRefresh = false } = options;
 
@@ -89,9 +89,11 @@ export async function ensureAllChunks(
   }
 
   // Load just the embedding metadata (no vectors) to check staleness.
+  // Compare against the ACTIVE provider's model id (OpenAI or HF) so a
+  // provider/model switch re-embeds instead of mixing vector spaces.
+  const provider = getEmbeddingProvider();
   const meta = await fetchEmbeddingMeta(candidateId, type);
-  const currentModelId = env.EMBEDDINGS_MODEL ?? 'BAAI/bge-m3';
-  const modelChanged   = meta?.modelId !== currentModelId;
+  const modelChanged = meta?.modelId !== provider.modelConfig.modelId;
 
   // Determine which chunks need (re-)generating.
   const chunksToEmbed: ChunkType[] = ALL_CHUNK_TYPES.filter(chunkType => {
@@ -120,8 +122,7 @@ export async function ensureAllChunks(
   }
 
   // Batch all texts into a single API call for efficiency.
-  const provider = getEmbeddingProvider();
-  const vectors  = await provider.embed(toEmbed.map(x => x.text));
+  const vectors = await provider.embed(toEmbed.map(x => x.text));
 
   // Persist each vector to the DB.
   const now = new Date();
@@ -235,12 +236,59 @@ export function scheduleChunkRefresh(
   type: CandidateType,
   affectedChunks: ChunkType[],
 ): void {
-  if (!env.EMBEDDINGS_ENABLED || affectedChunks.length === 0) return;
+  if (affectedChunks.length === 0) return;
 
-  // We re-embed only the affected chunks, not all 4.
-  refreshSpecificChunks(candidateId, type, affectedChunks).catch(err => {
-    log.error({ candidateId, type, affectedChunks, error: String(err) }, 'Background chunk refresh failed');
-  });
+  // We re-embed only the affected chunks, not all 4. The runtime gate
+  // is checked inside the async chain so the admin toggle applies
+  // without the caller needing to await anything.
+  isSemanticEnabled()
+    .then((enabled) => enabled ? refreshSpecificChunks(candidateId, type, affectedChunks) : undefined)
+    .catch(err => {
+      log.error({ candidateId, type, affectedChunks, error: String(err) }, 'Background chunk refresh failed');
+    });
+}
+
+/**
+ * Fire-and-forget: embed a newly created candidate's chunks so it has
+ * semantic signal from its first scan/board load. Gate-checked; errors
+ * are logged and never reach the HTTP response.
+ */
+export function scheduleInitialEmbedding(
+  candidateId: string,
+  type: CandidateType,
+): void {
+  isSemanticEnabled()
+    .then((enabled) => enabled ? ensureAllChunks(candidateId, type) : undefined)
+    .catch(err => {
+      log.error({ candidateId, type, error: String(err) }, 'Initial embedding failed');
+    });
+}
+
+/**
+ * Controller-facing hook: given the list of top-level fields a PATCH
+ * changed, invalidate + re-embed the chunks whose source text those
+ * fields feed (per CHUNK_INVALIDATION_MAP). Fire-and-forget — errors
+ * are logged and never reach the HTTP response.
+ */
+export function scheduleChunkInvalidation(
+  candidateId: string,
+  type: CandidateType,
+  changedFields: string[],
+): void {
+  const affected = ALL_CHUNK_TYPES.filter((chunk) =>
+    CHUNK_INVALIDATION_MAP[chunk].some((field) => changedFields.includes(field)),
+  );
+  if (affected.length === 0) return;
+
+  isSemanticEnabled()
+    .then(async (enabled) => {
+      if (!enabled) return;
+      await invalidateChunks(candidateId, type, affected);
+      await refreshSpecificChunks(candidateId, type, affected);
+    })
+    .catch(err => {
+      log.error({ candidateId, type, changedFields, error: String(err) }, 'Chunk invalidation failed');
+    });
 }
 
 // ── Internal helpers ──────────────────────────────────────

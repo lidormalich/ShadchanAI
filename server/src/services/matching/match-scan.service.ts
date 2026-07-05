@@ -47,6 +47,14 @@ import {
 } from '../../modules/settings/settings.service.js';
 import { ConflictError } from '../../utils/errors.js';
 import { createLogger } from '../../utils/logger.js';
+import { isSemanticEnabled } from '../embedding/embedding.gate.js';
+import {
+  ensureEmbeddingsForScan,
+  loadExternalChunksMap,
+  similarityMapFromChunks,
+} from '../embedding/semantic-similarity.service.js';
+import { loadChunksForQuery } from '../embedding/embedding.service.js';
+import type { CandidateChunks } from '../embedding/embedding.types.js';
 import type { MatchableInternal, MatchableExternal, MatchingContext } from './matching.types.js';
 import type { PairScoreBucket, ScoreDirection, ScanMode, ScanStatus } from '../../modules/matches/pair-score.model.js';
 
@@ -81,6 +89,12 @@ async function defaultCreateSuggestion(
 const MAX_PAIRS_PER_SCAN = 50_000;
 const MAX_AUTO_CREATES_PER_SCAN = 500;
 const PROGRESS_EVERY = 25;
+
+// Semantic add-on: external vectors are prefetched once per scan and
+// reused across every internal (pure-CPU cosine per pair afterwards).
+// Above this pool size the prefetch would hold too much vector data in
+// memory (~50KB/candidate), so we skip semantic for that scan and log.
+const SEMANTIC_SCAN_MAX_EXTERNALS = 2_000;
 
 // Only one scan may run at a time (single-instance server).
 let scanInFlight = false;
@@ -409,6 +423,30 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
     { $set: { progressTotal: work.length, progressCurrent: 0 } },
   ).exec();
 
+  // ── Semantic add-on prep (admin-gated, fail-soft) ────────
+  // Lazily embed candidates that have no vectors yet (capped per run,
+  // converges over a few scans), then prefetch all external vectors
+  // once so the per-pair cosine below is pure CPU.
+  let externalChunksCache: Map<string, CandidateChunks> | null = null;
+  try {
+    if (work.length > 0 && await isSemanticEnabled()) {
+      const workInternalIds = [...new Set(work.map((w) => w.ir.m._id))];
+      const workExternalIds = [...new Set(work.map((w) => w.er.m._id))];
+      await ensureEmbeddingsForScan(workInternalIds, workExternalIds);
+      if (workExternalIds.length <= SEMANTIC_SCAN_MAX_EXTERNALS) {
+        externalChunksCache = await loadExternalChunksMap(workExternalIds);
+      } else {
+        log.warn(
+          { externals: workExternalIds.length, cap: SEMANTIC_SCAN_MAX_EXTERNALS },
+          'semantic_skipped_pool_too_large',
+        );
+      }
+    }
+  } catch (err) {
+    log.warn({ error: String(err) }, 'semantic_prep_failed');
+    externalChunksCache = null;
+  }
+
   // ── Score each work item ─────────────────────────────────
   const ctxCache = new Map<string, MatchingContext>();
   const pairOps: Parameters<typeof PairScore.bulkWrite>[0] = [];
@@ -424,6 +462,15 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
     let ctx = ctxCache.get(ir.m._id);
     if (!ctx) {
       ctx = await buildEngineContext(ir.m._id, engineMode);
+      if (externalChunksCache && externalChunksCache.size > 0) {
+        try {
+          const internalChunks = await loadChunksForQuery(ir.m._id, 'internal');
+          const semantic = similarityMapFromChunks(internalChunks, externalChunksCache);
+          if (semantic) ctx.semanticSimilarities = semantic;
+        } catch (err) {
+          log.warn({ internalId: ir.m._id, error: String(err) }, 'semantic_map_failed');
+        }
+      }
       ctxCache.set(ir.m._id, ctx);
     }
 

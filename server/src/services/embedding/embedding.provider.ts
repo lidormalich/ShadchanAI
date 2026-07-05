@@ -1,13 +1,16 @@
 // ═══════════════════════════════════════════════════════════
 // ShadchanAI — Embedding Provider
 //
-// HTTP client for the HuggingFace Inference API (bge-m3).
-// Supports both:
-//   • HF Dedicated Endpoints  (EMBEDDINGS_ENDPOINT_URL set)
-//   • HF Serverless Inference (no endpoint URL — uses model ID)
+// HTTP clients for embedding APIs. Two implementations:
+//   • OpenAI (text-embedding-3-small) — used when OPENAI_API_KEY is
+//     the only key around; zero extra infrastructure.
+//   • HuggingFace (bge-m3) — Dedicated Endpoint (EMBEDDINGS_ENDPOINT_URL)
+//     or Serverless Inference; used when EMBEDDINGS_* config is set.
+// Selection logic lives in getEmbeddingProvider() at the bottom;
+// EMBEDDINGS_PROVIDER=openai|huggingface forces a choice.
 //
 // Responsibilities:
-//   • Batch texts → vectors via the HF REST API.
+//   • Batch texts → vectors via the provider REST API.
 //   • Retry transient failures (503 model-loading, 429 rate-limit).
 //   • Validate response shape and dimensions.
 //   • Never swallow errors — callers decide how to handle them.
@@ -44,35 +47,12 @@ export interface IEmbeddingProvider {
   readonly modelConfig: EmbeddingModelConfig;
 }
 
-// ── HuggingFace provider ──────────────────────────────────
+// ── Shared batching + retry base ──────────────────────────
 
-class HuggingFaceEmbeddingProvider implements IEmbeddingProvider {
-  readonly modelConfig: EmbeddingModelConfig;
+abstract class BaseEmbeddingProvider implements IEmbeddingProvider {
+  abstract readonly modelConfig: EmbeddingModelConfig;
 
-  private readonly apiUrl: string;
-  private readonly authHeader: string;
-
-  constructor() {
-    const modelId    = env.EMBEDDINGS_MODEL    ?? 'BAAI/bge-m3';
-    const provider   = 'huggingface';
-    const dimensions = env.EMBEDDINGS_DIMENSIONS ?? 1024;
-
-    this.modelConfig = { modelId, provider, dimensions };
-
-    // Dedicated Endpoint takes priority over Serverless so operators
-    // can switch between them purely through environment variables.
-    this.apiUrl = env.EMBEDDINGS_ENDPOINT_URL
-      ?? `https://api-inference.huggingface.co/models/${modelId}`;
-
-    const apiKey = env.EMBEDDINGS_API_KEY ?? env.FALLBACK_API_KEY;
-    if (!apiKey) {
-      throw new Error(
-        '[embedding.provider] No API key found. ' +
-        'Set EMBEDDINGS_API_KEY or FALLBACK_API_KEY in your environment.',
-      );
-    }
-    this.authHeader = `Bearer ${apiKey}`;
-  }
+  protected abstract embedBatch(texts: string[]): Promise<number[][]>;
 
   async embed(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
@@ -90,8 +70,6 @@ class HuggingFaceEmbeddingProvider implements IEmbeddingProvider {
     }
     return results;
   }
-
-  // ── Private ──────────────────────────────────────────────
 
   private async embedBatchWithRetry(texts: string[]): Promise<number[][]> {
     let lastError: unknown;
@@ -117,8 +95,40 @@ class HuggingFaceEmbeddingProvider implements IEmbeddingProvider {
 
     throw lastError;
   }
+}
 
-  private async embedBatch(texts: string[]): Promise<number[][]> {
+// ── HuggingFace provider ──────────────────────────────────
+
+class HuggingFaceEmbeddingProvider extends BaseEmbeddingProvider {
+  readonly modelConfig: EmbeddingModelConfig;
+
+  private readonly apiUrl: string;
+  private readonly authHeader: string;
+
+  constructor() {
+    super();
+    const modelId    = env.EMBEDDINGS_MODEL    ?? 'BAAI/bge-m3';
+    const provider   = 'huggingface';
+    const dimensions = env.EMBEDDINGS_DIMENSIONS ?? 1024;
+
+    this.modelConfig = { modelId, provider, dimensions };
+
+    // Dedicated Endpoint takes priority over Serverless so operators
+    // can switch between them purely through environment variables.
+    this.apiUrl = env.EMBEDDINGS_ENDPOINT_URL
+      ?? `https://api-inference.huggingface.co/models/${modelId}`;
+
+    const apiKey = env.EMBEDDINGS_API_KEY ?? env.FALLBACK_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        '[embedding.provider] No API key found. ' +
+        'Set EMBEDDINGS_API_KEY or FALLBACK_API_KEY in your environment.',
+      );
+    }
+    this.authHeader = `Bearer ${apiKey}`;
+  }
+
+  protected async embedBatch(texts: string[]): Promise<number[][]> {
     const startedAt = Date.now();
 
     const response = await fetch(this.apiUrl, {
@@ -144,6 +154,90 @@ class HuggingFaceEmbeddingProvider implements IEmbeddingProvider {
       batchSize: texts.length,
       dimensions: this.modelConfig.dimensions,
       latencyMs,
+    }, 'embed_batch');
+
+    return vectors;
+  }
+}
+
+// ── OpenAI provider ───────────────────────────────────────
+//
+// Uses the /v1/embeddings endpoint with text-embedding-3-small by
+// default. The `dimensions` request parameter natively truncates the
+// output vector (supported on text-embedding-3-*), so we keep the
+// same dimensionality as the HF path (EMBEDDINGS_DIMENSIONS, 1024)
+// and stored vectors stay interchangeable with any future Atlas index.
+
+class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
+  readonly modelConfig: EmbeddingModelConfig;
+
+  private readonly authHeader: string;
+
+  constructor() {
+    super();
+    const modelId    = env.EMBEDDINGS_MODEL ?? 'text-embedding-3-small';
+    const dimensions = env.EMBEDDINGS_DIMENSIONS ?? 1024;
+
+    this.modelConfig = { modelId, provider: 'openai', dimensions };
+
+    const apiKey = env.EMBEDDINGS_API_KEY ?? env.OPENAI_API_KEY ?? env.FALLBACK_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        '[embedding.provider] No API key found. ' +
+        'Set OPENAI_API_KEY (or EMBEDDINGS_API_KEY) in your environment.',
+      );
+    }
+    this.authHeader = `Bearer ${apiKey}`;
+  }
+
+  protected async embedBatch(texts: string[]): Promise<number[][]> {
+    const startedAt = Date.now();
+
+    const response = await fetch('https://api.openai.com/v1/embeddings', {
+      method:  'POST',
+      headers: {
+        'Authorization': this.authHeader,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({
+        model:      this.modelConfig.modelId,
+        input:      texts,
+        dimensions: this.modelConfig.dimensions,
+      }),
+    });
+
+    const latencyMs = Date.now() - startedAt;
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new EmbeddingApiError(response.status, body, latencyMs);
+    }
+
+    const raw = await response.json() as {
+      data?: Array<{ index: number; embedding: number[] }>;
+    };
+    if (!Array.isArray(raw.data) || raw.data.length !== texts.length) {
+      throw new Error(
+        `[embedding.provider] OpenAI returned ${raw.data?.length ?? 0} embeddings for ${texts.length} inputs`,
+      );
+    }
+
+    // The API documents order preservation, but sort by index defensively.
+    const vectors = [...raw.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
+
+    const firstVector = vectors[0];
+    if (!firstVector || firstVector.length !== this.modelConfig.dimensions) {
+      throw new Error(
+        `[embedding.provider] Dimension mismatch: expected ${this.modelConfig.dimensions}, ` +
+        `got ${firstVector?.length ?? 0}.`,
+      );
+    }
+
+    log.info({
+      batchSize: texts.length,
+      dimensions: this.modelConfig.dimensions,
+      latencyMs,
+      provider: 'openai',
     }, 'embed_batch');
 
     return vectors;
@@ -237,15 +331,33 @@ function sleep(ms: number): Promise<void> {
 
 // ── Singleton factory ─────────────────────────────────────
 //
-// Instantiated lazily so the provider is only created when
-// EMBEDDINGS_ENABLED=true — avoids crashing the server at boot
-// if the API key is missing but embeddings are disabled.
+// Instantiated lazily so the provider is only created once the
+// semantic gate is open — avoids crashing the server at boot
+// if the API key is missing but the add-on is disabled.
+//
+// Selection order:
+//   1. EMBEDDINGS_PROVIDER=openai|huggingface — explicit override.
+//   2. EMBEDDINGS_ENDPOINT_URL or EMBEDDINGS_API_KEY set — the operator
+//      configured HuggingFace on purpose; honour it.
+//   3. OPENAI_API_KEY / FALLBACK_API_KEY present — turnkey OpenAI path.
 
 let _provider: IEmbeddingProvider | null = null;
 
 export function getEmbeddingProvider(): IEmbeddingProvider {
   if (!_provider) {
-    _provider = new HuggingFaceEmbeddingProvider();
+    const explicit = env.EMBEDDINGS_PROVIDER?.toLowerCase();
+    if (explicit === 'openai') {
+      _provider = new OpenAIEmbeddingProvider();
+    } else if (explicit === 'huggingface' || env.EMBEDDINGS_ENDPOINT_URL || env.EMBEDDINGS_API_KEY) {
+      _provider = new HuggingFaceEmbeddingProvider();
+    } else if (env.OPENAI_API_KEY || env.FALLBACK_API_KEY) {
+      _provider = new OpenAIEmbeddingProvider();
+    } else {
+      throw new Error(
+        '[embedding.provider] No embeddings provider configured. ' +
+        'Set OPENAI_API_KEY (turnkey) or EMBEDDINGS_API_KEY/EMBEDDINGS_ENDPOINT_URL (HuggingFace).',
+      );
+    }
   }
   return _provider;
 }

@@ -41,6 +41,7 @@ import {
   buildEngineContext,
 } from '../matching/matchable.mapper.js';
 import { SUITABLE_SCORE_MIN, SUITABLE_CONFIDENCE_MIN } from '../matching/matching.constants.js';
+import { buildSemanticSimilarityMap } from '../embedding/semantic-similarity.service.js';
 import type {
   MatchResult,
   BlockerReason,
@@ -194,8 +195,14 @@ export async function buildBoardForInternal(
 
   const externalPool = [...activeExternals, ...extraExternals];
 
-  // Build engine context once.
+  // Build engine context once. Semantic map (admin-gated add-on) is
+  // computed for the whole pool up front — pure CPU per pair after that.
   const ctx = await buildEngineContext(internalId, mode);
+  const semantic = await buildSemanticSimilarityMap(
+    internalId,
+    externalPool.map((e) => String(e._id)),
+  );
+  if (semantic) ctx.semanticSimilarities = semantic;
   const matchableInternal = toMatchableInternal(internal as Record<string, unknown>);
 
   const rows: CompatibilityRow[] = [];
@@ -446,6 +453,8 @@ export async function checkPair(
   }
 
   const ctx = await buildEngineContext(internalId, mode);
+  const semantic = await buildSemanticSimilarityMap(internalId, [externalId]);
+  if (semantic) ctx.semanticSimilarities = semantic;
   const result = engineEvaluatePair(
     toMatchableInternal(internal as Record<string, unknown>),
     toMatchableExternal(external as Record<string, unknown>),

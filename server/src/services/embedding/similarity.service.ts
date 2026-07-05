@@ -88,6 +88,7 @@ import { InternalCandidate } from '../../models/index.js';
 import { CandidateStatus, Gender, ReadinessForMarriage } from '@shadchanai/shared';
 import type { IInternalCandidate } from '../../modules/candidates/internal-candidate.model.js';
 import { loadChunksForQuery } from './embedding.service.js';
+import { isSemanticEnabled } from './embedding.gate.js';
 import type { ChunkType, CandidateChunks } from './embedding.types.js';
 import { ALL_CHUNK_TYPES, CHUNK_WEIGHTS } from './embedding.types.js';
 import { env } from '../../config/env.js';
@@ -227,8 +228,8 @@ export async function findTopSemanticallyMatchedCandidates(
   options: SimilaritySearchOptions = {},
 ): Promise<RankedCandidate[]> {
 
-  // ── Guard: embeddings feature flag ───────────────────────────────────
-  if (!env.EMBEDDINGS_ENABLED) {
+  // ── Guard: semantic add-on gate (admin setting + provider key) ───────
+  if (!(await isSemanticEnabled())) {
     return [];
   }
 

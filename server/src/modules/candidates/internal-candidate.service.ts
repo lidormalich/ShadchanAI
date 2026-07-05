@@ -22,6 +22,10 @@ import { audit } from '../../services/audit.service.js';
 import { BusinessRuleError, NotFoundError } from '../../utils/errors.js';
 import { isStorageEnabled } from '../../services/storage/storage.service.js';
 import {
+  scheduleInitialEmbedding,
+  scheduleChunkInvalidation,
+} from '../../services/embedding/embedding.service.js';
+import {
   syncCandidatePhoto,
   deleteCandidatePhoto,
   generatePhotoShareToken,
@@ -245,6 +249,9 @@ export async function createInternalCandidate(
     after: doc.toObject(),
   });
 
+  // Semantic add-on (no-op when the admin toggle is off).
+  scheduleInitialEmbedding(String(doc._id), 'internal');
+
   return doc;
 }
 
@@ -277,6 +284,10 @@ export async function updateInternalCandidate(
     before,
     after: existing.toObject(),
   });
+
+  // Re-embed only the chunks the edited fields feed (no-op when the
+  // admin toggle is off).
+  scheduleChunkInvalidation(id, 'internal', Object.keys(input));
 
   return existing;
 }
