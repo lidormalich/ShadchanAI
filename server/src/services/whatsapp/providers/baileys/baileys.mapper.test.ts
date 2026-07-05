@@ -179,7 +179,7 @@ describe('mapInboundMessage', () => {
     expect(out!.senderPhone).toBeUndefined();
   });
 
-  it('leaves senderPhone empty for an anonymous LID participant', () => {
+  it('leaves senderPhone empty for an anonymous LID participant, surfacing the lid', () => {
     const out = mapInboundMessage(
       baseMessage({
         key: { id: 'wamid.g3', remoteJid: '120000000000@g.us', participant: '167338831415295@lid', fromMe: false },
@@ -188,6 +188,7 @@ describe('mapInboundMessage', () => {
     );
     expect(out).not.toBeNull();
     expect(out!.senderPhone).toBeUndefined();
+    expect(out!.senderLid).toBe('167338831415295@lid');
   });
 
   it('prefers participantPn (real phone) over a LID participant', () => {

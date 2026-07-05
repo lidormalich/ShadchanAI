@@ -102,9 +102,12 @@ export function mapInboundMessage(
     participantName,
     // Real poster (in groups this differs from participantPhone=group id).
     // Empty when the sender's phone is genuinely unknown (LID-only sender,
-    // channel/newsletter post) — better absent than a misleading id.
+    // channel/newsletter post) — better absent than a misleading id. For
+    // LID-only senders the lid is surfaced so the events layer can resolve
+    // the phone via group metadata.
     senderName: participantName,
     senderPhone: jidToPhoneStrict(posterJid) || undefined,
+    senderLid: posterJid?.endsWith('@lid') ? posterJid : undefined,
     chatJid: fromJid,
     chatType: isGroup ? 'group' : 'private',
     timestamp,

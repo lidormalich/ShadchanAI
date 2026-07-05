@@ -32,6 +32,10 @@ export interface NormalizedInboundMessage {
    *  (who published the profile), distinct from the profile's inquiry phone. */
   senderName?: string;
   senderPhone?: string;
+  /** Anonymous "…@lid" jid of the poster when WhatsApp hides their phone
+   *  (LID privacy rollout). Lets the events layer resolve the real phone
+   *  via group metadata before the message is persisted. */
+  senderLid?: string;
   /** Raw WhatsApp chat JID (e.g. "12345@s.whatsapp.net" or "9999-123@g.us").
    *  Authoritative key for the pre-pilot ChatMapping / ingestion gate. */
   chatJid: string;

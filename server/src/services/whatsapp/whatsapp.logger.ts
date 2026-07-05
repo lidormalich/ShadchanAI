@@ -31,6 +31,7 @@ export type WhatsAppLogEvent =
   | 'channel_disconnected'
   | 'channel_replaced'
   | 'channel_not_found'
+  | 'lid_repair'
   | 'error';
 
 export interface WhatsAppLogFields {

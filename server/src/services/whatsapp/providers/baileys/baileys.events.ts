@@ -12,7 +12,9 @@ import { Boom } from '@hapi/boom';
 import type { IChannel } from '../../../../models/index.js';
 import { ingestInboundMessage, handleStatusUpdate } from '../../message.handler.js';
 import { logWhatsApp, maskPhone } from '../../whatsapp.logger.js';
+import { resolveLidToPhone } from '../../lid-resolver.js';
 import { mapInboundMessage, mapStatusUpdate } from './baileys.mapper.js';
+import type { NormalizedInboundMessage } from '../../whatsapp.types.js';
 
 export interface EventBridgeContext {
   channel: IChannel;
@@ -33,6 +35,15 @@ export interface ConnectionUpdate {
  */
 export function wireEvents(sock: WASocket, ctx: EventBridgeContext): void {
   const { channel, onConnectionUpdate } = ctx;
+
+  // Anonymous "…@lid" group senders: translate to the real phone via group
+  // metadata before persisting. Best-effort — a failed lookup just leaves
+  // senderPhone empty, exactly as if WhatsApp hid the number.
+  const enrichSenderPhone = async (normalized: NormalizedInboundMessage): Promise<void> => {
+    if (normalized.chatType !== 'group' || normalized.senderPhone || !normalized.senderLid) return;
+    const phone = await resolveLidToPhone(sock, channel, normalized.chatJid, normalized.senderLid);
+    if (phone) normalized.senderPhone = phone;
+  };
 
   // ── Connection lifecycle ───────────────────────────────
   sock.ev.on('connection.update', (update) => {
@@ -74,6 +85,7 @@ export function wireEvents(sock: WASocket, ctx: EventBridgeContext): void {
           continue;
         }
 
+        await enrichSenderPhone(normalized);
         await ingestInboundMessage(normalized);
       } catch (err) {
         logWhatsApp({
@@ -102,6 +114,7 @@ export function wireEvents(sock: WASocket, ctx: EventBridgeContext): void {
         if (msg?.key?.fromMe === true) continue;
         const normalized = mapInboundMessage(msg, channel);
         if (!normalized) continue;
+        await enrichSenderPhone(normalized);
         await ingestInboundMessage(normalized);
       } catch (err) {
         logWhatsApp({
