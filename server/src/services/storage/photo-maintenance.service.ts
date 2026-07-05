@@ -16,8 +16,8 @@
 import type { Model } from 'mongoose';
 import { InternalCandidate, ExternalCandidate, Message } from '../../models/index.js';
 import { env } from '../../config/env.js';
-import { readMediaFile } from '../whatsapp/media.service.js';
-import { isStorageEnabled, listObjects, deleteObject } from './storage.service.js';
+import { readMediaFile, incomingPhotoKey } from '../whatsapp/media.service.js';
+import { isStorageEnabled, listObjects, deleteObject, getObject } from './storage.service.js';
 import {
   syncCandidatePhoto,
   reconcileCandidatePhotoFolder,
@@ -37,6 +37,7 @@ export interface PhotoMaintenanceSummary {
   backfilled: number;
   reconciled: number;
   junkDeleted: number;
+  incomingSwept: number;
 }
 
 export async function runPhotoStorageMaintenance(): Promise<PhotoMaintenanceSummary | null> {
@@ -44,8 +45,9 @@ export async function runPhotoStorageMaintenance(): Promise<PhotoMaintenanceSumm
   const backfilled = await backfillExternalPhotos();
   const reconciled = await reconcileFolders();
   const junkDeleted = await sweepJunk();
-  const summary = { backfilled, reconciled, junkDeleted };
-  if (backfilled || reconciled || junkDeleted) {
+  const incomingSwept = await sweepIncoming();
+  const summary = { backfilled, reconciled, junkDeleted, incomingSwept };
+  if (backfilled || reconciled || junkDeleted || incomingSwept) {
     log.info({ ...summary }, 'photo_maintenance_done');
   }
   return summary;
@@ -77,21 +79,31 @@ async function backfillExternalPhotos(): Promise<number> {
       .exec();
     const filename = msg?.mediaUrl?.split('/').pop();
     if (!filename) continue;
-    const file = await readMediaFile(filename);
-    if (!file) continue;
+    // Prefer the local disk copy; fall back to the durable R2 mirror written
+    // at download time (disk may have been wiped by a deploy since then).
+    let bytes: Buffer | null = null;
+    const disk = await readMediaFile(filename);
+    if (disk) bytes = disk.data;
+    else {
+      const mirrored = await getObject(incomingPhotoKey(filename));
+      if (mirrored) bytes = mirrored.data;
+    }
+    if (!bytes) continue;
     const ext = filename.split('.').pop() ?? 'jpg';
 
     const res = await syncCandidatePhoto({
       type: 'external',
       id: String(cand._id),
       lifecycleInput: { type: 'external', status: cand.status, archivedAt: cand.archivedAt ?? null },
-      data: file.data,
+      data: bytes,
       ext,
     });
     if (res.ok && res.storageKey) {
       cand.photoUrl = res.proxyUrl;
       cand.photoStorageKey = res.storageKey;
       await cand.save();
+      // The bytes now live under the candidate's key — drop the incoming copy.
+      await deleteObject(incomingPhotoKey(filename)).catch(() => undefined);
       done++;
     }
   }
@@ -142,6 +154,24 @@ async function reconcileFor(
     }
   }
   return moved;
+}
+
+// ── 4. Delete incoming/ raw mirrors that never became a candidate ──
+// A download-time mirror is deleted the moment its candidate photo is
+// synced. What lingers here is orphaned raw images (non-profile photos,
+// messages that never produced a candidate). Sweep them on the same
+// retention window so the mirror bucket doesn't grow unbounded.
+async function sweepIncoming(): Promise<number> {
+  if (env.R2_JUNK_RETENTION_DAYS <= 0) return 0;
+  const cutoff = Date.now() - env.R2_JUNK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const objects = await listObjects('incoming/');
+  let deleted = 0;
+  for (const obj of objects) {
+    if (!obj.lastModified || obj.lastModified.getTime() > cutoff) continue;
+    await deleteObject(obj.key);
+    deleted++;
+  }
+  return deleted;
 }
 
 // ── 3. Delete junk/ objects past the retention window ──

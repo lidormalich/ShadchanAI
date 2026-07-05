@@ -19,9 +19,18 @@ import { downloadContentFromMessage, normalizeMessageContent } from '@whiskeysoc
 import type { proto } from '@whiskeysockets/baileys';
 import { Message } from '../../models/index.js';
 import { env } from '../../config/env.js';
+import { isStorageEnabled, putObject } from '../storage/storage.service.js';
 import { createLogger } from '../../utils/logger.js';
 
 const log = createLogger('wa-media');
+
+// Durable R2 key for a freshly-received image, BEFORE it's tied to a
+// candidate. Mirrored at download time so the bytes survive Render's
+// ephemeral disk even if a deploy wipes it before the candidate exists.
+// The candidate-photo backfill reads from here when the disk file is gone.
+export function incomingPhotoKey(filename: string): string {
+  return `incoming/${filename}`;
+}
 
 // Filename shape is fully derived from trusted values (Mongo _id + mapped
 // extension), and the serving router re-validates against this pattern —
@@ -113,6 +122,18 @@ export async function downloadInboundMedia(
     message.mediaUrl = `/api/media/${filename}`;
     await message.save();
     log.info({ messageId, filename }, 'media_downloaded');
+
+    // Mirror the raw bytes to durable R2 immediately (best-effort). Closes
+    // the window where an image lives only on ephemeral disk between receive
+    // and the candidate-photo backfill. Failure here never fails the download.
+    if (isStorageEnabled()) {
+      try {
+        const bytes = await fs.readFile(filePath);
+        await putObject(incomingPhotoKey(filename), bytes, MIME_BY_EXT[ext] ?? 'image/jpeg');
+      } catch (mirrorErr) {
+        log.warn({ messageId, err: (mirrorErr as Error).message }, 'media_r2_mirror_failed');
+      }
+    }
     return { ok: true, filename };
   } catch (err) {
     // Expired media keys / network faults — the reconciler retries while
