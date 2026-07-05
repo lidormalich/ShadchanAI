@@ -16,6 +16,8 @@ import type {
 } from './internal-candidate.validator.js';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
 import { getCandidateInsight, rebuildCandidateInsight } from '../../services/ai/candidate-learning.service.js';
+import { env } from '../../config/env.js';
+import { buildPublicPhotoUrl } from '../../services/storage/candidate-photo.service.js';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -85,6 +87,26 @@ export async function uploadPhotoHandler(req: Request, res: Response, next: Next
     }
     const doc = await svc.setInternalCandidatePhoto(id, body, ext);
     ok(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function removePhotoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const doc = await svc.removeInternalCandidatePhoto(id);
+    ok(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function photoShareLinkHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const token = await svc.ensureInternalPhotoShareToken(id);
+    const base = env.PUBLIC_BASE_URL ?? `${req.protocol}://${req.get('host')}`;
+    ok(res, { url: buildPublicPhotoUrl(base, token), token });
   } catch (e) { next(e); }
 }
 

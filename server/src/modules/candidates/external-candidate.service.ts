@@ -22,6 +22,12 @@ import { applyOwnershipFilter } from '../../utils/ownership.js';
 import { assertOwnership } from '../../utils/ownership.assert.js';
 import type { AuthUser } from '../../middleware/auth.middleware.js';
 import { normalizePhone } from '../../utils/phone.js';
+import { isStorageEnabled } from '../../services/storage/storage.service.js';
+import {
+  syncCandidatePhoto,
+  deleteCandidatePhoto,
+  generatePhotoShareToken,
+} from '../../services/storage/candidate-photo.service.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import type {
   CreateExternalCandidateInput,
@@ -65,6 +71,53 @@ export async function getExternalCandidateById(id: string): Promise<IExternalCan
   const doc = await ExternalCandidate.findById(id).exec();
   if (!doc) throw new NotFoundError('ExternalCandidate', id);
   return doc;
+}
+
+// ── Photo (upload / remove / public share link) ──────────
+// External photos usually arrive from the WhatsApp card, but an operator can
+// also upload/replace one manually. Mirrors the internal candidate flow.
+
+export async function setExternalCandidatePhoto(
+  id: string,
+  data: Buffer,
+  ext: string,
+): Promise<IExternalCandidate> {
+  const doc = await getExternalCandidateById(id);
+  if (!isStorageEnabled()) {
+    throw new BusinessRuleError('אחסון התמונות (R2) לא מוגדר — לא ניתן להעלות תמונה');
+  }
+  const res = await syncCandidatePhoto({
+    type: 'external',
+    id: String(doc._id),
+    lifecycleInput: { type: 'external', status: doc.status, archivedAt: doc.archivedAt ?? null },
+    data,
+    ext,
+  });
+  if (!res.ok || !res.storageKey) throw new BusinessRuleError('העלאת התמונה נכשלה');
+  doc.photoUrl = res.proxyUrl;
+  doc.photoStorageKey = res.storageKey;
+  await doc.save();
+  return doc;
+}
+
+export async function removeExternalCandidatePhoto(id: string): Promise<IExternalCandidate> {
+  const doc = await getExternalCandidateById(id);
+  if (doc.photoStorageKey) await deleteCandidatePhoto(doc.photoStorageKey);
+  doc.photoUrl = undefined;
+  doc.photoStorageKey = undefined;
+  doc.photoShareToken = undefined;
+  await doc.save();
+  return doc;
+}
+
+export async function ensureExternalPhotoShareToken(id: string): Promise<string> {
+  const doc = await getExternalCandidateById(id);
+  if (!doc.photoStorageKey) throw new BusinessRuleError('אין תמונה למועמד — אין מה לשתף');
+  if (!doc.photoShareToken) {
+    doc.photoShareToken = generatePhotoShareToken();
+    await doc.save();
+  }
+  return doc.photoShareToken;
 }
 
 // ── Source card ("כרטיס מקורי") ───────────────────────────

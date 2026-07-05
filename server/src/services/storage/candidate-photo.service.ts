@@ -19,6 +19,7 @@
 // serving path.
 // ═══════════════════════════════════════════════════════════
 
+import crypto from 'node:crypto';
 import { getObject, putObject, moveObject, deleteObject, isStorageEnabled } from './storage.service.js';
 import { MIME_BY_EXT } from '../whatsapp/media.service.js';
 import { createLogger } from '../../utils/logger.js';
@@ -70,6 +71,16 @@ export function photoKey(
 /** The stable, auth-gated URL stored on candidate.photoUrl for the client. */
 export function photoProxyUrl(type: PhotoOwnerType, id: string): string {
   return `/api/media/candidate/${type}/${id}`;
+}
+
+/** Random, unguessable token for a PUBLIC (no-auth) photo share link. */
+export function generatePhotoShareToken(): string {
+  return crypto.randomBytes(24).toString('base64url'); // ~32 url-safe chars
+}
+
+/** Absolute public URL for a share token, e.g. https://host/api/public/photo/<token>. */
+export function buildPublicPhotoUrl(base: string, token: string): string {
+  return `${base.replace(/\/+$/, '')}/api/public/photo/${token}`;
 }
 
 /** Parse "candidates/external/<id>.jpg" → its parts (for cleanup jobs). */

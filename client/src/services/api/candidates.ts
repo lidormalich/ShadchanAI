@@ -5,15 +5,15 @@ import type { InternalCandidate, ExternalCandidate, ReadinessDetails, MatchSugge
 // Raw image upload — bypasses the JSON api client to send the file bytes
 // with an image/* content-type (the server route uses express.raw). Auth
 // header is attached exactly like every other request.
-async function uploadCandidatePhoto(path: string, file: File): Promise<InternalCandidate> {
+async function uploadCandidatePhoto<T>(path: string, file: File): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method: 'POST',
     headers: { ...getAuthHeaders(), 'Content-Type': file.type },
     body: file,
   });
-  let envelope: ApiEnvelope<InternalCandidate>;
+  let envelope: ApiEnvelope<T>;
   try {
-    envelope = (await res.json()) as ApiEnvelope<InternalCandidate>;
+    envelope = (await res.json()) as ApiEnvelope<T>;
   } catch {
     throw new ApiError(res.status, 'parse_error', 'Invalid JSON response');
   }
@@ -24,8 +24,10 @@ async function uploadCandidatePhoto(path: string, file: File): Promise<InternalC
       envelope.error?.message ?? 'העלאת התמונה נכשלה',
     );
   }
-  return envelope.data as InternalCandidate;
+  return envelope.data as T;
 }
+
+export interface PhotoShareLink { url: string; token: string }
 
 // ── Source card ("כרטיס מקורי") ──────────────────────────
 // The original WhatsApp message(s) a profile was extracted from — the raw
@@ -103,7 +105,10 @@ export const internalCandidatesApi = {
   readiness: (id: string) => api.get<ReadinessDetails>(`/candidates/internal/${id}/readiness`),
   sourceCard: (id: string) => api.get<SourceCard>(`/candidates/internal/${id}/source-card`),
   uploadPhoto: (id: string, file: File) =>
-    uploadCandidatePhoto(`/candidates/internal/${id}/photo`, file),
+    uploadCandidatePhoto<InternalCandidate>(`/candidates/internal/${id}/photo`, file),
+  removePhoto: (id: string) => api.del<InternalCandidate>(`/candidates/internal/${id}/photo`),
+  photoShareLink: (id: string) =>
+    api.post<PhotoShareLink>(`/candidates/internal/${id}/photo/share-link`),
   insight: (id: string) => api.get<CandidateInsight | null>(`/candidates/internal/${id}/insight`),
   rebuildInsight: (id: string) =>
     api.post<CandidateInsightRebuildResult>(`/candidates/internal/${id}/insight/rebuild`),
@@ -127,4 +132,9 @@ export const externalCandidatesApi = {
   matchingInternals: (id: string, query: Record<string, unknown> = {}) =>
     api.get<unknown[]>(`/candidates/external/${id}/matching-internals`, query),
   sourceCard: (id: string) => api.get<SourceCard>(`/candidates/external/${id}/source-card`),
+  uploadPhoto: (id: string, file: File) =>
+    uploadCandidatePhoto<ExternalCandidate>(`/candidates/external/${id}/photo`, file),
+  removePhoto: (id: string) => api.del<ExternalCandidate>(`/candidates/external/${id}/photo`),
+  photoShareLink: (id: string) =>
+    api.post<PhotoShareLink>(`/candidates/external/${id}/photo/share-link`),
 };

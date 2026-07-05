@@ -56,6 +56,7 @@ import { settingsRouter } from './modules/settings/settings.router.js';
 import { monitoringRouter } from './modules/monitoring/monitoring.router.js';
 import { safeModeRouter } from './modules/safe-mode/safe-mode.router.js';
 import { mediaRouter } from './modules/media/media.router.js';
+import { publicPhotoRouter } from './modules/media/public-photo.router.js';
 import { ensureNotificationsStarted } from './services/notifications/notifications.service.js';
 
 export function buildApp(): Express {
@@ -89,6 +90,12 @@ export function buildApp(): Express {
   // default limiter a traffic burst could 429 the probe and trigger a
   // restart loop. Health must always answer.
   app.use('/api', healthRouter);
+
+  // ── 8a′. Public photo links (NO AUTH, by design) ──────
+  // The one intentionally-public media route: an unguessable token maps to
+  // a candidate photo so a shared WhatsApp link opens with no login. Mounted
+  // before the auth-gated routers; the token is the only credential.
+  app.use('/api/public', publicPhotoRouter);
 
   // ── 8b. Default rate limiter for all /api routes (exceptions
   //       below override with stricter limits) ─────────────

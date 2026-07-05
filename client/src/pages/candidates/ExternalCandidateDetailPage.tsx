@@ -26,8 +26,9 @@ import { pairReviewsApi } from '@/services/api/pair-reviews';
 import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { CreateSuggestionDialog } from '@/features/matching/CreateSuggestionDialog';
 import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
-import { FullProfile, ShareCardPreview } from './ExternalCandidateDrawer';
+import { FullProfile, ShareCardPreview, buildExternalCardText } from './ExternalCandidateDrawer';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
+import { PhotoTab } from '@/features/candidates/PhotoTab';
 import { StaleBanner } from '@/components/domain/banners';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { NotesRail } from '@/features/notes/NotesRail';
@@ -147,6 +148,19 @@ export function ExternalCandidateDetailPage() {
           <Tabs
             tabs={[
               { id: 'profile', label: 'פרופיל מלא', content: <FullProfile c={c} /> },
+              {
+                id: 'photo',
+                label: 'תמונה',
+                content: (
+                  <PhotoTab
+                    type="external"
+                    candidateId={c._id}
+                    name={name}
+                    photoUrl={c.photoUrl}
+                    cardText={buildExternalCardText(c)}
+                  />
+                ),
+              },
               {
                 id: 'match',
                 label: 'ניתוח התאמה',

@@ -16,6 +16,7 @@ import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList
 import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { CandidatePhoto } from '@/features/candidates/CandidatePhoto';
+import { PhotoTab } from '@/features/candidates/PhotoTab';
 import { CandidateInsightTab } from '@/features/candidates/CandidateInsightTab';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
@@ -165,6 +166,19 @@ export function InternalCandidateDetailPage() {
                 id: 'profile',
                 label: 'פרופיל',
                 content: <ProfileSections c={candidate.data.data} />,
+              },
+              {
+                id: 'photo',
+                label: 'תמונה',
+                content: (
+                  <PhotoTab
+                    type="internal"
+                    candidateId={c._id}
+                    name={`${c.firstName} ${c.lastName}`}
+                    photoUrl={c.photoUrl}
+                    cardText={buildInternalCardText(c)}
+                  />
+                ),
               },
               {
                 id: 'compatibility',
@@ -509,6 +523,19 @@ function LinkedConversations({ items, loading }: { items: Conversation[]; loadin
       </ul>
     </Card>
   );
+}
+
+function buildInternalCardText(c: InternalCandidate): string {
+  const age = c.dateOfBirth
+    ? Math.floor((Date.now() - new Date(c.dateOfBirth).getTime()) / 3.15576e10)
+    : undefined;
+  const lines = [
+    `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim(),
+    [age ? `גיל ${age}` : '', c.city ?? ''].filter(Boolean).join(' · '),
+    c.sectorGroup ? label('sectorGroup', c.sectorGroup) : '',
+    c.about ? `\n${c.about}` : '',
+  ];
+  return lines.filter(Boolean).join('\n');
 }
 
 function Field({ label, value }: { label: string; value: string }) {

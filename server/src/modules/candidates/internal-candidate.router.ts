@@ -60,6 +60,18 @@ internalCandidateRouter.post(
   ctrl.uploadPhotoHandler,
 );
 
+internalCandidateRouter.delete(
+  '/:id/photo',
+  validate({ params: IdParamSchema }),
+  ctrl.removePhotoHandler,
+);
+
+internalCandidateRouter.post(
+  '/:id/photo/share-link',
+  validate({ params: IdParamSchema }),
+  ctrl.photoShareLinkHandler,
+);
+
 internalCandidateRouter.post(
   '/:id/close',
   validate({ params: IdParamSchema, body: CloseCandidateSchema }),

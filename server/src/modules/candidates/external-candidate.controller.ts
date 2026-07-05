@@ -12,6 +12,14 @@ import type {
   UpdateExternalCandidateInput,
   ListExternalCandidatesQuery,
 } from './external-candidate.validator.js';
+import { env } from '../../config/env.js';
+import { buildPublicPhotoUrl } from '../../services/storage/candidate-photo.service.js';
+
+const PHOTO_EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -37,6 +45,45 @@ export async function createHandler(req: Request, res: Response, next: NextFunct
     canWriteCandidates(user);
     const doc = await svc.createExternalCandidate(req.body as CreateExternalCandidateInput, user.id);
     created(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function uploadPhotoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const ext = PHOTO_EXT_BY_MIME[req.header('content-type')?.split(';')[0]?.trim() ?? ''];
+    const body = req.body as Buffer;
+    if (!ext || !Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'invalid_image', message: 'נדרשת תמונה בפורמט JPG / PNG / WEBP' },
+      });
+      return;
+    }
+    const doc = await svc.setExternalCandidatePhoto(id, body, ext);
+    ok(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function removePhotoHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const doc = await svc.removeExternalCandidatePhoto(id);
+    ok(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function photoShareLinkHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const token = await svc.ensureExternalPhotoShareToken(id);
+    const base = env.PUBLIC_BASE_URL ?? `${req.protocol}://${req.get('host')}`;
+    ok(res, { url: buildPublicPhotoUrl(base, token), token });
   } catch (e) { next(e); }
 }
 

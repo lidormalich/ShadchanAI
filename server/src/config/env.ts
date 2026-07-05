@@ -45,6 +45,17 @@ const envSchema = z.object({
   BODY_LIMIT: z.string().default('2mb'),
 
   /**
+   * Absolute, publicly-reachable base URL of THIS deployment (e.g.
+   * https://shadchanai.onrender.com). Used to build shareable public photo
+   * links (/api/public/photo/<token>) that work outside the app — in a
+   * WhatsApp message, on any device. Must point at the cloud deployment, NOT
+   * localhost, since the operator generates links from their local machine
+   * but the recipient opens them from anywhere. When unset the link falls
+   * back to the request's own origin.
+   */
+  PUBLIC_BASE_URL: optionalConfig(),
+
+  /**
    * When set, Express serves the built client SPA (static assets + index.html
    * fallback for non-/api routes) from this directory. This makes the client
    * and API same-origin, which the client REQUIRES — it calls a hardcoded

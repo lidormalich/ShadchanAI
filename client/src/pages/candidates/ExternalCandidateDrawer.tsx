@@ -13,7 +13,20 @@ import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { OwnerChip } from '@/features/users/OwnerChip';
+import { PhotoTab } from '@/features/candidates/PhotoTab';
 import type { ExternalCandidate } from '@/types/domain';
+
+/** Shareable card text for an external candidate (used by the photo tab's copy). */
+export function buildExternalCardText(c: ExternalCandidate): string {
+  const lines = [
+    `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'מועמד',
+    [c.age ? `גיל ${c.age}` : '', c.city ?? ''].filter(Boolean).join(' · '),
+    c.sectorGroup ? label('sectorGroup', c.sectorGroup) : '',
+    c.about ? `\n${c.about}` : '',
+    c.whatSeeking ? `\nמחפש/ת: ${c.whatSeeking}` : '',
+  ];
+  return lines.filter(Boolean).join('\n');
+}
 
 export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const open = id !== null;
@@ -90,6 +103,7 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
           <Tabs
             tabs={[
               { id: 'profile', label: 'פרופיל מלא', content: <FullProfile c={c} /> },
+              { id: 'photo', label: 'תמונה', content: <PhotoTab type="external" candidateId={c._id} name={`${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'מועמד'} photoUrl={c.photoUrl} cardText={buildExternalCardText(c)} /> },
               { id: 'match', label: 'ניתוח התאמה', badge: <Badge tone="brand">{matching.data?.data.length ?? 0}</Badge>, content: <MatchingInternals items={matching.data?.data ?? []} loading={matching.isLoading} /> },
               { id: 'share', label: 'תצוגה מקדימה לשיתוף', content: <ShareCardPreview c={c} /> },
               { id: 'history', label: 'היסטוריה', content: <EntityTimeline entityType="external_candidate" entityId={c._id} title="יומן פעילות" asCard={false} /> },

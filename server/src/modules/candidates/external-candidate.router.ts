@@ -2,7 +2,7 @@
 // ShadchanAI — External Candidate Router
 // ═══════════════════════════════════════════════════════════
 
-import { Router } from 'express';
+import { Router, raw } from 'express';
 import * as ctrl from './external-candidate.controller.js';
 import {
   CreateExternalCandidateSchema,
@@ -48,6 +48,25 @@ externalCandidateRouter.post(
   '/:id/archive',
   validate({ params: IdParamSchema }),
   ctrl.archiveHandler,
+);
+
+externalCandidateRouter.post(
+  '/:id/photo',
+  raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '6mb' }),
+  validate({ params: IdParamSchema }),
+  ctrl.uploadPhotoHandler,
+);
+
+externalCandidateRouter.delete(
+  '/:id/photo',
+  validate({ params: IdParamSchema }),
+  ctrl.removePhotoHandler,
+);
+
+externalCandidateRouter.post(
+  '/:id/photo/share-link',
+  validate({ params: IdParamSchema }),
+  ctrl.photoShareLinkHandler,
 );
 
 externalCandidateRouter.patch(

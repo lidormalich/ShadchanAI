@@ -21,7 +21,11 @@ import { InternalCandidate, MatchSuggestion, Conversation, type IInternalCandida
 import { audit } from '../../services/audit.service.js';
 import { BusinessRuleError, NotFoundError } from '../../utils/errors.js';
 import { isStorageEnabled } from '../../services/storage/storage.service.js';
-import { syncCandidatePhoto } from '../../services/storage/candidate-photo.service.js';
+import {
+  syncCandidatePhoto,
+  deleteCandidatePhoto,
+  generatePhotoShareToken,
+} from '../../services/storage/candidate-photo.service.js';
 import { toSkipLimit, buildSort, makeMeta, type PaginationQuery } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
 import { assertOwnership } from '../../utils/ownership.assert.js';
@@ -175,6 +179,35 @@ export async function setInternalCandidatePhoto(
   doc.photoApproved = true;
   await doc.save();
   return doc;
+}
+
+/** Remove a candidate's photo from R2 and clear all photo pointers. */
+export async function removeInternalCandidatePhoto(id: string): Promise<IInternalCandidate> {
+  const doc = await InternalCandidate.findById(id).exec();
+  if (!doc) throw new NotFoundError('InternalCandidate', id);
+  if (doc.photoStorageKey) await deleteCandidatePhoto(doc.photoStorageKey);
+  // Setting an optional path to undefined makes Mongoose $unset it on save.
+  doc.photoUrl = undefined;
+  doc.photoStorageKey = undefined;
+  doc.photoShareToken = undefined; // kill any public link
+  doc.photoApproved = false;
+  await doc.save();
+  return doc;
+}
+
+/**
+ * Return (creating if needed) the public share token for this candidate's
+ * photo. Requires a stored photo. The caller builds the absolute URL.
+ */
+export async function ensureInternalPhotoShareToken(id: string): Promise<string> {
+  const doc = await InternalCandidate.findById(id).exec();
+  if (!doc) throw new NotFoundError('InternalCandidate', id);
+  if (!doc.photoStorageKey) throw new BusinessRuleError('אין תמונה למועמד — אין מה לשתף');
+  if (!doc.photoShareToken) {
+    doc.photoShareToken = generatePhotoShareToken();
+    await doc.save();
+  }
+  return doc.photoShareToken;
 }
 
 // ── Source card ("כרטיס מקורי") ───────────────────────────

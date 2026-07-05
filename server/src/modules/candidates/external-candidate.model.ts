@@ -187,6 +187,9 @@ export interface IExternalCandidate extends Document {
   // Exact R2 object key the photo lives at (e.g. review/external/<id>.jpg).
   // Persisted so serving/reconcile never has to guess folder or extension.
   photoStorageKey?: string;
+  // Unguessable token for the PUBLIC (no-auth) photo link. Random, stable per
+  // candidate, revocable by regenerating. Absent until a share link is created.
+  photoShareToken?: string;
 
   // sharing permissions
   sharePhoto: boolean;
@@ -384,6 +387,7 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     referencePhone: { type: String, trim: true },
     photoUrl: { type: String },
     photoStorageKey: { type: String },
+    photoShareToken: { type: String },
 
     // ── Preferences (optional — bidirectional matching) ───
     hardConstraints: {
@@ -503,6 +507,7 @@ externalCandidateSchema.index(
 );
 externalCandidateSchema.index({ sourceChannelId: 1 }, { sparse: true });
 externalCandidateSchema.index({ contactPhone: 1 }, { sparse: true });
+externalCandidateSchema.index({ photoShareToken: 1 }, { unique: true, sparse: true });
 externalCandidateSchema.index({ availabilityStatus: 1 });
 externalCandidateSchema.index({ staleAt: 1 }, { sparse: true });
 externalCandidateSchema.index({ lastSourceUpdateAt: 1 });

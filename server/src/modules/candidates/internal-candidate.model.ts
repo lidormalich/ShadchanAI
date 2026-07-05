@@ -150,6 +150,8 @@ export interface IInternalCandidate extends Document {
   photoApproved: boolean;
   // Exact R2 object key the photo lives at (see candidate-photo.service).
   photoStorageKey?: string;
+  // Unguessable token for the PUBLIC (no-auth) photo link.
+  photoShareToken?: string;
 
   // demographics
   city?: string;
@@ -318,6 +320,7 @@ const internalCandidateSchema = new Schema<IInternalCandidate>(
     photoUrl: { type: String },
     photoApproved: { type: Boolean, default: false },
     photoStorageKey: { type: String },
+    photoShareToken: { type: String },
 
     // ── Demographics ──────────────────────────────────────
     city: { type: String, trim: true },
@@ -457,6 +460,7 @@ const internalCandidateSchema = new Schema<IInternalCandidate>(
 
 // Primary query patterns
 internalCandidateSchema.index({ status: 1, gender: 1 });
+internalCandidateSchema.index({ photoShareToken: 1 }, { unique: true, sparse: true });
 internalCandidateSchema.index({ status: 1, sectorGroup: 1 });
 internalCandidateSchema.index({ status: 1, city: 1 });
 internalCandidateSchema.index({ gender: 1, sectorGroup: 1, status: 1 });
