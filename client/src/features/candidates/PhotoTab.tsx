@@ -2,14 +2,19 @@
 // PhotoTab — candidate photo management (internal + external).
 //
 //   • upload / replace / remove the photo (stored in R2)
-//   • create a PUBLIC share link (no login) that opens just the image
+//   • a PUBLIC share link (no login) that opens just the image
 //   • copy the candidate card text, with or without the photo link,
 //     ready to paste into WhatsApp
+//
+// The share link is fetched EAGERLY (as soon as a photo exists) so the
+// copy handlers are fully synchronous — a network await between the click
+// and clipboard.writeText() drops the browser's transient activation and
+// the write silently fails.
 // ═══════════════════════════════════════════════════════════
 
-import { useRef, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Camera, Copy, ExternalLink, ImageOff, Link2, Trash2, Upload } from 'lucide-react';
+import { useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Camera, Copy, ExternalLink, ImageOff, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/primitives';
 import { AuthImage } from '@/components/AuthImage';
 import { toast } from '@/components/ui/Toast';
@@ -28,6 +33,31 @@ interface PhotoApi {
   photoShareLink(id: string): Promise<PhotoShareLink>;
 }
 
+// Robust clipboard write: the async Clipboard API where available, else a
+// hidden-textarea + execCommand fallback (older browsers / insecure origins).
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through to legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
   type: 'internal' | 'external';
   candidateId: string;
@@ -38,27 +68,33 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
 }) {
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
 
   const photoApi = (type === 'internal' ? internalCandidatesApi : externalCandidatesApi) as unknown as PhotoApi;
-  const invalidate = () => qc.invalidateQueries({ queryKey: [type, candidateId] });
+  const shareKey = [type, candidateId, 'photo-share-link'];
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: [type, candidateId] });
+    qc.invalidateQueries({ queryKey: shareKey });
+  };
+
+  // Eagerly resolve the public link so copying is synchronous.
+  const shareQuery = useQuery({
+    queryKey: shareKey,
+    queryFn: () => photoApi.photoShareLink(candidateId),
+    enabled: !!photoUrl,
+    staleTime: 10 * 60 * 1000,
+  });
+  const shareUrl = photoUrl ? (shareQuery.data?.url ?? null) : null;
 
   const upload = useMutation({
     mutationFn: (file: File) => photoApi.uploadPhoto(candidateId, file),
-    onSuccess: () => { toast.success('התמונה עודכנה'); setShareUrl(null); invalidate(); },
+    onSuccess: () => { toast.success('התמונה עודכנה'); invalidate(); },
     onError: (e) => toast.error('העלאת התמונה נכשלה', (e as Error).message),
   });
 
   const remove = useMutation({
     mutationFn: () => photoApi.removePhoto(candidateId),
-    onSuccess: () => { toast.success('התמונה הוסרה'); setShareUrl(null); invalidate(); },
+    onSuccess: () => { toast.success('התמונה הוסרה'); invalidate(); },
     onError: (e) => toast.error('ההסרה נכשלה', (e as Error).message),
-  });
-
-  const share = useMutation({
-    mutationFn: () => photoApi.photoShareLink(candidateId),
-    onSuccess: (d) => { setShareUrl(d.url); toast.success('לינק שיתוף נוצר'); },
-    onError: (e) => toast.error('יצירת הלינק נכשלה', (e as Error).message),
   });
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,17 +107,15 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
   };
 
   const copy = async (text: string, label: string) => {
-    try { await navigator.clipboard.writeText(text); toast.success(label); }
-    catch { toast.error('ההעתקה נכשלה'); }
+    const ok = await writeClipboard(text);
+    if (ok) toast.success(label);
+    else toast.error('ההעתקה נכשלה', 'העתק ידנית מהשדה');
   };
 
-  const copyCard = async () => {
-    let link = shareUrl;
-    if (photoUrl && !link) {
-      try { link = (await photoApi.photoShareLink(candidateId)).url; setShareUrl(link); } catch { /* copy without link */ }
-    }
-    const text = link ? `${cardText}\n\n📷 ${link}` : cardText;
-    await copy(text, link ? 'הכרטיס הועתק (כולל לינק לתמונה)' : 'הכרטיס הועתק (ללא תמונה)');
+  const copyCard = () => {
+    // shareUrl is already loaded — no await before the clipboard write.
+    const text = shareUrl ? `${cardText}\n\n📷 ${shareUrl}` : cardText;
+    void copy(text, shareUrl ? 'הכרטיס הועתק (כולל לינק לתמונה)' : 'הכרטיס הועתק (ללא תמונה)');
   };
 
   const busy = upload.isPending || remove.isPending;
@@ -133,28 +167,12 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
         <p className="text-xs text-ink-muted">
           לינק ציבורי לתמונה (ללא צורך בהתחברות) — מתאים לשליחה בוואטסאפ.
         </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            leftIcon={<Link2 className="h-4 w-4" />}
-            loading={share.isPending}
-            disabled={!photoUrl}
-            onClick={() => share.mutate()}
-          >
-            צור לינק לתמונה
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            leftIcon={<Copy className="h-4 w-4" />}
-            onClick={copyCard}
-          >
-            העתק כרטיס {photoUrl ? '+ לינק' : ''}
-          </Button>
-        </div>
-        {!photoUrl && <p className="text-xs text-ink-faint">אין תמונה — יועתק הכרטיס בלבד.</p>}
-        {shareUrl && (
+
+        {!photoUrl ? (
+          <p className="text-xs text-ink-faint">אין תמונה — אפשר להעתיק את הכרטיס בלבד.</p>
+        ) : shareQuery.isLoading ? (
+          <p className="text-xs text-ink-faint">טוען לינק…</p>
+        ) : shareUrl ? (
           <div className="flex items-center gap-2">
             <a
               href={shareUrl}
@@ -174,7 +192,18 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
               העתק
             </Button>
           </div>
+        ) : (
+          <p className="text-xs text-red-600">יצירת הלינק נכשלה — נסה לרענן.</p>
         )}
+
+        <Button
+          size="sm"
+          variant="secondary"
+          leftIcon={<Copy className="h-4 w-4" />}
+          onClick={copyCard}
+        >
+          העתק כרטיס {shareUrl ? '+ לינק' : ''}
+        </Button>
       </div>
 
       <input ref={inputRef} type="file" accept={ACCEPT.join(',')} className="hidden" onChange={onPick} />
