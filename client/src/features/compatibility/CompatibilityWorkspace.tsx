@@ -29,6 +29,7 @@ import {
 import { memo, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -342,9 +343,11 @@ function emptyHint(b: CompatibilityBucket): string {
 export function SemanticMatchesSection({ internalCandidateId }: { internalCandidateId: string }) {
   const qc = useQueryClient();
 
+  // limit=200 (server max) so the score-bucket tabs have real depth —
+  // with the default 50 the lower buckets would almost always be empty.
   const matches = useQuery({
     queryKey: ['semantic-matches', internalCandidateId],
-    queryFn: () => semanticApi.matches(internalCandidateId),
+    queryFn: () => semanticApi.matches(internalCandidateId, { limit: 200 }),
   });
 
   const backfill = useQuery({
@@ -353,10 +356,20 @@ export function SemanticMatchesSection({ internalCandidateId }: { internalCandid
     refetchInterval: (q) => (q.state.data?.data?.status === 'running' ? 1000 : false),
   });
 
+  // Result filters — religious/background stay OUT of the vector by
+  // design (operator decision), so they're offered here as post-rank
+  // narrowing instead: the similarity order is untouched, rows just
+  // drop out of view.
+  const [filterSector, setFilterSector] = useState('');
+  const [filterCity, setFilterCity] = useState('');
+  const [ageMin, setAgeMin] = useState('');
+  const [ageMax, setAgeMax] = useState('');
+  const filtersActive = Boolean(filterSector || filterCity || ageMin || ageMax);
+
   const startBackfill = useMutation({
-    mutationFn: () => semanticApi.backfillStart(),
-    onSuccess: () => {
-      toast.success('סריקת ההטמעות התחילה');
+    mutationFn: (opts: { force?: boolean } = {}) => semanticApi.backfillStart(opts),
+    onSuccess: (_r, opts) => {
+      toast.success(opts.force ? 'סריקה מאולצת התחילה — עוברת על כל המועמדים' : 'סריקת ההטמעות התחילה');
       void qc.invalidateQueries({ queryKey: ['semantic-backfill'] });
     },
     onError: (e) => toast.error('הפעלת הסריקה נכשלה', (e as Error).message),
@@ -369,11 +382,15 @@ export function SemanticMatchesSection({ internalCandidateId }: { internalCandid
   const prevStatus = useRef<string | undefined>(bf?.status);
   useEffect(() => {
     if (prevStatus.current === 'running' && bf?.status === 'done') {
-      toast.success(`הסריקה הושלמה — ${bf.embedded} מועמדים הוטמעו`);
+      const noContent = bf.noContent ?? 0;
+      toast.success(
+        'הסריקה הושלמה',
+        `${bf.embedded} מועמדים הוטמעו` + (noContent > 0 ? ` · ${noContent} ללא תוכן להטמעה (פרופיל ריק)` : ''),
+      );
       void qc.invalidateQueries({ queryKey: ['semantic-matches'] });
     }
     prevStatus.current = bf?.status;
-  }, [bf?.status, bf?.embedded, qc]);
+  }, [bf?.status, bf?.embedded, bf?.noContent, qc]);
 
   if (matches.isLoading) return <LoadingSkeleton rows={6} />;
   if (matches.isError) {
@@ -420,6 +437,15 @@ export function SemanticMatchesSection({ internalCandidateId }: { internalCandid
               מוטמעים ({coveragePct}%)
               {!data.internalEmbedded && ' · המועמד/ת עדיין לא הוטמע/ה — לחץ "סרוק עכשיו"'}
             </div>
+            {(data.coverage.genderSuspectsExcluded ?? 0) > 0 && (
+              <div className="text-[11px] text-warning mt-0.5">
+                {data.coverage.genderSuspectsExcluded} מועמדים הוסתרו — המגדר הרשום שלהם סותר את
+                הטקסט של הפרופיל.{' '}
+                <Link to="/insights" className="underline">
+                  לתיקון בתובנות ← איכות מגדר
+                </Link>
+              </div>
+            )}
             {running && bf && (
               <div className="mt-1.5 flex items-center gap-2">
                 <div className="flex-1 h-1.5 bg-bg-subtle rounded-full overflow-hidden max-w-xs">
@@ -453,16 +479,27 @@ export function SemanticMatchesSection({ internalCandidateId }: { internalCandid
           <Button
             size="sm"
             leftIcon={<Sparkles className="h-3.5 w-3.5" />}
-            onClick={() => startBackfill.mutate()}
+            onClick={() => startBackfill.mutate({})}
             loading={startBackfill.isPending || running}
             disabled={running}
           >
             {running ? 'סורק…' : 'סרוק עכשיו'}
           </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<ShieldAlert className="h-3.5 w-3.5" />}
+            onClick={() => startBackfill.mutate({ force: true })}
+            loading={running && bf?.mode === 'force'}
+            disabled={running}
+            title="עובר על כל המועמדים הפעילים — כולל מי שלא נכנס לוקטורים בסריקה רגילה — ומטמיע כל מקטע חסר"
+          >
+            סריקה מאולצת
+          </Button>
         </CardBody>
       </Card>
 
-      {/* Ranked list */}
+      {/* Ranked list, bucketed by similarity score */}
       {data.rows.length === 0 ? (
         <Card className="p-6">
           <EmptyState
@@ -475,21 +512,220 @@ export function SemanticMatchesSection({ internalCandidateId }: { internalCandid
           />
         </Card>
       ) : (
-        <Card>
-          <CardBody className="!p-0">
-            <ul className="divide-y divide-border">
-              {data.rows.map((row) => (
-                <SemanticRowItem
-                  key={row.externalCandidateId}
-                  row={row}
-                  internalCandidateId={internalCandidateId}
-                />
-              ))}
-            </ul>
-          </CardBody>
-        </Card>
+        <SemanticFilteredBuckets
+          rows={data.rows}
+          internalCandidateId={internalCandidateId}
+          filterSector={filterSector}
+          setFilterSector={setFilterSector}
+          filterCity={filterCity}
+          setFilterCity={setFilterCity}
+          ageMin={ageMin}
+          setAgeMin={setAgeMin}
+          ageMax={ageMax}
+          setAgeMax={setAgeMax}
+          filtersActive={filtersActive}
+        />
       )}
     </div>
+  );
+}
+
+// ── Filter bar + buckets ────────────────────────────────────
+// Sector / city / age narrowing over the ALREADY-ranked rows. These
+// dimensions are deliberately not embedded (religious is nuanced,
+// background is noise per operator decision) — filtering the ranked
+// list gives the same control without polluting the vectors.
+
+function SemanticFilteredBuckets({
+  rows,
+  internalCandidateId,
+  filterSector,
+  setFilterSector,
+  filterCity,
+  setFilterCity,
+  ageMin,
+  setAgeMin,
+  ageMax,
+  setAgeMax,
+  filtersActive,
+}: {
+  rows: SemanticMatchRow[];
+  internalCandidateId: string;
+  filterSector: string;
+  setFilterSector: (v: string) => void;
+  filterCity: string;
+  setFilterCity: (v: string) => void;
+  ageMin: string;
+  setAgeMin: (v: string) => void;
+  ageMax: string;
+  setAgeMax: (v: string) => void;
+  filtersActive: boolean;
+}) {
+  const sectors = [...new Set(rows.map((r) => r.sectorGroup).filter(Boolean))] as string[];
+  const cities = ([...new Set(rows.map((r) => r.city).filter(Boolean))] as string[])
+    .sort((a, b) => a.localeCompare(b, 'he'));
+
+  const min = ageMin ? Number(ageMin) : undefined;
+  const max = ageMax ? Number(ageMax) : undefined;
+  const filtered = rows.filter((r) => {
+    if (filterSector && r.sectorGroup !== filterSector) return false;
+    if (filterCity && r.city !== filterCity) return false;
+    if (min != null && !Number.isNaN(min) && (r.age == null || r.age < min)) return false;
+    if (max != null && !Number.isNaN(max) && (r.age == null || r.age > max)) return false;
+    return true;
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardBody className="flex items-center gap-3 flex-wrap">
+          <Filter className="h-4 w-4 text-ink-muted" />
+          <Select
+            value={filterSector}
+            onChange={(e) => setFilterSector(e.target.value)}
+            className="w-40"
+          >
+            <option value="">כל המגזרים</option>
+            {sectors.map((s) => (
+              <option key={s} value={s}>{label('sectorGroup', s)}</option>
+            ))}
+          </Select>
+          <Select
+            value={filterCity}
+            onChange={(e) => setFilterCity(e.target.value)}
+            className="w-40"
+          >
+            <option value="">כל הערים</option>
+            {cities.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </Select>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-ink-muted">גיל</span>
+            <Input
+              type="number"
+              inputMode="numeric"
+              placeholder="מ-"
+              value={ageMin}
+              onChange={(e) => setAgeMin(e.target.value)}
+              className="w-16 num"
+            />
+            <Input
+              type="number"
+              inputMode="numeric"
+              placeholder="עד"
+              value={ageMax}
+              onChange={(e) => setAgeMax(e.target.value)}
+              className="w-16 num"
+            />
+          </div>
+          <span className="text-xs text-ink-muted num">
+            {filtered.length} מתוך {rows.length}
+          </span>
+          {filtersActive && (
+            <button
+              className="text-xs text-brand-700 hover:underline"
+              onClick={() => {
+                setFilterSector('');
+                setFilterCity('');
+                setAgeMin('');
+                setAgeMax('');
+              }}
+            >
+              נקה סינון
+            </button>
+          )}
+        </CardBody>
+      </Card>
+
+      {filtered.length === 0 ? (
+        <Card className="p-6">
+          <EmptyState
+            title="אין תוצאות בסינון הנוכחי"
+            description="שחרר חלק מהפילטרים כדי לראות שוב את הדירוג."
+          />
+        </Card>
+      ) : (
+        <SemanticScoreBuckets rows={filtered} internalCandidateId={internalCandidateId} />
+      )}
+    </div>
+  );
+}
+
+// ── Similarity score buckets ("קרבות מועמדים") ─────────────
+//
+// Groups the vector ranking into similarity tiers so the operator can
+// scan closeness at a glance instead of scrolling one long list.
+
+const SIMILARITY_BUCKETS: Array<{
+  id: string;
+  label: string;
+  min: number; // inclusive, in percent
+  max: number; // inclusive, in percent
+  tone: 'success' | 'brand' | 'warning' | 'neutral';
+}> = [
+  { id: 'high',   label: '80–100', min: 80, max: 100, tone: 'success' },
+  { id: 'medium', label: '60–79',  min: 60, max: 79,  tone: 'brand' },
+  { id: 'low',    label: '40–59',  min: 40, max: 59,  tone: 'warning' },
+  { id: 'far',    label: 'מתחת ל-40', min: 0, max: 39, tone: 'neutral' },
+];
+
+function SemanticScoreBuckets({
+  rows,
+  internalCandidateId,
+}: {
+  rows: SemanticMatchRow[];
+  internalCandidateId: string;
+}) {
+  // Within a tier every candidate is "vector-close enough", so rank by
+  // OUR engine score (matchScore from the PairScore cache) — it folds in
+  // the hard rules the vectors ignore. Unscanned rows (no engine score)
+  // drop below scored ones and fall back to similarity order.
+  const byEngineScore = (a: SemanticMatchRow, b: SemanticMatchRow) =>
+    (b.matchScore ?? -1) - (a.matchScore ?? -1) || b.similarity - a.similarity;
+
+  const byBucket = SIMILARITY_BUCKETS.map((b) => ({
+    bucket: b,
+    items: rows
+      .filter((r) => {
+        const pct = Math.round(r.similarity * 100);
+        return pct >= b.min && pct <= b.max;
+      })
+      .sort(byEngineScore),
+  }));
+  // Land the operator on the strongest non-empty tier.
+  const initialId = byBucket.find((b) => b.items.length > 0)?.bucket.id;
+
+  return (
+    <Tabs
+      // Remount when switching candidates so the initial tab recomputes.
+      key={internalCandidateId}
+      initialId={initialId}
+      tabs={byBucket.map(({ bucket, items }) => ({
+        id: bucket.id,
+        label: `דמיון ${bucket.label}`,
+        badge: <Badge tone={items.length ? bucket.tone : 'neutral'}>{items.length}</Badge>,
+        content: items.length === 0 ? (
+          <Card className="p-6">
+            <EmptyState title="אין מועמדים בטווח זה" description="נסה טווח דמיון אחר או הרץ סריקה." />
+          </Card>
+        ) : (
+          <Card>
+            <CardBody className="!p-0">
+              <ul className="divide-y divide-border">
+                {items.map((row) => (
+                  <SemanticRowItem
+                    key={row.externalCandidateId}
+                    row={row}
+                    internalCandidateId={internalCandidateId}
+                  />
+                ))}
+              </ul>
+            </CardBody>
+          </Card>
+        ),
+      }))}
+    />
   );
 }
 
@@ -521,6 +757,7 @@ const SemanticRowItem = memo(function SemanticRowItem({
   return (
     <li className="px-5 py-3.5">
       <div className="flex items-center justify-between gap-4">
+        <Avatar name={name} size={40} src={row.photoUrl} />
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
             <Link
@@ -541,6 +778,13 @@ const SemanticRowItem = memo(function SemanticRowItem({
             {row.sectorGroup && <span>{label('sectorGroup', row.sectorGroup)}</span>}
             {row.personalStatus && <span>{label('personalStatus', row.personalStatus)}</span>}
           </div>
+          {!!row.highlights?.length && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {row.highlights.map((h) => (
+                <Badge key={h} tone="purple">{h}</Badge>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-2 max-w-sm">
             <div className="flex-1 h-1.5 bg-bg-subtle rounded-full overflow-hidden">
               <div

@@ -38,6 +38,17 @@ export function jidToPhone(jid: string | undefined | null): string {
   return sansResource;
 }
 
+/**
+ * Like jidToPhone, but only for jids that actually carry a phone number
+ * ("…@s.whatsapp.net" / legacy "…@c.us"). Group ids ("@g.us"), channels
+ * ("@newsletter") and anonymous LIDs ("@lid") return '' — their numeric
+ * part is not anyone's phone and must not be stored as one.
+ */
+export function jidToPhoneStrict(jid: string | undefined | null): string {
+  if (!jid) return '';
+  return /@(?:s\.whatsapp\.net|c\.us)$/.test(jid) ? jidToPhone(jid) : '';
+}
+
 // ── Inbound message normalization ────────────────────────
 
 /**
@@ -60,7 +71,17 @@ export function mapInboundMessage(
   // and the actual sender participant on participantName. The conversation
   // is keyed by (channel, fromJid) so groups and 1:1 stay separate.
   const isGroup = fromJid.endsWith('@g.us');
-  const senderJid = isGroup ? (msg.key?.participant ?? fromJid) : fromJid;
+  // Real poster of the message. In groups that's key.participant — never the
+  // group jid itself (a "120363…" id is not anyone's phone, so no fallback).
+  // History-sync messages carry the sender on the TOP-LEVEL participant
+  // field instead of key.participant. Under WhatsApp's LID privacy rollout
+  // either may arrive as an anonymous "…@lid"; newer Baileys then carries
+  // the real phone jid on key.participantPn (absent in 6.7.x typings,
+  // hence the cast).
+  const key = msg.key as (proto.IMessageKey & { participantPn?: string | null }) | null | undefined;
+  const posterJid = isGroup
+    ? (key?.participantPn ?? key?.participant ?? msg.participant ?? undefined)
+    : fromJid;
 
   // Unwrap envelope wrappers (ephemeral / disappearing, view-once, edited,
   // documentWithCaption, deviceSent) so a normal text/media message nested
@@ -77,11 +98,13 @@ export function mapInboundMessage(
     direction: MessageDirection.INBOUND,
     providerSessionId: channel.providerSessionId ?? channel.channelId,
     businessPhoneNumber: channel.phoneNumber ?? '',
-    participantPhone: jidToPhone(isGroup ? fromJid : senderJid),
+    participantPhone: jidToPhone(fromJid),
     participantName,
     // Real poster (in groups this differs from participantPhone=group id).
+    // Empty when the sender's phone is genuinely unknown (LID-only sender,
+    // channel/newsletter post) — better absent than a misleading id.
     senderName: participantName,
-    senderPhone: jidToPhone(senderJid),
+    senderPhone: jidToPhoneStrict(posterJid) || undefined,
     chatJid: fromJid,
     chatType: isGroup ? 'group' : 'private',
     timestamp,

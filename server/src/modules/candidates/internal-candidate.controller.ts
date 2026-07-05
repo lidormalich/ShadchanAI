@@ -53,7 +53,11 @@ export async function sourceCardHandler(req: Request, res: Response, next: NextF
     ensureUser(req.user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const card = await svc.getInternalSourceCard(id);
-    ok(res, card);
+    // The client builds the "לכרטיס במערכת" link from this base — it must point
+    // at the public deployment, not the operator's localhost (same rule as the
+    // photo share link).
+    const appBaseUrl = env.PUBLIC_BASE_URL ?? `${req.protocol}://${req.get('host')}`;
+    ok(res, { ...card, appBaseUrl });
   } catch (e) { next(e); }
 }
 

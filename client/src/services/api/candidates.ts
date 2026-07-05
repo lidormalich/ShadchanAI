@@ -57,6 +57,8 @@ export interface SourceCard {
   lastSourceUpdateAt?: string;
   messages: SourceCardMessage[];
   rawText?: string;
+  /** Public base URL of the deployment (PUBLIC_BASE_URL) — for building share links. */
+  appBaseUrl?: string;
 }
 
 // ── Learned insight ("מה למדנו") ─────────────────────────
@@ -137,4 +139,6 @@ export const externalCandidatesApi = {
   removePhoto: (id: string) => api.del<ExternalCandidate>(`/candidates/external/${id}/photo`),
   photoShareLink: (id: string) =>
     api.post<PhotoShareLink>(`/candidates/external/${id}/photo/share-link`),
+  setDetailsCompleted: (id: string, completed = true) =>
+    api.post<ExternalCandidate>(`/candidates/external/${id}/details-completed`, { completed }),
 };

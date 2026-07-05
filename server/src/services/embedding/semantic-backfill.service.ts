@@ -26,10 +26,14 @@ const EMBED_CONCURRENCY = 4;
 
 export interface SemanticBackfillState {
   status: 'idle' | 'running' | 'done' | 'error';
+  /** 'delta' = only candidates missing/stale vectors; 'force' = full sweep over ALL active candidates. */
+  mode?: 'delta' | 'force';
   progressCurrent: number;
   progressTotal: number;
   embedded: number;
   failed: number;
+  /** Candidates whose profile has no embeddable text at all — they CANNOT enter the vector space until data is added. */
+  noContent: number;
   startedAt?: string;
   finishedAt?: string;
   lastError?: string;
@@ -41,6 +45,7 @@ let state: SemanticBackfillState = {
   progressTotal: 0,
   embedded: 0,
   failed: 0,
+  noContent: 0,
 };
 let backfillInFlight = false;
 
@@ -52,8 +57,16 @@ export function getSemanticBackfillState(): SemanticBackfillState {
  * Kicks off the backfill in the background and returns the current
  * state immediately. A second call while running is a no-op that
  * returns the live state (idempotent button).
+ *
+ * force=true sweeps EVERY active candidate — including those whose
+ * embedding.modelId is current but who never actually got vectors
+ * (partial/no-content profiles that the delta filter skips). Fresh
+ * chunks are still skipped per-chunk, so a force run only pays for
+ * the gaps, not for re-embedding the whole pool.
  */
-export async function startSemanticBackfill(): Promise<SemanticBackfillState> {
+export async function startSemanticBackfill(
+  options: { force?: boolean } = {},
+): Promise<SemanticBackfillState> {
   if (!(await isSemanticEnabled())) {
     throw new BusinessRuleError(
       'התאמה סמנטית כבויה — הפעל אותה בהגדרות ← כללי התאמה לפני סריקה',
@@ -62,17 +75,20 @@ export async function startSemanticBackfill(): Promise<SemanticBackfillState> {
   }
   if (backfillInFlight) return getSemanticBackfillState();
 
+  const force = options.force === true;
   backfillInFlight = true;
   state = {
     status: 'running',
+    mode: force ? 'force' : 'delta',
     progressCurrent: 0,
     progressTotal: 0,
     embedded: 0,
     failed: 0,
+    noContent: 0,
     startedAt: new Date().toISOString(),
   };
 
-  void runBackfill()
+  void runBackfill(force)
     .catch((err) => {
       state.status = 'error';
       state.lastError = String(err);
@@ -87,23 +103,27 @@ export async function startSemanticBackfill(): Promise<SemanticBackfillState> {
   return getSemanticBackfillState();
 }
 
-async function runBackfill(): Promise<void> {
+async function runBackfill(force: boolean): Promise<void> {
   const currentModelId = getEmbeddingProvider().modelConfig.modelId;
 
-  // Missing vectors OR vectors from another model (unusable for cosine
-  // against the current model's space). Only active candidates — no
-  // point paying for archived/closed profiles.
-  const staleFilter = {
-    status: 'active',
-    $or: [
-      { 'embedding.modelId': { $exists: false } },
-      { 'embedding.modelId': { $ne: currentModelId } },
-    ],
-  };
+  // Delta: missing vectors OR vectors from another model (unusable for
+  // cosine against the current model's space). Force: every active
+  // candidate — catches profiles the delta filter misses (modelId set
+  // but some chunks never embedded). Only active candidates either
+  // way — no point paying for archived/closed profiles.
+  const filter = force
+    ? { status: 'active' }
+    : {
+        status: 'active',
+        $or: [
+          { 'embedding.modelId': { $exists: false } },
+          { 'embedding.modelId': { $ne: currentModelId } },
+        ],
+      };
 
   const [internals, externals] = await Promise.all([
-    InternalCandidate.find(staleFilter).select('_id').lean().exec(),
-    ExternalCandidate.find(staleFilter).select('_id').lean().exec(),
+    InternalCandidate.find(filter).select('_id').lean().exec(),
+    ExternalCandidate.find(filter).select('_id').lean().exec(),
   ]);
 
   const targets: Array<{ id: string; type: 'internal' | 'external' }> = [
@@ -112,7 +132,7 @@ async function runBackfill(): Promise<void> {
   ];
 
   state.progressTotal = targets.length;
-  log.info({ total: targets.length, model: currentModelId }, 'backfill_started');
+  log.info({ total: targets.length, model: currentModelId, force }, 'backfill_started');
 
   for (let i = 0; i < targets.length; i += EMBED_CONCURRENCY) {
     const slice = targets.slice(i, i + EMBED_CONCURRENCY);
@@ -120,19 +140,22 @@ async function runBackfill(): Promise<void> {
       slice.map((t) => ensureAllChunks(t.id, t.type)),
     );
     for (let j = 0; j < results.length; j++) {
-      if (results[j]!.status === 'fulfilled') {
-        state.embedded++;
+      const r = results[j]!;
+      if (r.status === 'fulfilled') {
+        // 'fresh' counts as embedded coverage; 'no_content' is surfaced
+        // separately so the operator knows WHY a candidate stays out.
+        if (r.value === 'no_content') state.noContent++;
+        else state.embedded++;
       } else {
         state.failed++;
-        const r = results[j] as PromiseRejectedResult;
-        log.warn({ ...slice[j], error: String(r.reason) }, 'backfill_embed_failed');
+        log.warn({ ...slice[j], error: String((r as PromiseRejectedResult).reason) }, 'backfill_embed_failed');
       }
       state.progressCurrent++;
     }
   }
 
   log.info(
-    { embedded: state.embedded, failed: state.failed },
+    { embedded: state.embedded, failed: state.failed, noContent: state.noContent, force },
     'backfill_finished',
   );
 }

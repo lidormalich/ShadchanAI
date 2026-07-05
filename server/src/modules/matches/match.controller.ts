@@ -145,7 +145,10 @@ export async function semanticBackfillHandler(req: Request, res: Response, next:
   try {
     const user = ensureUser(req.user);
     canApproveMatches(user);
-    ok(res, await startSemanticBackfill());
+    // force=true sweeps ALL active candidates (not just missing/stale
+    // modelId) — the "סריקה מאולצת" for profiles that never got vectors.
+    const force = (req.body as { force?: unknown } | undefined)?.force === true;
+    ok(res, await startSemanticBackfill({ force }));
   } catch (e) { next(e); }
 }
 

@@ -11,7 +11,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Card, CardBody, Select } from '@/components/ui/primitives';
+import { Avatar, Card, CardBody, Select } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { SemanticMatchesSection } from '@/features/compatibility/CompatibilityWorkspace';
@@ -28,6 +28,10 @@ export function SmartMatchesPage() {
   });
 
   const items = candidates.data?.data ?? [];
+  const selected = items.find((c) => c._id === selectedId);
+  const selectedName = selected
+    ? `${selected.firstName ?? ''} ${selected.lastName ?? ''}`.trim()
+    : '';
 
   return (
     <div className="space-y-4">
@@ -75,14 +79,24 @@ export function SmartMatchesPage() {
         </Card>
       ) : (
         <>
-          <div className="text-xs text-ink-muted">
-            <Link
-              to={`/candidates/internal/${selectedId}`}
-              className="text-brand-700 hover:underline"
-            >
-              מעבר לכרטיס המועמד/ת המלא (כולל לוח ההתאמה)
-            </Link>
-          </div>
+          <Card>
+            <CardBody className="flex items-center gap-3">
+              <Avatar
+                name={selectedName}
+                size={56}
+                src={selected?.photoApproved ? selected.photoUrl : undefined}
+              />
+              <div className="min-w-0">
+                {selectedName && <div className="font-semibold truncate">{selectedName}</div>}
+                <Link
+                  to={`/candidates/internal/${selectedId}`}
+                  className="text-xs text-brand-700 hover:underline"
+                >
+                  מעבר לכרטיס המועמד/ת המלא (כולל לוח ההתאמה)
+                </Link>
+              </div>
+            </CardBody>
+          </Card>
           <SemanticMatchesSection internalCandidateId={selectedId} />
         </>
       )}

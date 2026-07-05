@@ -44,6 +44,9 @@ export interface InsightsSummary {
     datingInternals: number;
     activeExternals: number;
     sentThisWeek: number;
+    responsesThisWeek: number;
+    acceptedThisWeek: number;
+    newCandidatesThisWeek: number;
     openTasks: number;
     needsReview: number;
   };
@@ -71,6 +74,10 @@ export async function getSummary(): Promise<InsightsSummary> {
   const [
     matchStatusCounts,
     sentThisWeek,
+    responsesThisWeek,
+    acceptedThisWeek,
+    newInternalsThisWeek,
+    newExternalsThisWeek,
     openTasks,
     needsReview,
     activeInternals,
@@ -88,6 +95,20 @@ export async function getSummary(): Promise<InsightsSummary> {
         { sentSideBAt: { $gte: weekAgo } },
       ],
     }).exec(),
+    MatchSuggestion.countDocuments({
+      $or: [
+        { 'sideAResponse.respondedAt': { $gte: weekAgo } },
+        { 'sideBResponse.respondedAt': { $gte: weekAgo } },
+      ],
+    }).exec(),
+    MatchSuggestion.countDocuments({
+      $or: [
+        { 'sideAResponse.status': 'accepted', 'sideAResponse.respondedAt': { $gte: weekAgo } },
+        { 'sideBResponse.status': 'accepted', 'sideBResponse.respondedAt': { $gte: weekAgo } },
+      ],
+    }).exec(),
+    InternalCandidate.countDocuments({ createdAt: { $gte: weekAgo } }).exec(),
+    ExternalCandidate.countDocuments({ createdAt: { $gte: weekAgo } }).exec(),
     Task.countDocuments({ status: TaskStatus.OPEN }).exec(),
     Message.countDocuments({ 'extraction.status': MessageExtractionStatus.NEEDS_REVIEW }).exec(),
     InternalCandidate.countDocuments({ status: CandidateStatus.ACTIVE, archivedAt: { $exists: false } }).exec(),
@@ -147,6 +168,9 @@ export async function getSummary(): Promise<InsightsSummary> {
       datingInternals,
       activeExternals,
       sentThisWeek,
+      responsesThisWeek,
+      acceptedThisWeek,
+      newCandidatesThisWeek: newInternalsThisWeek + newExternalsThisWeek,
       openTasks,
       needsReview,
     },

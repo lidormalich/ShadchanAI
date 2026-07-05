@@ -24,7 +24,6 @@ import type {
   MatchableInternal,
   MatchableExternal,
   MatchingContext,
-  MatchResult,
 } from '../matching/matching.types.js';
 import { findMatches } from '../matching/matching.engine.js';
 import { PAGINATION } from '../../config/constants.js';
@@ -94,9 +93,32 @@ export interface GetMatchingCandidatesArgs {
   };
 }
 
+/**
+ * Engine result enriched with the external candidate's identity and
+ * flattened to an AI-safe row: the summary prompt previews these
+ * verbatim (raw MatchResult with scoreBreakdown/blockers would bloat
+ * it), and the Ask-AI panel renders them as a person-facing table.
+ */
+export interface MatchingCandidateRow {
+  externalCandidateId: string;
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  city?: string;
+  sectorGroup?: string;
+  personalStatus?: string;
+  eligible: boolean;
+  matchScore: number;
+  confidenceScore: number;
+  matchType: string;
+  riskLevel: string;
+  strengths: string[];
+  attentionPoints: string[];
+}
+
 export async function getMatchingCandidatesTool(
   args: GetMatchingCandidatesArgs,
-): Promise<{ results: MatchResult[]; internalFound: boolean }> {
+): Promise<{ results: MatchingCandidateRow[]; internalFound: boolean }> {
   const internal = await InternalCandidate.findById(args.internalCandidateId).lean();
   if (!internal) return { results: [], internalFound: false };
 
@@ -155,7 +177,32 @@ export async function getMatchingCandidatesTool(
   );
 
   const limit = Math.min(args.limit ?? PAGINATION.DEFAULT_LIMIT, 50);
-  return { results: results.slice(0, limit), internalFound: true };
+  const top = results.slice(0, limit);
+
+  // Attach the external identity so rows render as people, not ids.
+  // `externals` is already in memory — index it instead of re-querying.
+  const externalById = new Map(externals.map((e) => [String(e._id), e]));
+  const rows: MatchingCandidateRow[] = top.map((r) => {
+    const ext = externalById.get(String(r.externalCandidateId));
+    return {
+      externalCandidateId: String(r.externalCandidateId),
+      firstName: ext?.firstName,
+      lastName: ext?.lastName,
+      age: ext?.age,
+      city: ext?.city,
+      sectorGroup: ext?.sectorGroup,
+      personalStatus: ext?.personalStatus,
+      eligible: r.eligible,
+      matchScore: r.matchScore,
+      confidenceScore: r.confidenceScore,
+      matchType: r.matchType,
+      riskLevel: r.riskLevel,
+      strengths: r.strengths.slice(0, 4),
+      attentionPoints: r.attentionPoints.slice(0, 4),
+    };
+  });
+
+  return { results: rows, internalFound: true };
 }
 
 // ── Tool: getUnhandledCandidatesTool ─────────────────────

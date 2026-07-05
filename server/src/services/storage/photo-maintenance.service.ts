@@ -15,8 +15,9 @@
 
 import type { Model } from 'mongoose';
 import { InternalCandidate, ExternalCandidate, Message } from '../../models/index.js';
+import type { IExternalCandidate } from '../../models/index.js';
 import { env } from '../../config/env.js';
-import { readMediaFile, incomingPhotoKey } from '../whatsapp/media.service.js';
+import { readMediaFile, incomingPhotoKey, downloadInboundMedia } from '../whatsapp/media.service.js';
 import { isStorageEnabled, listObjects, deleteObject, getObject } from './storage.service.js';
 import {
   syncCandidatePhoto,
@@ -72,55 +73,105 @@ async function backfillExternalPhotos(): Promise<number> {
     photoStorageKey: { $exists: false },
     sourceMessageIds: { $in: imageIds },
   })
-    .select('_id status archivedAt sourceMessageIds')
+    .select('_id status archivedAt sourceMessageIds photoStorageKey')
     .limit(BACKFILL_LIMIT)
     .exec();
 
   let done = 0;
   for (const cand of pending) {
-    const ids = (cand.sourceMessageIds ?? []).map(String);
-    if (ids.length === 0) continue;
-    // Newest source message with a stored image wins.
-    const msg = await Message.findOne({
-      _id: { $in: ids },
-      contentType: 'image',
-      mediaUrl: { $exists: true },
-    })
-      .sort({ createdAt: -1 })
-      .select('mediaUrl')
-      .lean()
-      .exec();
-    const filename = msg?.mediaUrl?.split('/').pop();
-    if (!filename) continue;
-    // Prefer the local disk copy; fall back to the durable R2 mirror written
-    // at download time (disk may have been wiped by a deploy since then).
-    let bytes: Buffer | null = null;
-    const disk = await readMediaFile(filename);
-    if (disk) bytes = disk.data;
-    else {
-      const mirrored = await getObject(incomingPhotoKey(filename));
-      if (mirrored) bytes = mirrored.data;
-    }
-    if (!bytes) continue;
-    const ext = filename.split('.').pop() ?? 'jpg';
-
-    const res = await syncCandidatePhoto({
-      type: 'external',
-      id: String(cand._id),
-      lifecycleInput: { type: 'external', status: cand.status, archivedAt: cand.archivedAt ?? null },
-      data: bytes,
-      ext,
-    });
-    if (res.ok && res.storageKey) {
-      cand.photoUrl = res.proxyUrl;
-      cand.photoStorageKey = res.storageKey;
-      await cand.save();
-      // The bytes now live under the candidate's key — drop the incoming copy.
-      await deleteObject(incomingPhotoKey(filename)).catch(() => undefined);
-      done++;
-    }
+    if (await attachSourcePhotoToExternalCandidate(cand)) done++;
   }
   return done;
+}
+
+/**
+ * Mirror an external candidate's WhatsApp source image to R2 as its photo,
+ * through the lifecycle pipeline. Idempotent and best-effort: returns false
+ * (never throws) when storage is off, the candidate already has a photo, or
+ * no source image can be recovered.
+ *
+ * Shared by the periodic backfill above AND the create/approve paths — so a
+ * candidate created from an image card gets its photo IMMEDIATELY as part of
+ * the main flow, instead of appearing photo-less until the 30-min sweep runs.
+ * Self-heals the "media not downloaded yet" case by kicking the idempotent
+ * download before reading bytes.
+ */
+export async function attachSourcePhotoToExternalCandidate(
+  cand: IExternalCandidate,
+): Promise<boolean> {
+  if (!isStorageEnabled()) return false;
+  if (cand.photoStorageKey) return false; // already has a photo — nothing to do
+  const ids = (cand.sourceMessageIds ?? []).map(String);
+  if (ids.length === 0) return false;
+
+  // Newest source message that is an image. mediaUrl may still be pending —
+  // don't require it here; we ensure the download below.
+  const msg = await Message.findOne({ _id: { $in: ids }, contentType: 'image' })
+    .sort({ createdAt: -1 })
+    .select('_id mediaUrl')
+    .lean()
+    .exec();
+  if (!msg) return false;
+
+  // Ensure the image is actually on disk / mirrored (download is idempotent).
+  let filename = msg.mediaUrl?.split('/').pop();
+  if (!filename) {
+    const dl = await downloadInboundMedia(String(msg._id));
+    if (!dl.ok || !dl.filename) return false;
+    filename = dl.filename;
+  }
+
+  // Prefer the local disk copy; fall back to the durable R2 mirror written
+  // at download time (disk may have been wiped by a deploy since then).
+  let bytes: Buffer | null = null;
+  const disk = await readMediaFile(filename);
+  if (disk) bytes = disk.data;
+  else {
+    const mirrored = await getObject(incomingPhotoKey(filename));
+    if (mirrored) bytes = mirrored.data;
+  }
+  if (!bytes) return false;
+  const ext = filename.split('.').pop() ?? 'jpg';
+
+  const res = await syncCandidatePhoto({
+    type: 'external',
+    id: String(cand._id),
+    lifecycleInput: { type: 'external', status: cand.status, archivedAt: cand.archivedAt ?? null },
+    data: bytes,
+    ext,
+  });
+  if (!res.ok || !res.storageKey) return false;
+  cand.photoUrl = res.proxyUrl;
+  cand.photoStorageKey = res.storageKey;
+  await cand.save();
+  // The bytes now live under the candidate's key — drop the incoming copy.
+  await deleteObject(incomingPhotoKey(filename)).catch(() => undefined);
+  return true;
+}
+
+/**
+ * On-demand ("רענן כללי") full photo backfill: attach the source image to
+ * EVERY external candidate that still lacks a photo, not just the recent
+ * window the periodic sweep looks at. Bounded by `max` so one click can't run
+ * unbounded; re-run to continue if the cap is hit. No-op when R2 is off.
+ */
+export async function runExternalPhotoBackfillNow(
+  max = 1000,
+): Promise<{ scanned: number; attached: number }> {
+  if (!isStorageEnabled()) return { scanned: 0, attached: 0 };
+  const pending = await ExternalCandidate.find({
+    photoStorageKey: { $exists: false },
+    sourceMessageIds: { $exists: true, $ne: [] },
+  })
+    .select('_id status archivedAt sourceMessageIds photoStorageKey')
+    .limit(max)
+    .exec();
+
+  let attached = 0;
+  for (const cand of pending) {
+    if (await attachSourcePhotoToExternalCandidate(cand)) attached++;
+  }
+  return { scanned: pending.length, attached };
 }
 
 // ── 2. Reconcile folders for candidates whose lifecycle moved ──

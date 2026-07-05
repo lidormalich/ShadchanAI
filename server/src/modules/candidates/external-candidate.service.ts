@@ -29,6 +29,7 @@ import {
   generatePhotoShareToken,
 } from '../../services/storage/candidate-photo.service.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
+import { attachSourcePhotoToExternalCandidate } from '../../services/storage/photo-maintenance.service.js';
 import {
   scheduleInitialEmbedding,
   scheduleChunkInvalidation,
@@ -53,6 +54,11 @@ export async function listExternalCandidates(
   if (query.gender) filter['gender'] = query.gender;
   // `gender: null` matches both an explicit null and a missing field.
   if (query.missingGender) filter['gender'] = null;
+  // Needs-details tab: unknown gender, not yet marked "מולא".
+  if (query.needsDetails) {
+    filter['gender'] = null;
+    filter['detailsCompletedAt'] = { $exists: false };
+  }
   if (query.sectorGroup) filter['sectorGroup'] = query.sectorGroup;
   if (query.city) filter['city'] = query.city;
   if (query.availabilityStatus) filter['availabilityStatus'] = query.availabilityStatus;
@@ -267,6 +273,15 @@ export async function createExternalCandidate(
     after: doc.toObject(),
   });
 
+  // If this candidate was created from a WhatsApp source card (sourceMessageIds
+  // present), pull its image into the R2 photo pipeline now — same immediate
+  // behavior as the extraction paths. No-op for source-less manual entries.
+  try {
+    await attachSourcePhotoToExternalCandidate(doc);
+  } catch {
+    // Best-effort — the 30-min backfill sweep is the safety net.
+  }
+
   // Semantic add-on (no-op when the admin toggle is off).
   scheduleInitialEmbedding(String(doc._id), 'external');
 
@@ -385,6 +400,37 @@ export async function updateAvailability(
     before,
     after: doc.toObject(),
     metadata: { scope: 'availability' },
+  });
+
+  return doc;
+}
+
+// ── Needs-details workflow ───────────────────────────────
+// The "נדרש למלא פרטים" tab lists gender-unknown candidates. When the
+// operator finished filling whatever is knowable, they mark the profile
+// "מולא" — it leaves the tab even if some fields stay empty.
+
+export async function setDetailsCompleted(
+  id: string,
+  completed: boolean,
+  performedBy: string,
+  actor?: AuthUser,
+): Promise<IExternalCandidate> {
+  const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
+  const before = doc.toObject();
+
+  doc.detailsCompletedAt = completed ? new Date() : undefined;
+  await doc.save();
+
+  await audit({
+    entityType: AuditEntityType.EXTERNAL_CANDIDATE,
+    entityId: id,
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    before,
+    after: doc.toObject(),
+    metadata: { scope: 'details-completed', completed },
   });
 
   return doc;

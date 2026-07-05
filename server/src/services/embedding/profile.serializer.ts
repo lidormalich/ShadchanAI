@@ -116,6 +116,33 @@ const STUDY_WORK_HE: Record<StudyWorkDirection, string> = {
   undecided:           'עדיין לא החליט/ה',
 };
 
+const CHILDREN_PREFERENCE_HE: Record<string, string> = {
+  large_family: 'משפחה גדולה',
+  balanced:     'מאוזן',
+  small_family: 'משפחה קטנה',
+  flexible:     'גמיש',
+  undecided:    'טרם הוחלט',
+};
+
+const CAREER_PRIORITY_HE: Record<string, string> = {
+  torah_focused:  'עדיפות לתורה',
+  balanced:       'תורה ועבודה מאוזן',
+  career_focused: 'עדיפות לקריירה',
+  flexible:       'גמיש',
+};
+
+const CONSTRAINT_OPERATOR_HE: Record<string, string> = {
+  eq:      'שווה ל',
+  neq:     'שונה מ',
+  in:      'מתוך',
+  not_in:  'לא מתוך',
+  gt:      'מעל',
+  lt:      'מתחת ל',
+  gte:     'לפחות',
+  lte:     'לכל היותר',
+  between: 'בין',
+};
+
 const AGE_FLEXIBILITY_HE: Record<string, string> = {
   strict:            'קפדן/ית',
   somewhat_flexible: 'גמיש/ה במקצת',
@@ -187,6 +214,60 @@ function serializeSoftPreferences(
   });
 
   return `העדפות: ${parts.join(', ')}. `;
+}
+
+/**
+ * Serialises hard constraints into a "דרישות סף" sentence. These are
+ * absolute requirements — strong semantic signal for the expectations
+ * chunk (they were already in CHUNK_INVALIDATION_MAP but never made it
+ * into the embedded text).
+ */
+function serializeHardConstraints(
+  constraints: Array<{ field: string; operator: string; value: unknown; reason?: string }> | undefined,
+): string {
+  if (!constraints?.length) return '';
+  const parts = constraints.map((c) => {
+    const label = PREF_FIELD_LABEL_HE[c.field] ?? c.field;
+    const op = CONSTRAINT_OPERATOR_HE[c.operator] ?? c.operator;
+    const value = Array.isArray(c.value) ? c.value.join(' / ') : String(c.value);
+    return `${label} ${op} ${value}`;
+  });
+  return `דרישות סף: ${parts.join(', ')}. `;
+}
+
+/** Serialises location preferences (cities, regions, relocation). */
+function serializeLocationPreferences(
+  loc: { cities?: string[]; regions?: string[]; willingToRelocate?: boolean; maxDistanceKm?: number } | undefined,
+): string {
+  if (!loc) return '';
+  const parts: string[] = [];
+  if (loc.cities?.length) parts.push(`ערים מועדפות: ${loc.cities.join(', ')}`);
+  if (loc.regions?.length) parts.push(`אזורים מועדפים: ${loc.regions.join(', ')}`);
+  if (loc.willingToRelocate) parts.push('מוכן/ה לעבור דירה');
+  if (loc.maxDistanceKm != null) parts.push(`עד ${loc.maxDistanceKm} ק"מ`);
+  if (!parts.length) return '';
+  return `מיקום: ${parts.join('; ')}. `;
+}
+
+/**
+ * Serialises life goals (home vision, children, career priority) —
+ * these fold into mutual expectations, matching the engine's decision
+ * to score them under that dimension rather than a new one.
+ */
+function serializeLifeGoals(
+  goals: { childrenPreference?: string; careerPriority?: string; homeVision?: string } | undefined,
+): string {
+  if (!goals) return '';
+  const parts = [
+    goals.homeVision?.trim() ? `חזון הבית: ${goals.homeVision.trim()}. ` : '',
+    field('העדפת ילדים', goals.childrenPreference
+      ? CHILDREN_PREFERENCE_HE[goals.childrenPreference] ?? goals.childrenPreference
+      : undefined),
+    field('עדיפות תורה/קריירה', goals.careerPriority
+      ? CAREER_PRIORITY_HE[goals.careerPriority] ?? goals.careerPriority
+      : undefined),
+  ].join('');
+  return parts;
 }
 
 /**
@@ -265,6 +346,9 @@ function buildExpectationsChunk(
     openToWithChildren: boolean; openToAgeDifference: boolean; openToLongDistance: boolean;
   }> | undefined,
   agePreferences: { min?: number; max?: number; flexibility?: string } | undefined,
+  hardConstraints: Array<{ field: string; operator: string; value: unknown; reason?: string }> | undefined,
+  locationPreferences: { cities?: string[]; regions?: string[]; willingToRelocate?: boolean; maxDistanceKm?: number } | undefined,
+  lifeGoals: { childrenPreference?: string; careerPriority?: string; homeVision?: string } | undefined,
 ): string | null {
   const parts = [
     whatSeeking ? `מחפש/ת: ${whatSeeking.trim()}. ` : '',
@@ -282,6 +366,9 @@ function buildExpectationsChunk(
             .join(' '),
         )
       : '',
+    serializeHardConstraints(hardConstraints),
+    serializeLocationPreferences(locationPreferences),
+    serializeLifeGoals(lifeGoals),
     serializeOpenness(openness),
     serializeSoftPreferences(softPreferences),
   ].join('');
@@ -306,9 +393,24 @@ function buildPersonalityChunk(
     values?: string[];
     summary?: string;
   } | undefined,
+  characterTraits: string[] | undefined,
+  characterNotes: string | undefined,
+  additionalInfo: string | undefined,
 ): string | null {
+  const hasSpecificText =
+    Boolean(about?.trim()) ||
+    Boolean(characterTraits?.length) ||
+    Boolean(characterNotes?.trim()) ||
+    Boolean(additionalInfo?.trim()) ||
+    Boolean(aiEnrichment?.personalityTraits?.length);
+
   const parts = [
     about?.trim() ? `על עצמי: ${about.trim()}. ` : '',
+    characterTraits?.length
+      ? `תכונות אופי: ${characterTraits.join(', ')}. `
+      : '',
+    characterNotes?.trim() ? `הערות אופי: ${characterNotes.trim()}. ` : '',
+    additionalInfo?.trim() ? `מידע נוסף: ${additionalInfo.trim()}. ` : '',
     aiEnrichment?.personalityTraits?.length
       ? `תכונות אישיות: ${aiEnrichment.personalityTraits.join(', ')}. `
       : '',
@@ -318,7 +420,7 @@ function buildPersonalityChunk(
     // Only fall back to the AI summary if there is nothing else —
     // it tends to be more generic and we don't want it drowning out
     // specific user-provided text.
-    !about?.trim() && !aiEnrichment?.personalityTraits?.length && aiEnrichment?.summary?.trim()
+    !hasSpecificText && aiEnrichment?.summary?.trim()
       ? `תיאור: ${aiEnrichment.summary.trim()}. `
       : '',
   ].join('');
@@ -384,10 +486,16 @@ export function serializeInternalChunks(doc: IInternalCandidate): ChunkTexts {
       doc.softPreferences,
       doc.openness,
       doc.agePreferences,
+      doc.hardConstraints,
+      doc.locationPreferences,
+      doc.lifeGoals,
     ),
     personality: buildPersonalityChunk(
       doc.about,
       doc.aiEnrichment,
+      doc.characterTraits,
+      doc.characterNotes,
+      doc.additionalInfo,
     ),
     background: buildBackgroundChunk(
       age,
@@ -421,16 +529,22 @@ export function serializeExternalChunks(doc: IExternalCandidate): ChunkTexts {
       doc.softPreferences,
       doc.openness,
       doc.agePreferences,
+      doc.hardConstraints,
+      doc.locationPreferences,
+      doc.lifeGoals,
     ),
     personality: buildPersonalityChunk(
       doc.about,
       doc.aiEnrichment,
+      doc.characterTraits,
+      doc.characterNotes,
+      doc.additionalInfo,
     ),
     background: buildBackgroundChunk(
       doc.age,
       doc.city,
       doc.personalStatus,
-      undefined, // external model has no numberOfChildren field
+      undefined, // numberOfChildren deliberately out — background stays lean per operator decision
       doc.lifeStage,
       doc.studyWorkDirection,
     ),

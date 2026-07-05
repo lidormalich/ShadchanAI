@@ -13,6 +13,9 @@ export interface InsightsSummary {
     datingInternals: number;
     activeExternals: number;
     sentThisWeek: number;
+    responsesThisWeek: number;
+    acceptedThisWeek: number;
+    newCandidatesThisWeek: number;
     openTasks: number;
     needsReview: number;
   };

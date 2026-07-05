@@ -26,6 +26,12 @@ import { extractProfileFromText, type ExtractedProfile } from '../../services/ex
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { normalizePhone } from '../../utils/phone.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
+import { attachSourcePhotoToExternalCandidate, runExternalPhotoBackfillNow } from '../../services/storage/photo-maintenance.service.js';
+import { scheduleInitialEmbedding } from '../../services/embedding/embedding.service.js';
+import { startSemanticBackfill } from '../../services/embedding/semantic-backfill.service.js';
+import { createLogger } from '../../utils/logger.js';
+
+const log = createLogger('extraction-service');
 
 // ── Synchronous manual (re-)run ──────────────────────────
 
@@ -34,6 +40,32 @@ export async function runExtraction(messageId: string): Promise<Awaited<ReturnTy
     throw new ValidationError('Invalid messageId');
   }
   return processMessageExtraction(messageId);
+}
+
+// ── "רענן כללי" — one-click refresh of the smart processing ──
+// Backfills photos for every existing candidate that predates the inline
+// attach (visible, synchronous), then kicks the background semantic backfill
+// so vectors are (re)built too. Both are idempotent and each is independently
+// gated (R2 for photos, the semantic toggle for embeddings).
+
+export async function refreshAllCandidateData(): Promise<{
+  photosScanned: number;
+  photosAttached: number;
+  semanticStarted: boolean;
+}> {
+  const photos = await runExternalPhotoBackfillNow();
+
+  let semanticStarted = false;
+  try {
+    const s = await startSemanticBackfill();
+    semanticStarted = s.status === 'running' || s.status === 'done';
+  } catch (err) {
+    // Semantic toggle is off (or another expected gate) — photos still ran.
+    log.info({ reason: (err as Error).message }, 'refresh_all_semantic_skipped');
+  }
+
+  log.info({ ...photos, semanticStarted }, 'refresh_all_done');
+  return { photosScanned: photos.scanned, photosAttached: photos.attached, semanticStarted };
 }
 
 // ── Review queue ─────────────────────────────────────────
@@ -314,6 +346,20 @@ async function approveClaimed(
     method: ExtractionMethod.MANUAL,
     candidateId: created._id as Types.ObjectId,
   });
+
+  // Pull the source card's image into the candidate's photo NOW (via the R2
+  // lifecycle pipeline) rather than leaving it for the 30-min backfill sweep —
+  // so an approved image card shows its photo immediately. Best-effort: a
+  // failure here never fails the approval (the sweep is the safety net).
+  try {
+    await attachSourcePhotoToExternalCandidate(created);
+  } catch (err) {
+    log.warn({ candidateId: String(created._id), err: (err as Error).message }, 'approve_photo_attach_failed');
+  }
+
+  // Seed the semantic embedding immediately, same as the manual-create path —
+  // otherwise approved candidates skip semantic matching. Fire-and-forget, gated.
+  scheduleInitialEmbedding(String(created._id), 'external');
 
   return { candidateId: String(created._id), messageId: String(message._id) };
 }

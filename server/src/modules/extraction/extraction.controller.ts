@@ -74,6 +74,17 @@ export async function approveHandler(req: Request, res: Response, next: NextFunc
   } catch (e) { next(e); }
 }
 
+// ── Refresh all ("רענן כללי") ────────────────────────────
+// Backfills photos for existing candidates + kicks the semantic backfill.
+
+export async function refreshAllHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    ok(res, await svc.refreshAllCandidateData());
+  } catch (e) { next(e); }
+}
+
 // ── Reject (mark as not-a-profile) ───────────────────────
 
 export async function rejectHandler(req: Request, res: Response, next: NextFunction): Promise<void> {

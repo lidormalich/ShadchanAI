@@ -6,10 +6,15 @@
 //   • copy the candidate card text, with or without the photo link,
 //     ready to paste into WhatsApp
 //
-// The share link is fetched EAGERLY (as soon as a photo exists) so the
-// copy handlers are fully synchronous — a network await between the click
+// The share link and the source card are fetched EAGERLY so the copy
+// handlers are fully synchronous — a network await between the click
 // and clipboard.writeText() drops the browser's transient activation and
 // the write silently fails.
+//
+// "העתק כרטיס" copies the FULL original card (the source WhatsApp
+// message(s), exactly as shown in the "כרטיס מקורי" tab). The condensed
+// cardText from the parent is only a fallback for manually-created
+// candidates that have no source message.
 // ═══════════════════════════════════════════════════════════
 
 import { useRef } from 'react';
@@ -65,7 +70,7 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
   candidateId: string;
   name: string;
   photoUrl?: string;
-  /** Pre-built card text to copy (the parent knows the candidate's fields). */
+  /** Condensed card text — fallback when the candidate has no source message. */
   cardText: string;
 }) {
   const qc = useQueryClient();
@@ -87,6 +92,22 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
     retry: 2, // survive a cold-start / transient 5xx instead of caching the error
   });
   const shareUrl = photoUrl ? (shareQuery.data?.data?.url ?? null) : null;
+
+  // Eagerly resolve the original card ("כרטיס מקורי") so "העתק כרטיס" copies
+  // the full source message(s) synchronously. Shares the SourceCardTab cache key.
+  const candApi = type === 'internal' ? internalCandidatesApi : externalCandidatesApi;
+  const sourceQuery = useQuery({
+    queryKey: [type, candidateId, 'source-card'],
+    queryFn: () => candApi.sourceCard(candidateId),
+    staleTime: 10 * 60 * 1000,
+  });
+  const source = sourceQuery.data?.data;
+  // Dedupe — the same card is often forwarded to the group several times, and
+  // each forward is a linked source message; copying should include it once.
+  const sourceText = source?.hasSource
+    ? [...new Set((source.messages ?? []).map((m) => (m.body || m.mediaCaption || '').trim()).filter(Boolean))]
+        .join('\n\n') || source.rawText?.trim() || ''
+    : '';
 
   const upload = useMutation({
     mutationFn: (file: File) => photoApi.uploadPhoto(candidateId, file),
@@ -115,7 +136,14 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
     else toast.error('ההעתקה נכשלה', 'העתק ידנית מהשדה');
   };
 
-  const copyCard = () => void copy(cardText, 'הכרטיס הועתק');
+  // Direct link to the candidate's page in the app, appended to the copied
+  // card so a "כן/לא" reply can be acted on with one click back into the system.
+  // Built on the deployment's PUBLIC_BASE_URL (via the source-card response) —
+  // window.location.origin would leak localhost when copying from a dev machine.
+  const appBase = source?.appBaseUrl ?? window.location.origin;
+  const candidatePageUrl = `${appBase}/candidates/${type}/${candidateId}`;
+
+  const copyCard = () => void copy(`${sourceText || cardText}\n\nלכרטיס במערכת: ${candidatePageUrl}`, 'הכרטיס הועתק');
   const copyLink = () => shareUrl && void copy(shareUrl, 'הלינק הועתק');
 
   const busy = upload.isPending || remove.isPending;
@@ -124,13 +152,15 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
     <div className="space-y-5 max-w-xl">
       {/* Photo preview */}
       <div className="flex items-start gap-4">
-        <div className="h-40 w-40 shrink-0 overflow-hidden rounded-lg border border-border bg-bg-subtle grid place-items-center">
+        <div className="h-40 w-40 shrink-0 overflow-hidden rounded-lg border border-border bg-bg-subtle">
           {photoUrl ? (
-            <AuthImage src={photoUrl} alt={name} className="h-full w-full object-cover" />
+            <AuthImage src={photoUrl} alt={name} className="block h-full w-full object-cover" />
           ) : (
-            <div className="text-center text-ink-faint">
-              <ImageOff className="h-8 w-8 mx-auto mb-1" />
-              <div className="text-xs">אין תמונה</div>
+            <div className="grid h-full w-full place-items-center text-center text-ink-faint">
+              <div>
+                <ImageOff className="h-8 w-8 mx-auto mb-1" />
+                <div className="text-xs">אין תמונה</div>
+              </div>
             </div>
           )}
         </div>

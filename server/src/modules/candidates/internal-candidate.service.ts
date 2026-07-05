@@ -30,6 +30,7 @@ import {
   deleteCandidatePhoto,
   generatePhotoShareToken,
 } from '../../services/storage/candidate-photo.service.js';
+import { attachCandidateNames } from '../matches/match.query.js';
 import { toSkipLimit, buildSort, makeMeta, type PaginationQuery } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
 import { assertOwnership } from '../../utils/ownership.assert.js';
@@ -448,7 +449,10 @@ export async function getCandidateSuggestions(
     MatchSuggestion.find(filter).sort({ matchScore: -1 }).skip(skip).limit(limit).lean().exec(),
     MatchSuggestion.countDocuments(filter).exec(),
   ]);
-  return { items, total, meta: makeMeta(query.page, query.limit, total) };
+  // Attach resolved candidate names so the suggestions tab renders
+  // people, not raw ids (same enrichment listMatches applies).
+  const named = await attachCandidateNames(items as unknown as Parameters<typeof attachCandidateNames>[0]);
+  return { items: named, total, meta: makeMeta(query.page, query.limit, total) };
 }
 
 export async function getCandidateConversations(id: string): Promise<unknown[]> {

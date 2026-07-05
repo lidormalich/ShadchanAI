@@ -243,6 +243,8 @@ export interface ExternalCandidate {
   staleAt?: string;
   staleReason?: string;
   lastConfirmedAvailableAt?: string;
+  /** Operator marked the needs-details profile as "מולא" (all knowable fields filled). */
+  detailsCompletedAt?: string;
   archivedAt?: string;
   ownerUserId?: string;
   createdAt: string;

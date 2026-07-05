@@ -218,6 +218,11 @@ export interface IExternalCandidate extends Document {
   staleReason?: string;
   lastConfirmedAvailableAt?: Date;
 
+  // data-quality workflow: set when the operator pressed "מולא" on the
+  // needs-details tab — everything knowable was filled in. Manual,
+  // one-way marker; the tab filter excludes candidates that carry it.
+  detailsCompletedAt?: Date;
+
   // preferences — OPTIONAL on external side (often partial data)
   // Present when the external source supplied them (e.g., a referring
   // shadchan's notes). Used for bidirectional matching: the engine
@@ -463,6 +468,9 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     staleAt: { type: Date },
     staleReason: { type: String },
     lastConfirmedAvailableAt: { type: Date },
+
+    // ── Data-quality workflow ─────────────────────────────
+    detailsCompletedAt: { type: Date },
 
     // ── Raw source data ───────────────────────────────────
     rawSourcePayload: { type: Schema.Types.Mixed },

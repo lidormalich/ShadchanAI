@@ -7,6 +7,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi, type FindMatchItem } from '@/services/api/matches';
 import { aiApi, buildCandidateBrief } from '@/services/api/ai';
+import { AskAIPanel } from '@/features/ai/AskAIPanel';
 import { InternalCandidateForm } from '@/features/forms/InternalCandidateForm';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
@@ -34,6 +35,7 @@ export function InternalCandidateDetailPage() {
   const [findOpen, setFindOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [notRelevantOpen, setNotRelevantOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
   const candidate = useQuery({
     queryKey: ['internal', id],
     queryFn: () => internalCandidatesApi.get(id!),
@@ -127,6 +129,13 @@ export function InternalCandidateDetailPage() {
               onClick={() => summarize.mutate(c)}
             >
               סיכום AI
+            </Button>
+            <Button
+              variant="secondary"
+              leftIcon={<Sparkles className="h-4 w-4" />}
+              onClick={() => setAskOpen(true)}
+            >
+              שאל את ה-AI
             </Button>
             <Button variant="secondary" onClick={() => setEditOpen(true)}>עריכה</Button>
             {isClosed ? (
@@ -254,6 +263,13 @@ export function InternalCandidateDetailPage() {
         onClose={() => setNotRelevantOpen(false)}
         candidateId={c._id}
         candidateName={`${c.firstName} ${c.lastName}`.trim()}
+      />
+
+      <AskAIPanel
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+        initialQuery={`מי המועמדים המתאימים ביותר עבור ${c.firstName} ${c.lastName}?`.trim()}
+        contextId={c._id}
       />
     </div>
   );
@@ -472,7 +488,11 @@ function ProfileSections({ c }: { c: Awaited<ReturnType<typeof internalCandidate
   );
 }
 
-function SuggestionsTable({ items, loading }: { items: MatchSuggestion[]; loading: boolean }) {
+// Server attaches resolved names (attachCandidateNames) — fall back to
+// the id tail only for legacy rows that predate the enrichment.
+type SuggestionTableRow = MatchSuggestion & { externalName?: string };
+
+function SuggestionsTable({ items, loading }: { items: SuggestionTableRow[]; loading: boolean }) {
   if (loading) return <LoadingSkeleton rows={5} />;
   if (items.length === 0) return <EmptyState title="אין הצעות שידוך" description="ניתן להריץ ניתוח התאמות או ליצור הצעה ידנית." />;
   return (
@@ -480,13 +500,20 @@ function SuggestionsTable({ items, loading }: { items: MatchSuggestion[]; loadin
       <Table>
         <THead>
           <Tr>
-            <Th>חיצוני</Th><Th>סוג</Th><Th>ציון</Th><Th>ביטחון</Th><Th>סטטוס</Th><Th></Th>
+            <Th>מועמד/ת</Th><Th>סוג</Th><Th>ציון</Th><Th>ביטחון</Th><Th>סטטוס</Th><Th></Th>
           </Tr>
         </THead>
         <TBody>
           {items.map((m) => (
             <Tr key={m._id}>
-              <Td className="font-mono text-xs">{m.externalCandidateId.slice(-8)}</Td>
+              <Td>
+                <Link
+                  to={`/candidates/external/${m.externalCandidateId}`}
+                  className="text-sm font-medium text-ink hover:underline"
+                >
+                  {m.externalName ?? m.externalCandidateId.slice(-8)}
+                </Link>
+              </Td>
               <Td><Badge tone={m.matchType === 'safe' ? 'success' : m.matchType === 'balanced' ? 'brand' : 'warning'}>{label('matchType', m.matchType)}</Badge></Td>
               <Td className="num font-semibold">{m.matchScore}</Td>
               <Td className="num">{m.confidenceScore}</Td>

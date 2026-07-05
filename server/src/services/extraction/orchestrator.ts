@@ -38,6 +38,8 @@ import { findExistingCandidate, type MatchResult } from './candidate.matcher.js'
 import { extractProfileWithAI, type AIExtractedProfile } from './ai.extractor.js';
 import { extractProfileFromImage, visionExtractionAvailable } from './vision.extractor.js';
 import { downloadInboundMedia } from '../whatsapp/media.service.js';
+import { attachSourcePhotoToExternalCandidate } from '../storage/photo-maintenance.service.js';
+import { scheduleInitialEmbedding } from '../embedding/embedding.service.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
 import { getSettingCached } from '../../modules/settings/settings.service.js';
 import { normalizePhone } from '../../utils/phone.js';
@@ -444,7 +446,7 @@ async function createFromProfile(profile: ExtractedProfile, message: IMessage): 
   const primaryPhone = profile.contactPhones?.[0];
   const normalizedPhone = normalizePhone(primaryPhone);
   const source = await resolveWhatsAppSource(message);
-  return ExternalCandidate.create({
+  const created = await ExternalCandidate.create({
     sourceType: ExternalSourceType.WHATSAPP_GROUP,
     sourceChannelId: message.channelId,
     sourceChatJid: message.chatJid,
@@ -483,6 +485,22 @@ async function createFromProfile(profile: ExtractedProfile, message: IMessage): 
     // list's default "available" filter (operator "doesn't see new candidates").
     availabilityStatus: AvailabilityStatus.AVAILABLE,
   });
+
+  // Attach the source card's image as the candidate photo NOW (R2 lifecycle
+  // pipeline), not on the 30-min backfill sweep — so auto-created cards carry
+  // their photo from the first render. Best-effort: never fails the create.
+  try {
+    await attachSourcePhotoToExternalCandidate(created);
+  } catch (err) {
+    flow.warn({ messageId: String(message._id), candidateId: String(created._id), err: (err as Error).message }, 'autocreate_photo_attach_failed');
+  }
+
+  // Seed the semantic embedding immediately, same as the manual-create path —
+  // otherwise WhatsApp-extracted candidates never enter semantic matching
+  // until an unrelated edit happens to trigger it. Fire-and-forget, gated.
+  scheduleInitialEmbedding(String(created._id), 'external');
+
+  return created;
 }
 
 // Resolve the human-readable WhatsApp group name for provenance. The group

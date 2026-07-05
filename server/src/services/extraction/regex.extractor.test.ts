@@ -245,6 +245,18 @@ const SAMPLE_9 = `*כרטיס שידוכים ״החצי השני״*
 // ── Sample 10: not-a-profile (a greeting) ────────────────
 const NOT_A_PROFILE = `שלום, שלחת לי פרופיל? אני אשמח לדוגמה נוספת.`;
 
+// ── Sample 11: question-style card (labels end with "?" not ":") ──
+// The "מה עושה בחיים?" phrasing + "?" separator both used to be missed,
+// dropping the card to low-confidence needs_review with no fields.
+const SAMPLE_QUESTION = `שם: נטלי
+גיל: 33
+גובה: 1.63
+רמה דתית: חרדית, שומרת נגיעה
+מה עושה בחיים? עובדת בתחום הקוסמטיקה
+טווח גילאים רצוי: 30-37
+על עצמה: בחורה דתייה, רצינית ושומרת נגיעה
+לפרטים: 0527976000`;
+
 describe('regex.extractor — real samples', () => {
   it('sample 1: הדס .ו — female, age 23, DL-ish, phone captured', () => {
     const r = extractProfileFromText(SAMPLE_1);
@@ -361,5 +373,20 @@ describe('regex.extractor — real samples', () => {
     const r = extractProfileFromText(NOT_A_PROFILE);
     expect(r.isLikelyProfile).toBe(false);
     expect(r.confidence).toBeLessThan(0.3);
+  });
+
+  it('sample 11: question-style labels ("מה עושה בחיים?") parsed', () => {
+    const r = extractProfileFromText(SAMPLE_QUESTION);
+    expect(r.isLikelyProfile).toBe(true);
+    expect(r.profile.firstName).toBe('נטלי');
+    expect(r.profile.age).toBe(33);
+    expect(r.profile.height).toBe(163);
+    expect(r.profile.sectorGroup).toBe(SectorGroup.HAREDI);
+    // "מה עושה בחיים?" now resolves to occupation despite the "?" separator.
+    expect(r.profile.occupation).toContain('קוסמטיקה');
+    expect(r.profile.seekingAgeMin).toBe(30);
+    expect(r.profile.seekingAgeMax).toBe(37);
+    expect(r.profile.gender).toBe(Gender.FEMALE);
+    expect(r.profile.contactPhones).toContain('0527976000');
   });
 });

@@ -108,4 +108,8 @@ export const extractionApi = {
     ),
   reject: (messageId: string) =>
     api.post<{ messageId: string; status: string }>(`/extraction/messages/${messageId}/reject`),
+  refreshAll: () =>
+    api.post<{ photosScanned: number; photosAttached: number; semanticStarted: boolean }>(
+      '/extraction/refresh-all',
+    ),
 };

@@ -52,7 +52,7 @@ export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
   edah: ['עדה', 'מוצא', 'עדה/מוצא', 'מוצא עדתי', 'רקע עדתי'],
   sector: ['רמה דתית', 'מגזר', 'מגזר+רמה דתית', 'מגזר ורמה דתית', 'רמה דתית ומגזר', 'השקפה', 'זרם', 'כיוון דתי', 'רמה רוחנית', 'רמת דתיות', 'הגדרה דתית'],
   status: ['סטטוס', 'רווק/גרוש/אלמן', 'מצב משפחתי', 'מצב אישי', 'סטטוס אישי', 'סטטוס משפחתי'],
-  occupation: ['עיסוק', 'עיסוק+מוסדות לימודים', 'עיסוק+ מוסדות לימוד', 'עיסוק ומוסדות לימוד', 'תעסוקה', 'מקצוע', 'עבודה'],
+  occupation: ['עיסוק', 'עיסוק+מוסדות לימודים', 'עיסוק+ מוסדות לימוד', 'עיסוק ומוסדות לימוד', 'תעסוקה', 'מקצוע', 'עבודה', 'מה עושה בחיים', 'מה עושה', 'במה עוסק', 'במה עוסקת', 'מה עוסק', 'מה עוסקת'],
   about: ['תכונות אופי', 'תכונות מאופי', 'תכונות', 'קצת עלי', 'קצת עליי', 'על עצמי', 'אופי', 'תיאור אישי', 'מי אני'],
   family: ['משפחה', 'קצת על משפחתך', 'קצת על המשפחה', 'רקע משפחתי', 'משפחתי', 'תאר/י בקווים כלליים את משפחתך', 'תאר בקווים כלליים את משפחתך', 'תארי בקווים כלליים את משפחתך'],
   service: ['שירות צבאי', 'שירות לאומי', 'שירות צבאי/לאומי', 'שירות צבאי/לאומי/ישיבה', 'שירות', 'צבא', 'לאומי'],
@@ -91,17 +91,21 @@ export interface LabelHit {
   rawLabel: string;
 }
 
-// Accept both `:` and the fullwidth colon, optional whitespace around.
-const COLON_RE = /\s*[:：]\s*/;
+// Label/value separator. Accepts colon (`:` / fullwidth `：`) AND a question
+// mark (`?` / fullwidth `？`) — many cards are written as questions
+// ("מה עושה בחיים? עובדת..."). A `?` only splits a line when the text left of
+// it matches a KNOWN label below, so ordinary free-text questions fall through
+// to null and are treated as unlabeled prose.
+const SEP_RE = /\s*[:：?？]\s*/;
 
 export function resolveLabel(rawLine: string): LabelHit | null {
   const line = stripDecorations(rawLine);
   if (!line) return null;
-  const colonIdx = line.search(COLON_RE);
+  const colonIdx = line.search(SEP_RE);
   if (colonIdx <= 0) return null;
 
   const labelPart = line.slice(0, colonIdx).trim();
-  const valuePart = line.slice(colonIdx).replace(COLON_RE, '').trim();
+  const valuePart = line.slice(colonIdx).replace(SEP_RE, '').trim();
   if (!labelPart) return null;
 
   const labelNorm = normalizeLabel(labelPart);

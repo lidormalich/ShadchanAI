@@ -146,6 +146,9 @@ export const ListExternalCandidatesQuerySchema = PaginationQuerySchema.extend({
   // Data-quality filter: when true, return only candidates with no gender
   // set (gender null/missing) — these never appear in matching.
   missingGender: z.coerce.boolean().optional(),
+  // Needs-details tab: gender unknown AND the operator has not yet
+  // marked the profile as "מולא" (detailsCompletedAt unset).
+  needsDetails: z.coerce.boolean().optional(),
   sectorGroup: z.nativeEnum(SectorGroup).optional(),
   city: z.string().optional(),
   availabilityStatus: z.nativeEnum(AvailabilityStatus).optional(),
@@ -161,6 +164,11 @@ export const UpdateShareCardSchema = z.object({
   visibleFields: z.array(z.string()).max(40).optional(),
   photoMode: z.nativeEnum(ShareCardPhotoMode).optional(),
   approvedForShare: z.boolean().optional(),
+});
+
+export const DetailsCompletedSchema = z.object({
+  // Omitted → mark completed. false → undo (mistaken click).
+  completed: z.boolean().optional(),
 });
 
 export const UpdateAvailabilitySchema = z.object({

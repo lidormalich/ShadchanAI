@@ -23,7 +23,7 @@
 import { InternalCandidate, ExternalCandidate } from '../../models/index.js';
 import { loadChunksForQuery, ensureAllChunks } from './embedding.service.js';
 import { ALL_CHUNK_TYPES, CHUNK_WEIGHTS } from './embedding.types.js';
-import type { CandidateChunks } from './embedding.types.js';
+import type { CandidateChunks, ChunkType } from './embedding.types.js';
 import { isSemanticEnabled } from './embedding.gate.js';
 import { createLogger } from '../../utils/logger.js';
 
@@ -71,6 +71,27 @@ export function weightedChunkSimilarity(
   }
   if (weightSum === 0) return undefined;
   return Math.min(1, Math.max(0, acc / weightSum));
+}
+
+/**
+ * Per-chunk cosine breakdown for one pair — powers the "why similar"
+ * highlights on the semantic ranking (which PART of the profiles is
+ * close, not just the blended score). Clamped to 0..1 like the
+ * weighted total.
+ */
+export function perChunkSimilarities(
+  a: CandidateChunks,
+  b: CandidateChunks,
+): Partial<Record<ChunkType, number>> {
+  const out: Partial<Record<ChunkType, number>> = {};
+  for (const chunk of ALL_CHUNK_TYPES) {
+    const va = a[chunk];
+    const vb = b[chunk];
+    if (!va || !vb) continue;
+    const sim = cosine(va, vb);
+    if (sim !== undefined) out[chunk] = Math.min(1, Math.max(0, sim));
+  }
+  return out;
 }
 
 // ── Vector loading ────────────────────────────────────────

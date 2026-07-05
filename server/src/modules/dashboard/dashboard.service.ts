@@ -83,7 +83,9 @@ export async function buildDashboardQueue(input: BuildQueueInput): Promise<Dashb
     want('needs_review') ? queryNeedsReview(limit) : [],
     want('awaiting_response') ? queryAwaitingResponse(limit, ownerFilter, awaitHours) : [],
     want('new_response') ? queryNewResponse(limit, ownerFilter, currentUserId) : [],
-    want('inbound_action') ? queryInboundAction(limit) : [],
+    // Inbound conversations live in /chats; they crowd out real actions
+    // on the dashboard, so they only appear when explicitly filtered.
+    type === 'inbound_action' ? queryInboundAction(limit) : [],
     want('overdue_task') ? queryOverdueTask(limit, ownership, currentUserId) : [],
     want('high_potential_draft') ? queryHighPotential(limit, ownerFilter, highPotMinScore) : [],
     want('deferred_recheck') ? queryDeferredRecheck(limit, ownerFilter, deferredMinAgeHours) : [],

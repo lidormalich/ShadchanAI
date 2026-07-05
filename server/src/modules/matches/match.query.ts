@@ -48,7 +48,7 @@ export async function listMatches(
   };
 }
 
-async function attachCandidateNames(items: IMatchSuggestion[]): Promise<MatchListItem[]> {
+export async function attachCandidateNames(items: IMatchSuggestion[]): Promise<MatchListItem[]> {
   const internalIds = [...new Set(items.map((m) => String(m.internalCandidateId)))];
   const externalIds = [...new Set(items.map((m) => String(m.externalCandidateId)))];
   const [internals, externals] = await Promise.all([

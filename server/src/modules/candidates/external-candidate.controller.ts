@@ -132,12 +132,27 @@ export async function availabilityHandler(req: Request, res: Response, next: Nex
   } catch (e) { next(e); }
 }
 
+export async function detailsCompletedHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { completed } = req.body as { completed?: boolean };
+    const doc = await svc.setDetailsCompleted(id, completed ?? true, user.id, user);
+    ok(res, doc);
+  } catch (e) { next(e); }
+}
+
 export async function sourceCardHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     ensureUser(req.user);
     const { id } = getValidatedParams<{ id: string }>(req);
     const card = await svc.getExternalSourceCard(id);
-    ok(res, card);
+    // The client builds the "לכרטיס במערכת" link from this base — it must point
+    // at the public deployment, not the operator's localhost (same rule as the
+    // photo share link above).
+    const appBaseUrl = env.PUBLIC_BASE_URL ?? `${req.protocol}://${req.get('host')}`;
+    ok(res, { ...card, appBaseUrl });
   } catch (e) { next(e); }
 }
 

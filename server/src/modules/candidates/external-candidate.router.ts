@@ -10,6 +10,7 @@ import {
   ListExternalCandidatesQuerySchema,
   UpdateShareCardSchema,
   UpdateAvailabilitySchema,
+  DetailsCompletedSchema,
   FindMatchingInternalsQuerySchema,
   IdParamSchema,
 } from './external-candidate.validator.js';
@@ -79,6 +80,12 @@ externalCandidateRouter.patch(
   '/:id/availability',
   validate({ params: IdParamSchema, body: UpdateAvailabilitySchema }),
   ctrl.availabilityHandler,
+);
+
+externalCandidateRouter.post(
+  '/:id/details-completed',
+  validate({ params: IdParamSchema, body: DetailsCompletedSchema }),
+  ctrl.detailsCompletedHandler,
 );
 
 externalCandidateRouter.get(

@@ -100,10 +100,10 @@ export const CHUNK_INVALIDATION_MAP: Readonly<Record<ChunkType, string[]>> = {
   ],
   expectations: [
     'whatSeeking', 'softPreferences', 'hardConstraints',
-    'openness', 'agePreferences', 'locationPreferences',
+    'openness', 'agePreferences', 'locationPreferences', 'lifeGoals',
   ],
   personality: [
-    'about', 'aiEnrichment',
+    'about', 'aiEnrichment', 'characterTraits', 'characterNotes', 'additionalInfo',
   ],
   background: [
     'city', 'age', 'dateOfBirth', 'personalStatus', 'numberOfChildren',

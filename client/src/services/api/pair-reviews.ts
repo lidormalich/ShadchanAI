@@ -237,12 +237,15 @@ export interface SemanticMatchRow {
   externalCandidateId: string;
   firstName?: string;
   lastName?: string;
+  photoUrl?: string;
   age?: number;
   city?: string;
   sectorGroup?: string;
   personalStatus?: string;
   availabilityStatus?: string;
   similarity: number;
+  /** Short "why similar" reason chips computed server-side (no AI). */
+  highlights?: string[];
   matchScore?: number;
   engineEligible?: boolean;
 }
@@ -255,16 +258,22 @@ export interface SemanticMatchesResult {
   coverage: {
     externalsConsidered: number;
     externalsEmbedded: number;
+    /** Dropped from the pool: stored gender says opposite, but the free text reads as same-gender (mis-tagged data). */
+    genderSuspectsExcluded?: number;
   };
   rows: SemanticMatchRow[];
 }
 
 export interface SemanticBackfillState {
   status: 'idle' | 'running' | 'done' | 'error';
+  /** 'delta' = missing/stale vectors only; 'force' = full sweep of all active candidates. */
+  mode?: 'delta' | 'force';
   progressCurrent: number;
   progressTotal: number;
   embedded: number;
   failed: number;
+  /** Profiles with no embeddable text — cannot enter the vector space until data is added. */
+  noContent?: number;
   startedAt?: string;
   finishedAt?: string;
   lastError?: string;
@@ -273,8 +282,8 @@ export interface SemanticBackfillState {
 export const semanticApi = {
   matches: (internalId: string, query: { limit?: number } = {}) =>
     api.get<SemanticMatchesResult>(`/candidates/internal/${internalId}/semantic-matches`, query),
-  backfillStart: () =>
-    api.post<SemanticBackfillState>('/matches/semantic-backfill'),
+  backfillStart: (body: { force?: boolean } = {}) =>
+    api.post<SemanticBackfillState>('/matches/semantic-backfill', body),
   backfillState: () =>
     api.get<SemanticBackfillState>('/matches/semantic-backfill/state'),
 };

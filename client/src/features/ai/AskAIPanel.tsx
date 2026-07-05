@@ -5,8 +5,9 @@ import { Link } from 'react-router-dom';
 import { aiApi } from '@/services/api/ai';
 import type { AskAIResult } from '@/types/domain';
 import { Drawer } from '@/components/ui/Drawer';
-import { Badge, Button, Card, CardBody, Spinner, Textarea } from '@/components/ui/primitives';
+import { Badge, Button, Card, CardBody, Spinner, Table, TBody, Td, Textarea, Th, THead, Tabs, Tr } from '@/components/ui/primitives';
 import { EmptyState } from '@/components/states/states';
+import { label, matchTypeTone } from '@/utils/labels';
 
 // ═══════════════════════════════════════════════════════════
 // Ask AI panel
@@ -166,6 +167,8 @@ export function AskAIResults({ result }: { result: AskAIResult }) {
           </div>
           {result.results.length === 0 ? (
             <div className="text-sm text-ink-muted">לא נמצאו תוצאות.</div>
+          ) : result.results.every(isMatchRow) ? (
+            <MatchResultsTabs rows={result.results.filter(isMatchRow)} />
           ) : (
             <ul className="space-y-2">
               {result.results.slice(0, 10).map((r, i) => (
@@ -192,6 +195,115 @@ export function AskAIResults({ result }: { result: AskAIResult }) {
         </Card>
       )}
     </div>
+  );
+}
+
+// ── Match-result rendering (find_matching_candidates) ──────
+//
+// The server enriches engine results with the external's identity
+// (MatchingCandidateRow). When ALL results carry that shape we render
+// score-bucket tabs — mirroring the pipeline's score filter (80+/60+/40+)
+// — with a person-facing table instead of the generic key:value list.
+
+interface MatchRowLike {
+  externalCandidateId: string;
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  city?: string;
+  sectorGroup?: string;
+  matchScore: number;
+  confidenceScore?: number;
+  matchType?: string;
+  riskLevel?: string;
+  eligible?: boolean;
+}
+
+function isMatchRow(r: unknown): r is MatchRowLike {
+  const o = r as Record<string, unknown> | null;
+  return !!o && typeof o['externalCandidateId'] === 'string' && typeof o['matchScore'] === 'number';
+}
+
+const SCORE_BUCKETS: Array<{
+  id: string;
+  labelText: string;
+  min: number;
+  max: number;
+  tone: 'success' | 'brand' | 'warning' | 'neutral';
+}> = [
+  { id: 'high',   labelText: '80+',    min: 80, max: 100, tone: 'success' },
+  { id: 'medium', labelText: '60–79',  min: 60, max: 79,  tone: 'brand' },
+  { id: 'low',    labelText: '40–59',  min: 40, max: 59,  tone: 'warning' },
+  { id: 'rest',   labelText: 'מתחת ל-40', min: 0, max: 39, tone: 'neutral' },
+];
+
+export function MatchResultsTabs({ rows }: { rows: MatchRowLike[] }) {
+  const buckets = SCORE_BUCKETS.map((b) => ({
+    bucket: b,
+    items: rows.filter((r) => r.matchScore >= b.min && r.matchScore <= b.max),
+  }));
+  const initialId = buckets.find((b) => b.items.length > 0)?.bucket.id;
+
+  return (
+    <Tabs
+      initialId={initialId}
+      tabs={buckets.map(({ bucket, items }) => ({
+        id: bucket.id,
+        label: `ציון ${bucket.labelText}`,
+        badge: <Badge tone={items.length ? bucket.tone : 'neutral'}>{items.length}</Badge>,
+        content: items.length === 0 ? (
+          <div className="text-sm text-ink-muted py-4 text-center">אין מועמדים בטווח ציונים זה.</div>
+        ) : (
+          <MatchRowsTable items={items} />
+        ),
+      }))}
+    />
+  );
+}
+
+function MatchRowsTable({ items }: { items: MatchRowLike[] }) {
+  return (
+    <Table>
+      <THead>
+        <Tr>
+          <Th>מועמד/ת</Th><Th>גיל</Th><Th>עיר</Th><Th>סוג</Th><Th>ציון</Th><Th>ביטחון</Th><Th></Th>
+        </Tr>
+      </THead>
+      <TBody>
+        {items.map((r) => {
+          const name = `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || r.externalCandidateId.slice(-8);
+          return (
+            <Tr key={r.externalCandidateId}>
+              <Td>
+                <Link
+                  to={`/candidates/external/${r.externalCandidateId}`}
+                  className="text-sm font-medium text-ink hover:underline"
+                >
+                  {name}
+                </Link>
+              </Td>
+              <Td className="num">{r.age ?? '—'}</Td>
+              <Td>{r.city ?? '—'}</Td>
+              <Td>
+                {r.matchType
+                  ? <Badge tone={matchTypeTone(r.matchType)}>{label('matchType', r.matchType)}</Badge>
+                  : '—'}
+              </Td>
+              <Td className="num font-semibold">{r.matchScore}</Td>
+              <Td className="num">{r.confidenceScore ?? '—'}</Td>
+              <Td className="text-end">
+                <Link
+                  to={`/candidates/external/${r.externalCandidateId}`}
+                  className="text-xs text-brand-700 inline-flex items-center gap-1 hover:underline"
+                >
+                  פתח <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </Td>
+            </Tr>
+          );
+        })}
+      </TBody>
+    </Table>
   );
 }
 

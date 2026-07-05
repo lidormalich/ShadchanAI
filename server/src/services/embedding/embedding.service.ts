@@ -58,6 +58,9 @@ interface EmbeddingMeta {
 
 // ── Public API ────────────────────────────────────────────
 
+/** Outcome of an ensureAllChunks run — lets the backfill report WHY a candidate stayed out of the vector space. */
+export type EnsureChunksOutcome = 'embedded' | 'fresh' | 'no_content' | 'not_found' | 'disabled';
+
 /**
  * Ensures all 4 chunk vectors exist in the DB for the given candidate.
  *
@@ -76,8 +79,8 @@ export async function ensureAllChunks(
     forceRefresh?: boolean;
     doc?: IInternalCandidate | IExternalCandidate;
   } = {},
-): Promise<void> {
-  if (!(await isSemanticEnabled())) return;
+): Promise<EnsureChunksOutcome> {
+  if (!(await isSemanticEnabled())) return 'disabled';
 
   const { forceRefresh = false } = options;
 
@@ -85,7 +88,7 @@ export async function ensureAllChunks(
   const doc = options.doc ?? await fetchDoc(candidateId, type, 'full');
   if (!doc) {
     log.warn({ candidateId, type }, 'doc_not_found');
-    return;
+    return 'not_found';
   }
 
   // Load just the embedding metadata (no vectors) to check staleness.
@@ -103,7 +106,7 @@ export async function ensureAllChunks(
     return !meta?.[chunkType]?.embeddedAt;
   });
 
-  if (chunksToEmbed.length === 0) return;  // All chunks are fresh.
+  if (chunksToEmbed.length === 0) return 'fresh';  // All chunks are fresh.
 
   // Serialise only the chunks we need.
   const allTexts: ChunkTexts =
@@ -118,7 +121,7 @@ export async function ensureAllChunks(
 
   if (toEmbed.length === 0) {
     log.info({ candidateId, type, skippedChunks: chunksToEmbed }, 'no_content');
-    return;
+    return 'no_content';
   }
 
   // Batch all texts into a single API call for efficiency.
@@ -147,6 +150,8 @@ export async function ensureAllChunks(
     chunks: toEmbed.map(x => x.chunkType),
     model: provider.modelConfig.modelId,
   }, 'chunks_saved');
+
+  return 'embedded';
 }
 
 /**

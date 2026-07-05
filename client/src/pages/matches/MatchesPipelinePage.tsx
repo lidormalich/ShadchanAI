@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Filter } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Badge, Button, Card, Select } from '@/components/ui/primitives';
+import { Badge, Button, Card, Select, Tabs } from '@/components/ui/primitives';
 import { ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { MatchCard } from '@/components/domain/MatchCard';
 import { matchesApi } from '@/services/api/matches';
@@ -104,30 +104,31 @@ export function MatchesPipelinePage() {
       ) : query.isError ? (
         <ErrorState description={(query.error as Error).message} onRetry={() => query.refetch()} />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-4">
-          {STAGES.map((s) => (
-            <StageColumn key={s.id} stage={s} items={byStage[s.id] ?? []} />
-          ))}
-        </div>
+        <Tabs
+          tabs={STAGES.map((s) => {
+            const items = byStage[s.id] ?? [];
+            return {
+              id: s.id,
+              label: s.label,
+              badge: <Badge tone={items.length ? s.tone : 'neutral'}>{items.length}</Badge>,
+              content: <StagePanel items={items} />,
+            };
+          })}
+        />
       )}
     </div>
   );
 }
 
-function StageColumn({ stage, items }: { stage: Stage; items: MatchSuggestion[] }) {
+function StagePanel({ items }: { items: MatchSuggestion[] }) {
+  if (items.length === 0) {
+    return <div className="text-sm text-ink-faint py-12 text-center">אין הצעות בשלב זה</div>;
+  }
   return (
-    <div className="min-w-0">
-      <div className="flex items-center justify-between mb-2 px-1">
-        <h3 className="text-sm font-semibold text-ink">{stage.label}</h3>
-        <Badge tone={stage.tone}>{items.length}</Badge>
-      </div>
-      <div className="bg-bg-subtle rounded-xl p-2 min-h-[200px] space-y-2">
-        {items.length === 0 ? (
-          <div className="text-xs text-ink-faint py-6 text-center">ריק</div>
-        ) : (
-          items.map((m) => <MatchCard key={m._id} match={m} compact />)
-        )}
-      </div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      {items.map((m) => (
+        <MatchCard key={m._id} match={m} compact />
+      ))}
     </div>
   );
 }

@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Filter, Inbox, Link2, RefreshCw, UserPlus, X } from 'lucide-react';
+import { Check, Copy, Filter, Inbox, Link2, RefreshCw, Sparkles, UserPlus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
@@ -99,6 +99,18 @@ export function ReviewQueuePage() {
     },
     onError: (e: Error) => toast.error('ההרצה נכשלה', e.message),
   });
+  const refreshAll = useMutation({
+    mutationFn: () => extractionApi.refreshAll(),
+    onSuccess: (res) => {
+      const { photosAttached, photosScanned, semanticStarted } = res.data;
+      toast.success(
+        'רענון כללי הושלם',
+        `תמונות: ${photosAttached}/${photosScanned} צורפו${semanticStarted ? ' · עיבוד סמנטי רץ ברקע' : ''}`,
+      );
+      invalidate();
+    },
+    onError: (e: Error) => toast.error('הרענון נכשל', e.message),
+  });
 
   return (
     <div className="space-y-4">
@@ -115,11 +127,22 @@ export function ReviewQueuePage() {
                 : 'הודעות שהגיעו אך לא נכנסו לחילוץ — וסיבת הסינון. אפשר לאלץ עיבוד מחדש.'}
           </p>
         </div>
-        {tab !== 'filtered' && (
-          <Button variant="secondary" onClick={() => queue.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
-            רענן
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => refreshAll.mutate()}
+            disabled={refreshAll.isPending}
+            leftIcon={<Sparkles className="h-4 w-4" />}
+            title="מצרף תמונות למועמדים קיימים שחסרות להם + מריץ עיבוד סמנטי"
+          >
+            {refreshAll.isPending ? 'מרענן…' : 'רענן כללי'}
           </Button>
-        )}
+          {tab !== 'filtered' && (
+            <Button variant="secondary" onClick={() => queue.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+              רענן
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tab switcher */}

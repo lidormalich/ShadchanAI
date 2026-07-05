@@ -17,6 +17,7 @@ import {
   mapStatusUpdate,
   extractContent,
   jidToPhone,
+  jidToPhoneStrict,
 } from './baileys.mapper.js';
 
 const channel = {
@@ -56,6 +57,20 @@ describe('jidToPhone', () => {
     expect(jidToPhone(undefined)).toBe('');
     expect(jidToPhone(null)).toBe('');
     expect(jidToPhone('')).toBe('');
+  });
+});
+
+describe('jidToPhoneStrict', () => {
+  it('extracts phone from user JIDs', () => {
+    expect(jidToPhoneStrict('972509999999@s.whatsapp.net')).toBe('972509999999');
+    expect(jidToPhoneStrict('972509999999:48@s.whatsapp.net')).toBe('972509999999');
+    expect(jidToPhoneStrict('972509999999@c.us')).toBe('972509999999');
+  });
+  it('rejects group / newsletter / lid jids', () => {
+    expect(jidToPhoneStrict('120363389471463246@g.us')).toBe('');
+    expect(jidToPhoneStrict('120363389471463246@newsletter')).toBe('');
+    expect(jidToPhoneStrict('167338831415295@lid')).toBe('');
+    expect(jidToPhoneStrict(undefined)).toBe('');
   });
 });
 
@@ -148,6 +163,72 @@ describe('mapInboundMessage', () => {
     );
     expect(out).not.toBeNull();
     expect(out!.participantPhone).toBe('120000000000');
+    expect(out!.senderPhone).toBe('972509999999');
+  });
+
+  // Regression: when key.participant was missing, senderPhone fell back to
+  // the group JID — the UI then showed "120363…" as the sender's phone.
+  it('leaves senderPhone empty when a group message has no participant', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        key: { id: 'wamid.g2', remoteJid: '120000000000@g.us', fromMe: false },
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.senderPhone).toBeUndefined();
+  });
+
+  it('leaves senderPhone empty for an anonymous LID participant', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        key: { id: 'wamid.g3', remoteJid: '120000000000@g.us', participant: '167338831415295@lid', fromMe: false },
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.senderPhone).toBeUndefined();
+  });
+
+  it('prefers participantPn (real phone) over a LID participant', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        key: {
+          id: 'wamid.g4',
+          remoteJid: '120000000000@g.us',
+          participant: '167338831415295@lid',
+          participantPn: '972501112233@s.whatsapp.net',
+          fromMe: false,
+        } as proto.IMessageKey,
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.senderPhone).toBe('972501112233');
+  });
+
+  it('falls back to the top-level participant (history-sync shape)', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        key: { id: 'wamid.g5', remoteJid: '120000000000@g.us', fromMe: false },
+        participant: '972503334455@s.whatsapp.net',
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.senderPhone).toBe('972503334455');
+  });
+
+  it('leaves senderPhone empty for channel (newsletter) posts', () => {
+    const out = mapInboundMessage(
+      baseMessage({
+        key: { id: 'wamid.n1', remoteJid: '120363389471463246@newsletter', fromMe: false },
+      }),
+      channel,
+    );
+    expect(out).not.toBeNull();
+    expect(out!.senderPhone).toBeUndefined();
+    expect(out!.chatType).toBe('private');
   });
 
   it('carries reply context via replyToExternalId', () => {
