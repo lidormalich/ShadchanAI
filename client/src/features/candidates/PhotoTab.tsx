@@ -82,6 +82,7 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
     queryFn: () => photoApi.photoShareLink(candidateId),
     enabled: !!photoUrl,
     staleTime: 10 * 60 * 1000,
+    retry: 2, // survive a cold-start / transient 5xx instead of caching the error
   });
   const shareUrl = photoUrl ? (shareQuery.data?.url ?? null) : null;
 
@@ -177,9 +178,12 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
             {shareUrl}
           </a>
         )}
-        {photoUrl && shareQuery.isLoading && <p className="text-xs text-ink-faint">טוען לינק…</p>}
-        {photoUrl && !shareQuery.isLoading && !shareUrl && (
-          <p className="text-xs text-red-600">יצירת הלינק נכשלה — נסה לרענן.</p>
+        {photoUrl && shareQuery.isFetching && !shareUrl && <p className="text-xs text-ink-faint">טוען לינק…</p>}
+        {photoUrl && !shareQuery.isFetching && !shareUrl && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-red-600">יצירת הלינק נכשלה.</span>
+            <Button size="sm" variant="ghost" onClick={() => shareQuery.refetch()}>נסה שוב</Button>
+          </div>
         )}
 
         {/* Two clear actions: the photo link, and the card text. */}
