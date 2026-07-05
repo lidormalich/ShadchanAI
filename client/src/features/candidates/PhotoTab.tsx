@@ -14,7 +14,7 @@
 
 import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, Copy, ExternalLink, ImageOff, Trash2, Upload } from 'lucide-react';
+import { Camera, Copy, ExternalLink, ImageOff, Link2, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/primitives';
 import { AuthImage } from '@/components/AuthImage';
 import { toast } from '@/components/ui/Toast';
@@ -112,11 +112,8 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
     else toast.error('ההעתקה נכשלה', 'העתק ידנית מהשדה');
   };
 
-  const copyCard = () => {
-    // shareUrl is already loaded — no await before the clipboard write.
-    const text = shareUrl ? `${cardText}\n\n📷 ${shareUrl}` : cardText;
-    void copy(text, shareUrl ? 'הכרטיס הועתק (כולל לינק לתמונה)' : 'הכרטיס הועתק (ללא תמונה)');
-  };
+  const copyCard = () => void copy(cardText, 'הכרטיס הועתק');
+  const copyLink = () => shareUrl && void copy(shareUrl, 'הלינק הועתק');
 
   const busy = upload.isPending || remove.isPending;
 
@@ -168,42 +165,53 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
           לינק ציבורי לתמונה (ללא צורך בהתחברות) — מתאים לשליחה בוואטסאפ.
         </p>
 
-        {!photoUrl ? (
-          <p className="text-xs text-ink-faint">אין תמונה — אפשר להעתיק את הכרטיס בלבד.</p>
-        ) : shareQuery.isLoading ? (
-          <p className="text-xs text-ink-faint">טוען לינק…</p>
-        ) : shareUrl ? (
-          <div className="flex items-center gap-2">
-            <a
-              href={shareUrl}
-              target="_blank"
-              rel="noreferrer"
-              title={shareUrl}
-              className="flex-1 min-w-0 truncate rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs text-brand hover:underline"
-            >
-              {shareUrl}
-            </a>
-            <Button size="sm" variant="secondary" leftIcon={<ExternalLink className="h-3.5 w-3.5" />}
-              onClick={() => window.open(shareUrl, '_blank', 'noopener')}>
-              פתח
-            </Button>
-            <Button size="sm" variant="ghost" leftIcon={<Copy className="h-3.5 w-3.5" />}
-              onClick={() => copy(shareUrl, 'הלינק הועתק')}>
-              העתק
-            </Button>
-          </div>
-        ) : (
+        {/* Clickable link preview (only when a photo + link exist) */}
+        {photoUrl && shareUrl && (
+          <a
+            href={shareUrl}
+            target="_blank"
+            rel="noreferrer"
+            title={shareUrl}
+            className="block truncate rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs text-brand hover:underline"
+          >
+            {shareUrl}
+          </a>
+        )}
+        {photoUrl && shareQuery.isLoading && <p className="text-xs text-ink-faint">טוען לינק…</p>}
+        {photoUrl && !shareQuery.isLoading && !shareUrl && (
           <p className="text-xs text-red-600">יצירת הלינק נכשלה — נסה לרענן.</p>
         )}
 
-        <Button
-          size="sm"
-          variant="secondary"
-          leftIcon={<Copy className="h-4 w-4" />}
-          onClick={copyCard}
-        >
-          העתק כרטיס {shareUrl ? '+ לינק' : ''}
-        </Button>
+        {/* Two clear actions: the photo link, and the card text. */}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<Link2 className="h-4 w-4" />}
+            disabled={!shareUrl}
+            onClick={copyLink}
+          >
+            העתק לינק
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<Copy className="h-4 w-4" />}
+            onClick={copyCard}
+          >
+            העתק כרטיס
+          </Button>
+          {photoUrl && shareUrl && (
+            <Button
+              size="sm"
+              variant="ghost"
+              leftIcon={<ExternalLink className="h-4 w-4" />}
+              onClick={() => window.open(shareUrl, '_blank', 'noopener')}
+            >
+              פתח תמונה
+            </Button>
+          )}
+        </div>
       </div>
 
       <input ref={inputRef} type="file" accept={ACCEPT.join(',')} className="hidden" onChange={onPick} />
