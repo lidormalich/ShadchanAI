@@ -32,6 +32,49 @@ export function incomingPhotoKey(filename: string): string {
   return `incoming/${filename}`;
 }
 
+// Protobuf byte fields (mediaKey, fileEncSha256, …) survive a Mongo round-trip
+// as BSON Binary or a serialized-Buffer shape, NOT a Node Buffer. Baileys needs
+// real Uint8Arrays to decrypt media, so convert them back. Handles: real
+// Buffer/Uint8Array (pass through), BSON Binary ({ buffer, position, sub_type }
+// or a Binary instance with .buffer/.value()), and { type:'Buffer', data:[…] }.
+function toUint8Array(v: unknown): Uint8Array | undefined {
+  if (v == null) return undefined;
+  if (v instanceof Uint8Array) return v; // includes Node Buffer
+  const o = v as Record<string, unknown> & { value?: (asRaw?: boolean) => unknown };
+  // Node Buffer JSON form.
+  if (o['type'] === 'Buffer' && Array.isArray(o['data'])) return Buffer.from(o['data'] as number[]);
+  // BSON Binary as a plain object (comes back this way under .lean()).
+  if (o['buffer'] != null) {
+    const buf = o['buffer'];
+    const base = Buffer.isBuffer(buf) || buf instanceof Uint8Array ? Buffer.from(buf as Uint8Array) : Buffer.from(buf as never);
+    return typeof o['position'] === 'number' ? base.subarray(0, o['position'] as number) : base;
+  }
+  // BSON Binary instance with a value() accessor.
+  if (typeof o.value === 'function') {
+    const raw = o.value(true);
+    if (raw instanceof Uint8Array) return raw;
+    if (Buffer.isBuffer(raw)) return raw;
+  }
+  return undefined;
+}
+
+const MEDIA_BINARY_FIELDS = [
+  'mediaKey',
+  'fileEncSha256',
+  'fileSha256',
+  'streamingSidecar',
+  'midQualityFileEncSha256',
+  'midQualityFileSha256',
+] as const;
+
+function restoreMediaBinaries(node: Record<string, unknown>): void {
+  for (const field of MEDIA_BINARY_FIELDS) {
+    if (node[field] == null) continue;
+    const restored = toUint8Array(node[field]);
+    if (restored) node[field] = restored;
+  }
+}
+
 // Filename shape is fully derived from trusted values (Mongo _id + mapped
 // extension), and the serving router re-validates against this pattern —
 // path traversal is structurally impossible.
@@ -94,6 +137,14 @@ export async function downloadInboundMedia(
   const content = normalizeMessageContent(raw.message);
   const imageMessage = content?.imageMessage;
   if (!imageMessage) return { ok: false, reason: 'no_image_node' };
+
+  // Storing rawPayload in Mongo turns every protobuf Buffer field into a BSON
+  // Binary ({sub_type, buffer, position}) that does NOT come back as a Node
+  // Buffer. Baileys' AES media decrypt then derives keys from a garbage
+  // mediaKey and fails with "bad decrypt" on EVERY download (receive,
+  // reconciler, extraction all read from Mongo). Coerce the binary fields
+  // back to real Buffers before handing the node to downloadContentFromMessage.
+  restoreMediaBinaries(imageMessage as unknown as Record<string, unknown>);
 
   const ext = EXT_BY_MIME[imageMessage.mimetype ?? message.mediaMimeType ?? ''] ?? 'jpg';
   const filename = `${String(message._id)}.${ext}`;

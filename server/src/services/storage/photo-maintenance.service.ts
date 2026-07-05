@@ -55,9 +55,22 @@ export async function runPhotoStorageMaintenance(): Promise<PhotoMaintenanceSumm
 
 // ── 1. Backfill external photos from the on-disk WhatsApp image ──
 async function backfillExternalPhotos(): Promise<number> {
+  // Only candidates that actually reference a downloaded image are worth
+  // checking. Targeting them directly (vs scanning every key-less candidate)
+  // avoids text-only cards — which never get a photoStorageKey — permanently
+  // occupying the batch and starving real image candidates further down.
+  const recentImages = await Message.find({ contentType: 'image', mediaUrl: { $exists: true } })
+    .sort({ createdAt: -1 })
+    .limit(500)
+    .select('_id')
+    .lean()
+    .exec();
+  const imageIds = recentImages.map((m) => m._id);
+  if (imageIds.length === 0) return 0;
+
   const pending = await ExternalCandidate.find({
     photoStorageKey: { $exists: false },
-    sourceMessageIds: { $exists: true, $ne: [] },
+    sourceMessageIds: { $in: imageIds },
   })
     .select('_id status archivedAt sourceMessageIds')
     .limit(BACKFILL_LIMIT)
