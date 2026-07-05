@@ -95,7 +95,8 @@ export function ExternalCandidateDetailPage() {
       {/* Sticky header */}
       <Card className="sticky top-0 z-10">
         <CardBody className="flex items-center gap-4 flex-wrap">
-          <Avatar name={name} size={56} src={c.sharePhoto ? c.photoUrl : undefined} />
+          {/* Operator always sees the photo; sharePhoto gates only outbound sharing. */}
+          <Avatar name={name} size={56} src={c.photoUrl} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-semibold">{name}</h1>

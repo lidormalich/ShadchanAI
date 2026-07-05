@@ -374,7 +374,7 @@ export function MatchDetailPage() {
             {external.isLoading ? <LoadingSkeleton rows={4} /> : external.data ? (
               <SummaryBlock
                 name={`${external.data.data.firstName ?? ''} ${external.data.data.lastName ?? ''}`.trim() || 'ללא שם'}
-                photo={external.data.data.sharePhoto ? external.data.data.photoUrl : undefined}
+                photo={external.data.data.photoUrl}
                 lines={[
                   [external.data.data.city, external.data.data.region ? label('region', external.data.data.region) : undefined].filter(Boolean).join(' · ') || undefined,
                   label('sectorGroup', external.data.data.sectorGroup),

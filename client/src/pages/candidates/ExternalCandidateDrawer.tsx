@@ -65,7 +65,10 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
         <div className="p-5 space-y-4">
           {/* Header */}
           <div className="flex items-center gap-4">
-            <Avatar name={`${c.firstName ?? ''} ${c.lastName ?? ''}`} size={64} src={c.sharePhoto ? c.photoUrl : undefined} />
+            {/* The operator always sees the photo. sharePhoto gates only the
+                OUTBOUND share card (the "תצוגה מקדימה לשיתוף" tab), not this
+                internal workspace view. */}
+            <Avatar name={`${c.firstName ?? ''} ${c.lastName ?? ''}`} size={64} src={c.photoUrl} />
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 {c.sectorGroup && <Badge tone="neutral">{label('sectorGroup', c.sectorGroup)}</Badge>}

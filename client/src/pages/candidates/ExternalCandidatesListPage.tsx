@@ -125,7 +125,7 @@ export function ExternalCandidatesListPage() {
                   <Tr key={c._id} className="cursor-pointer" onClick={() => setDrawerId(c._id)}>
                     <Td>
                       <div className="flex items-center gap-3">
-                        <Avatar name={`${c.firstName ?? ''} ${c.lastName ?? ''}`} size={32} src={c.sharePhoto ? c.photoUrl : undefined} />
+                        <Avatar name={`${c.firstName ?? ''} ${c.lastName ?? ''}`} size={32} src={c.photoUrl} />
                         <div className="min-w-0">
                           <div className="font-medium truncate">{`${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם'}</div>
                           <div className="text-xs text-ink-faint">{c.sourceName ?? label('sourceType', c.sourceType)}</div>
@@ -184,7 +184,7 @@ const ExternalCard = React.memo(function ExternalCard({ c, onOpen }: { c: Extern
   return (
     <Card className="p-4 hover:shadow-rise transition-shadow cursor-pointer" onClick={onOpen}>
       <div className="flex items-start gap-3">
-        <Avatar name={fullName} size={44} src={c.sharePhoto ? c.photoUrl : undefined} />
+        <Avatar name={fullName} size={44} src={c.photoUrl} />
         <div className="min-w-0 flex-1">
           <div className="font-semibold truncate">{fullName}</div>
           <div className="text-xs text-ink-faint truncate">{c.sourceName ?? label('sourceType', c.sourceType)}</div>
