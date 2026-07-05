@@ -30,7 +30,9 @@ const MAX_BYTES = 6 * 1024 * 1024;
 interface PhotoApi {
   uploadPhoto(id: string, file: File): Promise<unknown>;
   removePhoto(id: string): Promise<unknown>;
-  photoShareLink(id: string): Promise<PhotoShareLink>;
+  // api.post wraps the response in the { data, meta } envelope — the payload
+  // is under .data, exactly like every other query in the app.
+  photoShareLink(id: string): Promise<{ data: PhotoShareLink }>;
 }
 
 // Robust clipboard write: the async Clipboard API where available, else a
@@ -84,7 +86,7 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
     staleTime: 10 * 60 * 1000,
     retry: 2, // survive a cold-start / transient 5xx instead of caching the error
   });
-  const shareUrl = photoUrl ? (shareQuery.data?.url ?? null) : null;
+  const shareUrl = photoUrl ? (shareQuery.data?.data?.url ?? null) : null;
 
   const upload = useMutation({
     mutationFn: (file: File) => photoApi.uploadPhoto(candidateId, file),
