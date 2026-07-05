@@ -615,6 +615,13 @@ export class BaileysClient {
 const clients = new Map<string, BaileysClient>();
 
 export async function startChannelClient(channel: IChannel): Promise<BaileysClient> {
+  // Hard backstop: when the WhatsApp engine is disabled on this instance no
+  // start path may open a socket — not boot auto-start, not the watchdog, not
+  // an operator API call. Every path funnels through here.
+  if (!env.WA_ENABLED) {
+    throw new Error('WhatsApp engine is disabled on this instance (WA_ENABLED=false)');
+  }
+
   const existing = clients.get(channel.channelId);
   if (existing && existing.status.state === 'connected') return existing;
 

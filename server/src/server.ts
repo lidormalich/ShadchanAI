@@ -69,7 +69,9 @@ async function main(): Promise<void> {
     nodeEnv: env.NODE_ENV,
   }, 'server_boot');
 
-  if (env.WA_AUTO_START_SESSIONS) {
+  if (!env.WA_ENABLED) {
+    log.info({ note: 'WA_ENABLED=false; WhatsApp engine off on this instance (no sockets, no auto-start, no watchdog)' }, 'whatsapp_engine_disabled');
+  } else if (env.WA_AUTO_START_SESSIONS) {
     // Recover anything left over from a crashed previous run BEFORE
     // the auto-start loop, so its outcome reports describe real
     // conflicts (another live process) and not dead lock leftovers.

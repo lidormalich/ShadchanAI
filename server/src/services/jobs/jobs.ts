@@ -224,7 +224,7 @@ registerJob({
 // (circuit tripped open, or client missing after a restart). Keeps them
 // ONLINE without cycling healthy connections. Gated + interval-tuned via
 // env; single-instance only (same constraint as WA_AUTO_START_SESSIONS).
-if (env.WA_WATCHDOG_ENABLED) {
+if (env.WA_ENABLED && env.WA_WATCHDOG_ENABLED) {
   registerJob({
     name: 'wa-connection-watchdog',
     intervalMs: env.WA_WATCHDOG_INTERVAL_MS,

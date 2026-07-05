@@ -137,10 +137,21 @@ const envSchema = z.object({
   WA_PROFILES_SOURCE_DISPLAY_NAME: z.string().optional(),
   WA_MATCH_SENDING_DISPLAY_NAME: z.string().optional(),
 
+  // Master switch for the WhatsApp engine ON THIS INSTANCE. When false the
+  // instance runs NO Baileys sockets at all: boot auto-start is skipped, the
+  // connection watchdog does not register, and every start path (API / boot /
+  // reconnect) is refused. Use it to keep WhatsApp on ONE machine only — e.g.
+  // run it on an always-on local box and set WA_ENABLED=false in the cloud
+  // deployment so the two never fight over the single-instance channel locks
+  // (and the cloud host isn't billed for an idle persistent socket). The DB
+  // is shared, so the cloud UI still shows everything the local box ingests.
+  WA_ENABLED: booleanString(true),
+
   // If true, on boot the server auto-starts Baileys sessions for every
   // non-replaced / non-disconnected channel. Safe for single-instance.
   // For multi-instance deployments this must be disabled and sessions
-  // must be owned by one process (see deployment notes).
+  // must be owned by one process (see deployment notes). Has no effect when
+  // WA_ENABLED=false (the whole engine is off).
   WA_AUTO_START_SESSIONS: booleanString(true),
 
   // Stable identity used as the owner of channel-level locks
