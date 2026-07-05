@@ -5,6 +5,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as svc from './match.service.js';
 import * as scanSvc from '../../services/matching/match-scan.service.js';
+import {
+  startSemanticBackfill,
+  getSemanticBackfillState,
+} from '../../services/embedding/semantic-backfill.service.js';
 import { getValidatedQuery, getValidatedParams } from '../../middleware/validate.middleware.js';
 import { ok, created } from '../../utils/response.js';
 import { ensureUser, canApproveMatches } from '../../middleware/permissions.js';
@@ -132,6 +136,23 @@ export async function scanResultsHandler(req: Request, res: Response, next: Next
         : 'inbox',
     });
     ok(res, items);
+  } catch (e) { next(e); }
+}
+
+// ── Semantic backfill ("סרוק עכשיו" in the הצעה חכמה tab) ──
+
+export async function semanticBackfillHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canApproveMatches(user);
+    ok(res, await startSemanticBackfill());
+  } catch (e) { next(e); }
+}
+
+export async function semanticBackfillStateHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    ok(res, getSemanticBackfillState());
   } catch (e) { next(e); }
 }
 

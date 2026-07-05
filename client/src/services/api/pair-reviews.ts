@@ -228,3 +228,53 @@ export const compatibilityApi = {
   pairCheck: (internalId: string, body: { externalCandidateId: string; mode?: 'strict' | 'discovery' }) =>
     api.post<PairCheckResult>(`/candidates/internal/${internalId}/pair-check`, body),
 };
+
+// ── Semantic matches ("הצעה חכמה" tab) ───────────────────────
+// Mirrors server/src/services/embedding/semantic-match.service.ts +
+// semantic-backfill.service.ts.
+
+export interface SemanticMatchRow {
+  externalCandidateId: string;
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  city?: string;
+  sectorGroup?: string;
+  personalStatus?: string;
+  availabilityStatus?: string;
+  similarity: number;
+  matchScore?: number;
+  engineEligible?: boolean;
+}
+
+export interface SemanticMatchesResult {
+  enabled: boolean;
+  internalCandidateId: string;
+  internalEmbedded: boolean;
+  generatedAt: string;
+  coverage: {
+    externalsConsidered: number;
+    externalsEmbedded: number;
+  };
+  rows: SemanticMatchRow[];
+}
+
+export interface SemanticBackfillState {
+  status: 'idle' | 'running' | 'done' | 'error';
+  progressCurrent: number;
+  progressTotal: number;
+  embedded: number;
+  failed: number;
+  startedAt?: string;
+  finishedAt?: string;
+  lastError?: string;
+}
+
+export const semanticApi = {
+  matches: (internalId: string, query: { limit?: number } = {}) =>
+    api.get<SemanticMatchesResult>(`/candidates/internal/${internalId}/semantic-matches`, query),
+  backfillStart: () =>
+    api.post<SemanticBackfillState>('/matches/semantic-backfill'),
+  backfillState: () =>
+    api.get<SemanticBackfillState>('/matches/semantic-backfill/state'),
+};

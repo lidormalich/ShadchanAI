@@ -136,6 +136,13 @@ internalCandidateRouter.get(
   ctrl.compatibilityBoardHandler,
 );
 
+// Semantic (vector) matches — the "הצעה חכמה" tab.
+internalCandidateRouter.get(
+  '/:id/semantic-matches',
+  validate({ params: IdParamSchema }),
+  ctrl.semanticMatchesHandler,
+);
+
 const PairCheckBodySchema = z.object({
   externalCandidateId: z.string().regex(/^[a-f\d]{24}$/i),
   mode: z.enum(['strict', 'discovery']).optional(),

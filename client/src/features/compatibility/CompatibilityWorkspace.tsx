@@ -26,7 +26,7 @@ import {
   Sparkles,
   Target,
 } from 'lucide-react';
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Badge,
@@ -46,11 +46,13 @@ import { label } from '@/utils/labels';
 import {
   compatibilityApi,
   pairReviewsApi,
+  semanticApi,
   type CompatibilityBoard,
   type CompatibilityBucket,
   type CompatibilityRow,
   type PairCheckResult,
   type PairReviewStatus,
+  type SemanticMatchRow,
 } from '@/services/api/pair-reviews';
 import { matchesApi } from '@/services/api/matches';
 import { externalCandidatesApi } from '@/services/api/candidates';
@@ -108,6 +110,13 @@ export function CompatibilityWorkspace({ internalCandidateId }: { internalCandid
     queryFn: () => compatibilityApi.board(internalCandidateId, { mode: 'strict' }),
   });
 
+  // Semantic matches — shared cache key with the tab content, so this
+  // top-level fetch also feeds the tab badge.
+  const semantic = useQuery({
+    queryKey: ['semantic-matches', internalCandidateId],
+    queryFn: () => semanticApi.matches(internalCandidateId),
+  });
+
   const refetch = () => board.refetch();
 
   if (board.isLoading) return <LoadingSkeleton rows={8} />;
@@ -133,26 +142,41 @@ export function CompatibilityWorkspace({ internalCandidateId }: { internalCandid
       />
 
       <Tabs
-        tabs={(['suitable', 'weak', 'forced', 'blocked', 'historical'] as CompatibilityBucket[]).map((b) => ({
-          id: b,
-          label: (
-            <span className="inline-flex items-center gap-1.5">
-              {BUCKET_ICON[b]}
-              {BUCKET_LABEL[b]}
-            </span>
-          ),
-          badge: <Badge tone={BUCKET_TONE[b]}>{data.totals[b]}</Badge>,
-          content: (
-            <BucketSection
-              bucket={b}
-              rows={data.rows.filter((r) => r.bucket === b)}
-              onMark={setReviewTarget}
-              onForce={setForceTarget}
-              onDrilldown={setDrilldownTarget}
-              internalCandidateId={internalCandidateId}
-            />
-          ),
-        }))}
+        tabs={[
+          ...(['suitable', 'weak', 'forced', 'blocked', 'historical'] as CompatibilityBucket[]).map((b) => ({
+            id: b,
+            label: (
+              <span className="inline-flex items-center gap-1.5">
+                {BUCKET_ICON[b]}
+                {BUCKET_LABEL[b]}
+              </span>
+            ),
+            badge: <Badge tone={BUCKET_TONE[b]}>{data.totals[b]}</Badge>,
+            content: (
+              <BucketSection
+                bucket={b}
+                rows={data.rows.filter((r) => r.bucket === b)}
+                onMark={setReviewTarget}
+                onForce={setForceTarget}
+                onDrilldown={setDrilldownTarget}
+                internalCandidateId={internalCandidateId}
+              />
+            ),
+          })),
+          {
+            id: 'semantic',
+            label: (
+              <span className="inline-flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4" />
+                הצעה חכמה
+              </span>
+            ),
+            badge: semantic.data?.data.enabled
+              ? <Badge tone="purple">{semantic.data.data.rows.length}</Badge>
+              : undefined,
+            content: <SemanticMatchesSection internalCandidateId={internalCandidateId} />,
+          },
+        ]}
       />
 
       {reviewTarget && (
@@ -307,6 +331,240 @@ function emptyHint(b: CompatibilityBucket): string {
     case 'historical': return 'אין הצעות בעבר עבור מועמד זה.';
   }
 }
+
+// ── Semantic matches tab ("הצעה חכמה") ──────────────────────
+//
+// Pure vector ranking — independent of the deterministic engine.
+// Includes the on-demand embeddings backfill ("סרוק עכשיו") with the
+// same 1s polling pattern MatchScanBar uses for the bulk scan.
+
+function SemanticMatchesSection({ internalCandidateId }: { internalCandidateId: string }) {
+  const qc = useQueryClient();
+
+  const matches = useQuery({
+    queryKey: ['semantic-matches', internalCandidateId],
+    queryFn: () => semanticApi.matches(internalCandidateId),
+  });
+
+  const backfill = useQuery({
+    queryKey: ['semantic-backfill'],
+    queryFn: () => semanticApi.backfillState(),
+    refetchInterval: (q) => (q.state.data?.data?.status === 'running' ? 1000 : false),
+  });
+
+  const startBackfill = useMutation({
+    mutationFn: () => semanticApi.backfillStart(),
+    onSuccess: () => {
+      toast.success('סריקת ההטמעות התחילה');
+      void qc.invalidateQueries({ queryKey: ['semantic-backfill'] });
+    },
+    onError: (e) => toast.error('הפעלת הסריקה נכשלה', (e as Error).message),
+  });
+
+  const bf = backfill.data?.data;
+  const running = bf?.status === 'running';
+
+  // On running → done transition, refresh the ranked list.
+  const prevStatus = useRef<string | undefined>(bf?.status);
+  useEffect(() => {
+    if (prevStatus.current === 'running' && bf?.status === 'done') {
+      toast.success(`הסריקה הושלמה — ${bf.embedded} מועמדים הוטמעו`);
+      void qc.invalidateQueries({ queryKey: ['semantic-matches'] });
+    }
+    prevStatus.current = bf?.status;
+  }, [bf?.status, bf?.embedded, qc]);
+
+  if (matches.isLoading) return <LoadingSkeleton rows={6} />;
+  if (matches.isError) {
+    return (
+      <ErrorState
+        description={(matches.error as Error).message}
+        onRetry={() => matches.refetch()}
+      />
+    );
+  }
+  const data = matches.data?.data;
+  if (!data) return null;
+
+  if (!data.enabled) {
+    return (
+      <Card className="p-6">
+        <EmptyState
+          title="התאמה סמנטית כבויה"
+          description="הפעל את המתג 'התאמה סמנטית (וקטורים)' כדי לדרג מועמדים לפי דמיון בטקסטים החופשיים."
+        />
+        <div className="text-center mt-2">
+          <Link to="/settings/matching" className="text-sm text-brand-700 hover:underline">
+            מעבר להגדרות ← כללי התאמה
+          </Link>
+        </div>
+      </Card>
+    );
+  }
+
+  const coveragePct = data.coverage.externalsConsidered > 0
+    ? Math.round((data.coverage.externalsEmbedded / data.coverage.externalsConsidered) * 100)
+    : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Coverage + scan-now bar */}
+      <Card>
+        <CardBody className="flex items-center gap-3 flex-wrap">
+          <Sparkles className="h-5 w-5 text-purple-600" />
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold">דירוג וקטורי לפי דמיון פרופילים</h3>
+            <div className="text-xs text-ink-muted num">
+              {data.coverage.externalsEmbedded} מתוך {data.coverage.externalsConsidered} מועמדים
+              מוטמעים ({coveragePct}%)
+              {!data.internalEmbedded && ' · המועמד/ת עדיין לא הוטמע/ה — לחץ "סרוק עכשיו"'}
+            </div>
+            {running && bf && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-bg-subtle rounded-full overflow-hidden max-w-xs">
+                  <div
+                    className="bg-purple-500 h-full rounded-full transition-all"
+                    style={{
+                      width: bf.progressTotal > 0
+                        ? `${Math.round((bf.progressCurrent / bf.progressTotal) * 100)}%`
+                        : '0%',
+                    }}
+                  />
+                </div>
+                <span className="text-[11px] text-ink-muted num">
+                  {bf.progressCurrent}/{bf.progressTotal}
+                </span>
+              </div>
+            )}
+            {bf?.status === 'error' && bf.lastError && (
+              <div className="text-[11px] text-danger mt-1">{bf.lastError}</div>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+            onClick={() => matches.refetch()}
+            loading={matches.isFetching}
+          >
+            רענון
+          </Button>
+          <Button
+            size="sm"
+            leftIcon={<Sparkles className="h-3.5 w-3.5" />}
+            onClick={() => startBackfill.mutate()}
+            loading={startBackfill.isPending || running}
+            disabled={running}
+          >
+            {running ? 'סורק…' : 'סרוק עכשיו'}
+          </Button>
+        </CardBody>
+      </Card>
+
+      {/* Ranked list */}
+      {data.rows.length === 0 ? (
+        <Card className="p-6">
+          <EmptyState
+            title="אין עדיין תוצאות סמנטיות"
+            description={
+              data.internalEmbedded
+                ? 'המועמדים החיצוניים עדיין לא הוטמעו — לחץ "סרוק עכשיו" כדי להטמיע את כולם.'
+                : 'הפרופיל של המועמד/ת עדיין לא הוטמע. לחץ "סרוק עכשיו" ורענן בסיום.'
+            }
+          />
+        </Card>
+      ) : (
+        <Card>
+          <CardBody className="!p-0">
+            <ul className="divide-y divide-border">
+              {data.rows.map((row) => (
+                <SemanticRowItem
+                  key={row.externalCandidateId}
+                  row={row}
+                  internalCandidateId={internalCandidateId}
+                />
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+const SemanticRowItem = memo(function SemanticRowItem({
+  row,
+  internalCandidateId,
+}: {
+  row: SemanticMatchRow;
+  internalCandidateId: string;
+}) {
+  const qc = useQueryClient();
+  const createSuggestion = useMutation({
+    mutationFn: () => matchesApi.createManual({
+      internalCandidateId,
+      externalCandidateId: row.externalCandidateId,
+      mode: 'strict',
+    }),
+    onSuccess: () => {
+      toast.success('הצעה נוצרה');
+      void qc.invalidateQueries({ queryKey: ['compatibility-board', internalCandidateId] });
+      void qc.invalidateQueries({ queryKey: ['internal', internalCandidateId, 'suggestions'] });
+    },
+    onError: (e) => toast.error('יצירת הצעה נכשלה', (e as Error).message),
+  });
+
+  const name = `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim() || 'ללא שם';
+  const pct = Math.round(row.similarity * 100);
+
+  return (
+    <li className="px-5 py-3.5">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              to={`/candidates/external/${row.externalCandidateId}`}
+              className="text-sm font-medium hover:underline truncate"
+            >
+              {name}
+            </Link>
+            {typeof row.matchScore === 'number' && (
+              <Badge tone={row.engineEligible ? 'success' : 'warning'}>
+                מנוע: {row.matchScore}
+              </Badge>
+            )}
+          </div>
+          <div className="text-xs text-ink-muted flex items-center gap-3 flex-wrap">
+            {typeof row.age === 'number' && <span className="num">גיל {row.age}</span>}
+            {row.city && <span>{row.city}</span>}
+            {row.sectorGroup && <span>{label('sectorGroup', row.sectorGroup)}</span>}
+            {row.personalStatus && <span>{label('personalStatus', row.personalStatus)}</span>}
+          </div>
+          <div className="flex items-center gap-2 max-w-sm">
+            <div className="flex-1 h-1.5 bg-bg-subtle rounded-full overflow-hidden">
+              <div
+                className="bg-purple-500 h-full rounded-full"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="text-[11px] text-ink-muted num w-16">דמיון {pct}%</span>
+          </div>
+        </div>
+
+        <div className="shrink-0 flex flex-col items-end gap-1.5 w-32">
+          <div className="text-2xl font-semibold num text-purple-600">{pct}%</div>
+          <Button
+            size="sm"
+            onClick={() => createSuggestion.mutate()}
+            loading={createSuggestion.isPending}
+          >
+            צור הצעה
+          </Button>
+        </div>
+      </div>
+    </li>
+  );
+});
 
 // ── Single row ──────────────────────────────────────────────
 

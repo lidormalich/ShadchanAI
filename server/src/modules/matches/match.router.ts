@@ -31,6 +31,11 @@ matchRouter.post('/scan', ctrl.scanHandler);
 matchRouter.get('/scan/state', ctrl.scanStateHandler);
 matchRouter.get('/scan/results', ctrl.scanResultsHandler);
 
+// Semantic embeddings backfill (the "סרוק עכשיו" button in the
+// הצעה חכמה tab). Also registered before '/:id'.
+matchRouter.post('/semantic-backfill', ctrl.semanticBackfillHandler);
+matchRouter.get('/semantic-backfill/state', ctrl.semanticBackfillStateHandler);
+
 matchRouter.get('/:id', validate({ params: IdParamSchema }), ctrl.getHandler);
 
 matchRouter.post('/evaluate', validate({ body: EvaluatePairSchema }), ctrl.evaluateHandler);

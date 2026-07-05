@@ -16,6 +16,7 @@ import type {
 } from './internal-candidate.validator.js';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
 import { getCandidateInsight, rebuildCandidateInsight } from '../../services/ai/candidate-learning.service.js';
+import { getSemanticMatchesForInternal } from '../../services/embedding/semantic-match.service.js';
 import { env } from '../../config/env.js';
 import { buildPublicPhotoUrl } from '../../services/storage/candidate-photo.service.js';
 
@@ -34,6 +35,16 @@ export async function getHandler(req: Request, res: Response, next: NextFunction
     const { id } = getValidatedParams<{ id: string }>(req);
     const doc = await svc.getInternalCandidateById(id);
     ok(res, doc);
+  } catch (e) { next(e); }
+}
+
+export async function semanticMatchesHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const rawLimit = Number(req.query['limit']);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : undefined;
+    ok(res, await getSemanticMatchesForInternal(id, limit));
   } catch (e) { next(e); }
 }
 
