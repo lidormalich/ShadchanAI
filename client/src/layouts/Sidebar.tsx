@@ -11,6 +11,7 @@ import {
   MessageCircle,
   MessageSquare,
   Settings,
+  Sparkles,
   UserCircle,
   Users,
 } from 'lucide-react';
@@ -42,6 +43,7 @@ const NAV: NavGroup[] = [
     items: [
       { to: '/inbox', label: 'תיבת ההצעות', icon: <MailOpen className="h-4 w-4" />, badge: 'inbox' },
       { to: '/matches', label: 'הצעות שידוך', icon: <Heart className="h-4 w-4" /> },
+      { to: '/smart-matches', label: 'הצעה חכמה', icon: <Sparkles className="h-4 w-4" /> },
       { to: '/chats', label: 'שיחות', icon: <MessageSquare className="h-4 w-4" /> },
       { to: '/review', label: 'תור סקירת פרופילים', icon: <Inbox className="h-4 w-4" /> },
     ],

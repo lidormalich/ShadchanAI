@@ -31,6 +31,9 @@ const ProposalInboxPage = lazy(() =>
 const MatchDetailPage = lazy(() =>
   import('./pages/matches/MatchDetailPage').then((m) => ({ default: m.MatchDetailPage })),
 );
+const SmartMatchesPage = lazy(() =>
+  import('./pages/matches/SmartMatchesPage').then((m) => ({ default: m.SmartMatchesPage })),
+);
 const ChatsPage = lazy(() => import('./pages/chats/ChatsPage').then((m) => ({ default: m.ChatsPage })));
 const ChannelsPage = lazy(() => import('./pages/channels/ChannelsPage').then((m) => ({ default: m.ChannelsPage })));
 const ChannelMappingsPage = lazy(() =>
@@ -100,6 +103,7 @@ const appChildren = [
   { path: 'inbox', element: lazyPage(<ProposalInboxPage />) },
   { path: 'matches', element: lazyPage(<MatchesPipelinePage />) },
   { path: 'matches/:id', element: lazyPage(<MatchDetailPage />) },
+  { path: 'smart-matches', element: lazyPage(<SmartMatchesPage />) },
   { path: 'chats', element: lazyPage(<ChatsPage />) },
   { path: 'channels', element: lazyPage(<ChannelsPage />) },
   { path: 'channels/mappings', element: lazyPage(<ChannelMappingsPage />) },

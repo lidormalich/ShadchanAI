@@ -337,8 +337,9 @@ function emptyHint(b: CompatibilityBucket): string {
 // Pure vector ranking — independent of the deterministic engine.
 // Includes the on-demand embeddings backfill ("סרוק עכשיו") with the
 // same 1s polling pattern MatchScanBar uses for the bulk scan.
+// Exported: also hosted standalone by pages/matches/SmartMatchesPage.
 
-function SemanticMatchesSection({ internalCandidateId }: { internalCandidateId: string }) {
+export function SemanticMatchesSection({ internalCandidateId }: { internalCandidateId: string }) {
   const qc = useQueryClient();
 
   const matches = useQuery({
