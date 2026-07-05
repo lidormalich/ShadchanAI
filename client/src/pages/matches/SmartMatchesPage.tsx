@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Card, CardBody, Select } from '@/components/ui/primitives';
-import { EmptyState, LoadingSkeleton } from '@/components/states/states';
+import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { SemanticMatchesSection } from '@/features/compatibility/CompatibilityWorkspace';
 
@@ -20,9 +20,11 @@ export function SmartMatchesPage() {
   const [params, setParams] = useSearchParams();
   const selectedId = params.get('candidate') ?? '';
 
+  // limit must respect the server's PAGINATION.MAX_LIMIT (100); the
+  // pagination schema's sort field is `sort`, not `sortBy`.
   const candidates = useQuery({
     queryKey: ['internal-candidates', 'smart-matches-picker'],
-    queryFn: () => internalCandidatesApi.list({ status: 'active', limit: 200, sortBy: 'firstName' }),
+    queryFn: () => internalCandidatesApi.list({ status: 'active', limit: 100, sort: 'firstName', order: 'asc' }),
   });
 
   const items = candidates.data?.data ?? [];
@@ -59,6 +61,11 @@ export function SmartMatchesPage() {
 
       {candidates.isLoading ? (
         <LoadingSkeleton rows={4} />
+      ) : candidates.isError ? (
+        <ErrorState
+          description={(candidates.error as Error).message}
+          onRetry={() => candidates.refetch()}
+        />
       ) : !selectedId ? (
         <Card className="p-6">
           <EmptyState
