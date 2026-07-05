@@ -9,7 +9,7 @@
 
 import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Camera, Copy, ImageOff, Link2, Trash2, Upload } from 'lucide-react';
+import { Camera, Copy, ExternalLink, ImageOff, Link2, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/primitives';
 import { AuthImage } from '@/components/AuthImage';
 import { toast } from '@/components/ui/Toast';
@@ -156,12 +156,19 @@ export function PhotoTab({ type, candidateId, name, photoUrl, cardText }: {
         {!photoUrl && <p className="text-xs text-ink-faint">אין תמונה — יועתק הכרטיס בלבד.</p>}
         {shareUrl && (
           <div className="flex items-center gap-2">
-            <input
-              readOnly
-              value={shareUrl}
-              onFocus={(e) => e.target.select()}
-              className="flex-1 min-w-0 rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs num"
-            />
+            <a
+              href={shareUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={shareUrl}
+              className="flex-1 min-w-0 truncate rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs text-brand hover:underline"
+            >
+              {shareUrl}
+            </a>
+            <Button size="sm" variant="secondary" leftIcon={<ExternalLink className="h-3.5 w-3.5" />}
+              onClick={() => window.open(shareUrl, '_blank', 'noopener')}>
+              פתח
+            </Button>
             <Button size="sm" variant="ghost" leftIcon={<Copy className="h-3.5 w-3.5" />}
               onClick={() => copy(shareUrl, 'הלינק הועתק')}>
               העתק
