@@ -39,5 +39,8 @@ temp/
 .fastembed_cache/
 .claude/settings.local.json
 
-# Runtime data
+# Runtime data (WhatsApp sessions/media = credentials — never commit)
 server/data/
+/data/
+**/wa-sessions/
+**/wa-media/

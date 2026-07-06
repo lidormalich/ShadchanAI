@@ -1,0 +1,30 @@
+ShadchanAI — Proprietary Software License
+Copyright (c) 2026 Lidor Maliach. All rights reserved.
+
+This source code is made publicly viewable for reference and transparency only.
+It is NOT open-source software. No license is granted to use, run, copy, modify,
+merge, publish, distribute, sublicense, or sell any part of this software, in
+whole or in part, without the prior written permission of the copyright holder.
+
+You MAY:
+  - View and read the source code within this repository.
+  - Reference it for personal, educational, or evaluation purposes.
+
+You MAY NOT, without prior written permission:
+  - Use this software or any derivative of it in production or for any purpose.
+  - Copy, fork for reuse, redistribute, or host the software or its substantial parts.
+  - Modify the software and distribute the modified version.
+  - Use the software to provide a service to third parties.
+  - Remove or alter this license or the copyright notices.
+
+Third-party dependencies retain their own respective licenses.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+For licensing inquiries, contact: lidormalich@gmail.com
