@@ -318,9 +318,9 @@ async function computeSemantic(
   externalId: string,
   warnings: string[],
 ): Promise<SandboxSemanticResult> {
-  if (!(await isSemanticEnabled())) return { enabled: false };
-
   try {
+    if (!(await isSemanticEnabled())) return { enabled: false };
+
     const textsA = serializeInternalChunks(toSerializerDocInternal(profileA, genderA));
     const textsB = serializeExternalChunks(toSerializerDocExternal(profileB, genderB));
 

@@ -2,6 +2,7 @@ import { clsx } from 'clsx';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
+  ClipboardCheck,
   ClipboardList,
   Heart,
   Hourglass,
@@ -44,6 +45,7 @@ const NAV: NavGroup[] = [
       { to: '/inbox', label: 'תיבת ההצעות', icon: <MailOpen className="h-4 w-4" />, badge: 'inbox' },
       { to: '/matches', label: 'הצעות שידוך', icon: <Heart className="h-4 w-4" /> },
       { to: '/smart-matches', label: 'הצעה חכמה', icon: <Sparkles className="h-4 w-4" /> },
+      { to: '/check-candidates', label: 'בדוק מועמדים', icon: <ClipboardCheck className="h-4 w-4" /> },
       { to: '/chats', label: 'שיחות', icon: <MessageSquare className="h-4 w-4" /> },
       { to: '/review', label: 'תור סקירת פרופילים', icon: <Inbox className="h-4 w-4" /> },
     ],
