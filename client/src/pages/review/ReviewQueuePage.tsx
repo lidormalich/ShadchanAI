@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Filter, Inbox, Link2, RefreshCw, Sparkles, UserPlus, X } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Filter, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
@@ -28,6 +28,7 @@ import { toast } from '@/components/ui/Toast';
 import {
   extractionApi,
   type ExtractedProfileInput,
+  type FailedQueueItem,
   type IngestionDecision,
   type IngestionLogItem,
   type ReviewQueueItem,
@@ -57,16 +58,23 @@ export function ReviewQueuePage() {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const focusMessageId = searchParams.get('messageId');
-  const [tab, setTab] = useState<'review' | 'duplicates' | 'filtered'>('review');
+  const [tab, setTab] = useState<'review' | 'duplicates' | 'failed' | 'filtered'>('review');
 
   const queue = useQuery({
     queryKey: ['extraction', 'review-queue'],
     queryFn: () => extractionApi.reviewQueue(100),
   });
+  // Page-level failed query drives the tab badge count; the section below
+  // shares the same queryKey so React Query serves both from one fetch.
+  const failed = useQuery({
+    queryKey: ['extraction', 'failed-queue'],
+    queryFn: () => extractionApi.failedQueue(100),
+  });
 
   const rows = queue.data?.data ?? [];
   const pendingRows = rows.filter((r) => !r.suspectedCandidate);
   const duplicateRows = rows.filter((r) => r.suspectedCandidate);
+  const failedCount = failed.data?.data.length ?? 0;
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
@@ -117,14 +125,19 @@ export function ReviewQueuePage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">
-            {tab === 'review' ? 'תור סקירה' : tab === 'duplicates' ? 'כפולים אפשריים' : 'הודעות שסוננו'}
+            {tab === 'review' ? 'תור סקירה'
+              : tab === 'duplicates' ? 'כפולים אפשריים'
+              : tab === 'failed' ? 'נפלו בחילוץ'
+              : 'הודעות שסוננו'}
           </h2>
           <p className="text-sm text-ink-muted">
             {tab === 'review'
               ? 'הודעות פרופיל שה-AI לא היה בטוח בהן — אשר, דחה או הרץ מחדש.'
               : tab === 'duplicates'
                 ? 'פרופילים חדשים שדומים למועמד קיים — קשר לקיים או צור חדש.'
-                : 'הודעות שהגיעו אך לא נכנסו לחילוץ — וסיבת הסינון. אפשר לאלץ עיבוד מחדש.'}
+                : tab === 'failed'
+                  ? 'פרופילים שהחילוץ שלהם נכשל (בדרך כלל מגבלת קצב AI) — החזר אותם לתור לעיבוד מחדש.'
+                  : 'הודעות שהגיעו אך לא נכנסו לחילוץ — וסיבת הסינון. אפשר לאלץ עיבוד מחדש.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -137,7 +150,7 @@ export function ReviewQueuePage() {
           >
             {refreshAll.isPending ? 'מרענן…' : 'רענן כללי'}
           </Button>
-          {tab !== 'filtered' && (
+          {(tab === 'review' || tab === 'duplicates') && (
             <Button variant="secondary" onClick={() => queue.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
               רענן
             </Button>
@@ -163,12 +176,22 @@ export function ReviewQueuePage() {
         >
           כפולים אפשריים
         </TabButton>
+        <TabButton
+          active={tab === 'failed'}
+          onClick={() => setTab('failed')}
+          icon={<AlertTriangle className="h-4 w-4" />}
+          count={failedCount}
+        >
+          נפלו
+        </TabButton>
         <TabButton active={tab === 'filtered'} onClick={() => setTab('filtered')} icon={<Filter className="h-4 w-4" />}>
           הודעות שסוננו
         </TabButton>
       </div>
 
-      {tab === 'filtered' ? (
+      {tab === 'failed' ? (
+        <FailedMessagesSection />
+      ) : tab === 'filtered' ? (
         <FilteredMessagesSection />
       ) : queue.isError ? (
         <ErrorState description={(queue.error as Error).message} onRetry={() => queue.refetch()} />
@@ -242,6 +265,131 @@ function TabButton({ active, onClick, icon, count, children }: {
         <Badge tone={active ? 'brand' : 'neutral'}>{count}</Badge>
       )}
     </button>
+  );
+}
+
+// ── Failed extractions: casualties (usually AI rate-limit) ──
+// Every message whose extraction ended in FAILED, with how many times it fell
+// and why. Operators can push one — or all — back into the throttled queue.
+function humanizeFailure(reason?: string): { text: string; rateLimit: boolean } {
+  if (!reason) return { text: 'סיבה לא ידועה', rateLimit: false };
+  const r = reason.toLowerCase();
+  if (r.includes('429') || r.includes('rate limit') || r.includes('rate_limit')) {
+    return { text: 'מגבלת קצב AI (rate limit)', rateLimit: true };
+  }
+  if (r.includes('timeout') || r.includes('abort')) return { text: 'פסק זמן (timeout)', rateLimit: false };
+  if (r.includes('vision')) return { text: 'כשל חילוץ מתמונה', rateLimit: false };
+  return { text: reason.slice(0, 120), rateLimit: false };
+}
+
+function FailedMessagesSection() {
+  const qc = useQueryClient();
+  const failed = useQuery({
+    queryKey: ['extraction', 'failed-queue'],
+    queryFn: () => extractionApi.failedQueue(100),
+  });
+  const rows = failed.data?.data ?? [];
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['extraction', 'failed-queue'] });
+    qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
+  };
+
+  const requeue = useMutation({
+    mutationFn: (id: string) => extractionApi.requeue(id),
+    onSuccess: () => { toast.success('הוחזר לתור', 'יעובד מחדש בקצב מבוקר'); invalidate(); },
+    onError: (e: Error) => toast.error('ההחזרה לתור נכשלה', e.message),
+  });
+  const requeueAll = useMutation({
+    mutationFn: () => extractionApi.requeueAllFailed(),
+    onSuccess: (res) => { toast.success('כל הנפולים הוחזרו לתור', `${res.data.requeued} הודעות`); invalidate(); },
+    onError: (e: Error) => toast.error('ההחזרה לתור נכשלה', e.message),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-sm text-ink-muted">
+          {rows.length > 0
+            ? `${rows.length} הודעות נפלו בחילוץ. החזר לתור — הן יעובדו מחדש בקצב שלא יפוצץ שוב את מגבלת ה-AI.`
+            : ''}
+        </p>
+        <div className="flex items-center gap-2">
+          {rows.length > 0 && (
+            <Button
+              variant="primary"
+              onClick={() => requeueAll.mutate()}
+              disabled={requeueAll.isPending}
+              leftIcon={<RotateCcw className="h-4 w-4" />}
+            >
+              {requeueAll.isPending ? 'מחזיר…' : 'החזר הכל לתור'}
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => failed.refetch()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+            רענן
+          </Button>
+        </div>
+      </div>
+
+      {failed.isError ? (
+        <ErrorState description={(failed.error as Error).message} onRetry={() => failed.refetch()} />
+      ) : failed.isLoading ? (
+        <LoadingSkeleton rows={6} />
+      ) : !rows.length ? (
+        <EmptyState
+          icon={<AlertTriangle className="h-10 w-10 text-ink-faint" />}
+          title="אין נפולים"
+          description="כל החילוצים הסתיימו בהצלחה — אין הודעות שנפלו."
+        />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((item) => (
+            <FailedCard
+              key={item.messageId}
+              item={item}
+              onRequeue={() => requeue.mutate(item.messageId)}
+              busy={requeue.isPending || requeueAll.isPending}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FailedCard({ item, onRequeue, busy }: {
+  item: FailedQueueItem;
+  onRequeue: () => void;
+  busy: boolean;
+}) {
+  const reason = humanizeFailure(item.failureReason);
+  const when = item.completedAt ?? item.createdAt;
+  return (
+    <Card>
+      <CardBody className="space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge tone="danger">נפל {item.retryCount > 0 ? `${item.retryCount} פעמים` : ''}</Badge>
+            <Badge tone={reason.rateLimit ? 'warning' : 'neutral'}>{reason.text}</Badge>
+            <span className="text-xs text-ink-muted">{new Date(when).toLocaleString('he-IL')}</span>
+            <span className="text-xs text-ink-faint">מ־{item.accountDisplayName}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link to={`/chats?conversation=${item.conversationId}`} className="text-xs underline text-brand">
+              פתח שיחה
+            </Link>
+            <Button variant="primary" onClick={onRequeue} disabled={busy} leftIcon={<RotateCcw className="h-4 w-4" />}>
+              החזר לתור
+            </Button>
+          </div>
+        </div>
+        {item.body && (
+          <div className="rounded-md border border-border bg-bg-subtle/40 p-2 text-sm whitespace-pre-wrap max-h-40 overflow-y-auto">
+            {item.body}
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

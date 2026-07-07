@@ -14,6 +14,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import type { ChatMessage, ProviderChatOptions, ProviderChatResponse } from '../ai.types.js';
+import { noteRateLimit, noteSuccess } from '../ai-cooldown.js';
 
 export interface OpenAICompatibleConfig {
   baseUrl: string;
@@ -75,6 +76,11 @@ export class OpenAICompatibleClient {
 
         if (response.status === 429 || response.status >= 500) {
           const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
+          // Publish the rate-limit signal to the global cooldown bus so the
+          // extraction queue backs off at the SOURCE — a per-request retry
+          // alone can't relieve an org-wide TPM saturation we're causing
+          // ourselves with concurrent work. Only 429 (rate limit), not 5xx.
+          if (response.status === 429) noteRateLimit(retryAfter);
           const delayMs = retryAfter ?? backoffBase * Math.pow(2, attempt);
           if (attempt < maxRetries) {
             await sleep(delayMs);
@@ -100,6 +106,8 @@ export class OpenAICompatibleClient {
           throw new Error('Provider returned empty content');
         }
 
+        // Clean call → pressure eased; decay any cooldown escalation.
+        noteSuccess();
         return {
           content,
           inputTokens: data.usage?.prompt_tokens,

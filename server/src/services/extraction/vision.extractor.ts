@@ -22,6 +22,7 @@ import { env } from '../../config/env.js';
 import { getSettingCached } from '../../modules/settings/settings.service.js';
 import { parseAndValidate } from '../ai/ai.validators.js';
 import { logAIRequest } from '../ai/ai.logger.js';
+import { noteRateLimit, noteSuccess } from '../ai/ai-cooldown.js';
 import { AIExtractedProfileSchema, type AIExtractedProfile } from './ai.extractor.js';
 import { readMediaFile } from '../whatsapp/media.service.js';
 import { createLogger } from '../../utils/logger.js';
@@ -105,9 +106,18 @@ export async function extractProfileFromImage(mediaFilename: string): Promise<Vi
       }),
     });
     if (!res.ok) {
+      // Vision is OpenAI-only and image tokens are the heaviest per-call load,
+      // so it's the first thing to trip the org TPM. Feed the 429 into the
+      // global cooldown so the queue paces the NEXT items instead of marching
+      // every image card straight into the same saturated window.
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers.get('retry-after'));
+        noteRateLimit(Number.isFinite(retryAfter) ? retryAfter * 1000 : null);
+      }
       const text = await res.text().catch(() => '');
       throw new Error(`openai_vision_http_${res.status}: ${text.slice(0, 200)}`);
     }
+    noteSuccess();
     const json = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };

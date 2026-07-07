@@ -11,10 +11,12 @@
 import { Types } from 'mongoose';
 import {
   AvailabilityStatus,
+  ChannelRole,
   ExtractionMethod,
   ExternalCandidateStatus,
   ExternalSourceType,
   Gender,
+  MessageDirection,
   MessageExtractionStatus,
   MessageIngestionDecision,
   PersonalStatus,
@@ -22,12 +24,13 @@ import {
 } from '@shadchanai/shared';
 import { Message, ExternalCandidate, ChatMapping, type IMessage } from '../../models/index.js';
 import { processMessageExtraction } from '../../services/extraction/orchestrator.js';
+import { enqueueExtraction } from '../../services/extraction/queue.js';
 import { extractProfileFromText, type ExtractedProfile } from '../../services/extraction/regex.extractor.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { normalizePhone } from '../../utils/phone.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import { attachSourcePhotoToExternalCandidate, runExternalPhotoBackfillNow } from '../../services/storage/photo-maintenance.service.js';
-import { scheduleInitialEmbedding } from '../../services/embedding/embedding.service.js';
+import { scheduleNewExternalCandidateAlert } from '../../services/notifications/new-match-alert.service.js';
 import { startSemanticBackfill } from '../../services/embedding/semantic-backfill.service.js';
 import { createLogger } from '../../utils/logger.js';
 
@@ -137,6 +140,79 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
         : undefined,
     };
   });
+}
+
+// ── Failed queue (extractions that fell — usually rate-limit) ──
+// Every profiles_source inbound message whose extraction ended in FAILED,
+// with retryCount (how many times it fell) and the failure reason, so the
+// operator can see the casualties and push them back into the pipeline.
+
+const FAILED_SCOPE = {
+  channelRole: ChannelRole.PROFILES_SOURCE,
+  direction: MessageDirection.INBOUND,
+  'extraction.status': MessageExtractionStatus.FAILED,
+} as const;
+
+export async function listFailedQueue(limit: number): Promise<unknown[]> {
+  const capped = Math.min(limit || 50, 200);
+  const messages = await Message.find(FAILED_SCOPE)
+    .sort({ 'extraction.completedAt': -1 })
+    .limit(capped)
+    .select('_id conversationId channelId accountDisplayName body mediaCaption mediaUrl createdAt extraction')
+    .lean()
+    .exec();
+
+  return messages.map((m) => {
+    const effectiveText = m.body?.trim() || m.mediaCaption?.trim() || '';
+    return {
+      messageId: String(m._id),
+      conversationId: String(m.conversationId),
+      channelId: m.channelId,
+      accountDisplayName: m.accountDisplayName,
+      body: effectiveText || m.body,
+      mediaUrl: m.mediaUrl,
+      createdAt: m.createdAt,
+      retryCount: m.extraction?.retryCount ?? 0,
+      failureReason: m.extraction?.failureReason,
+      attemptedAt: m.extraction?.attemptedAt,
+      completedAt: m.extraction?.completedAt,
+    };
+  });
+}
+
+/**
+ * Push one failed (or otherwise stuck) message back into the live extraction
+ * queue. Clears the retry cap so a message the reconciler already gave up on
+ * gets a fresh set of attempts, then enqueues it — the queue's cooldown +
+ * spacing keep the retry from re-blowing the AI rate limit.
+ */
+export async function requeueExtraction(messageId: string): Promise<{ messageId: string; queued: boolean }> {
+  if (!messageId || !Types.ObjectId.isValid(messageId)) {
+    throw new ValidationError('Invalid messageId');
+  }
+  const exists = await Message.exists({ _id: messageId });
+  if (!exists) throw new NotFoundError('Message', messageId);
+  await Message.updateOne(
+    { _id: messageId },
+    { $set: { 'extraction.retryCount': 0 }, $unset: { 'extraction.failureReason': '' } },
+  ).exec();
+  await enqueueExtraction(messageId);
+  return { messageId, queued: true };
+}
+
+/** Bulk "requeue all" — same reset + enqueue for every currently-failed message. */
+export async function requeueAllFailed(limit = 500): Promise<{ requeued: number }> {
+  const capped = Math.min(limit || 500, 1000);
+  const failed = await Message.find(FAILED_SCOPE).select('_id').limit(capped).lean().exec();
+  for (const m of failed) {
+    await Message.updateOne(
+      { _id: m._id },
+      { $set: { 'extraction.retryCount': 0 }, $unset: { 'extraction.failureReason': '' } },
+    ).exec();
+    void enqueueExtraction(String(m._id)).catch(() => undefined);
+  }
+  log.info({ requeued: failed.length }, 'requeue_all_failed');
+  return { requeued: failed.length };
 }
 
 // ── Ingestion log (what arrived & how it was routed) ─────
@@ -358,8 +434,9 @@ async function approveClaimed(
   }
 
   // Seed the semantic embedding immediately, same as the manual-create path —
-  // otherwise approved candidates skip semantic matching. Fire-and-forget, gated.
-  scheduleInitialEmbedding(String(created._id), 'external');
+  // otherwise approved candidates skip semantic matching. Also fires the
+  // manager match-alert when armed. Fire-and-forget, gated.
+  scheduleNewExternalCandidateAlert(String(created._id));
 
   return { candidateId: String(created._id), messageId: String(message._id) };
 }

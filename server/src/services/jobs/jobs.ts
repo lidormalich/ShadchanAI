@@ -94,11 +94,16 @@ registerJob({
       // A caption-only image card is extractable (orchestrator falls back
       // to mediaCaption) — the old body-only filter left such messages
       // stuck in `pending` forever if the process died mid-extraction.
+      // An IMAGE-ONLY card (no body, no caption) is ALSO extractable — the
+      // orchestrator runs vision on it — so include contentType=image too,
+      // otherwise a vision failure (e.g. rate-limit) orphans it in pending
+      // with no path back into the pipeline.
       $and: [
         {
           $or: [
             { body: { $exists: true, $ne: '' } },
             { mediaCaption: { $exists: true, $ne: '' } },
+            { contentType: 'image' },
           ],
         },
       ],

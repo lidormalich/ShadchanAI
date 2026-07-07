@@ -77,6 +77,21 @@ export type IngestionDecision =
   | 'ignored_match_sending'
   | 'ignored_unmapped';
 
+export interface FailedQueueItem {
+  messageId: string;
+  conversationId: string;
+  channelId: string;
+  accountDisplayName: string;
+  body?: string;
+  mediaUrl?: string;
+  createdAt: string;
+  /** How many times the extraction fell before giving up. */
+  retryCount: number;
+  failureReason?: string;
+  attemptedAt?: string;
+  completedAt?: string;
+}
+
 export interface IngestionLogItem {
   messageId: string;
   conversationId: string;
@@ -97,6 +112,12 @@ export const extractionApi = {
     api.post<ExtractionOutcome>(`/extraction/messages/${messageId}/run`),
   reviewQueue: (limit = 50) =>
     api.get<ReviewQueueItem[]>('/extraction/review-queue', { limit }),
+  failedQueue: (limit = 100) =>
+    api.get<FailedQueueItem[]>('/extraction/failed-queue', { limit }),
+  requeue: (messageId: string) =>
+    api.post<{ messageId: string; queued: boolean }>(`/extraction/messages/${messageId}/requeue`),
+  requeueAllFailed: () =>
+    api.post<{ requeued: number }>('/extraction/requeue-all-failed'),
   ingestionLog: (decision: IngestionDecision | 'ignored' | 'all' = 'ignored', limit = 100) =>
     api.get<IngestionLogItem[]>('/extraction/ingestion-log', { decision, limit }),
   approve: (messageId: string, opts: { profile?: ExtractedProfileInput; linkToCandidateId?: string } = {}) =>

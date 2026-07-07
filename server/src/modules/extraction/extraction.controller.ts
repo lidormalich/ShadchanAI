@@ -49,6 +49,33 @@ export async function reviewQueueHandler(req: Request, res: Response, next: Next
   } catch (e) { next(e); }
 }
 
+// ── Failed queue (extractions that fell) ─────────────────
+
+export async function failedQueueHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    ok(res, await svc.listFailedQueue(Number(req.query['limit'])));
+  } catch (e) { next(e); }
+}
+
+export async function requeueHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const messageId = String(req.params['messageId'] ?? '');
+    ok(res, await svc.requeueExtraction(messageId));
+  } catch (e) { next(e); }
+}
+
+export async function requeueAllFailedHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    ok(res, await svc.requeueAllFailed());
+  } catch (e) { next(e); }
+}
+
 // ── Ingestion log (what arrived & how it was routed) ─────
 
 export async function ingestionLogHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
