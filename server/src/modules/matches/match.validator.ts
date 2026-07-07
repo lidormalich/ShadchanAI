@@ -67,6 +67,15 @@ export const AcknowledgeResponseSchema = z.object({
   side: z.enum(['a', 'b']),
 });
 
+// Ad-hoc "בדוק מועמדים": two free-text blobs, no saved candidates required.
+export const SandboxCheckSchema = z.object({
+  sideA: z.string().trim().min(1).max(6000),
+  sideB: z.string().trim().min(1).max(6000),
+  mode: z.nativeEnum(SourceMode).default(SourceMode.STRICT),
+});
+
+export type SandboxCheckBody = z.infer<typeof SandboxCheckSchema>;
+
 export const SaveDraftSchema = z.object({
   side: z.enum(['a', 'b']),
   body: z.string().max(4000),

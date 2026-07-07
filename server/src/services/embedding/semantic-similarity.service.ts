@@ -144,6 +144,33 @@ export async function loadExternalChunksMap(
 }
 
 /**
+ * Batch-load chunk vectors for a set of internals. Mirror of
+ * loadExternalChunksMap — used when the query candidate is an EXTERNAL
+ * (a newly-entered profile) and we rank it against the internal pool.
+ * Internals with no vectors at all are omitted (no semantic signal).
+ */
+export async function loadInternalChunksMap(
+  internalIds: string[],
+): Promise<Map<string, CandidateChunks>> {
+  const out = new Map<string, CandidateChunks>();
+  if (internalIds.length === 0) return out;
+
+  const docs = await InternalCandidate
+    .find({ _id: { $in: internalIds }, 'embedding.modelId': { $exists: true } })
+    .select(VECTOR_SELECT)
+    .lean()
+    .exec();
+
+  for (const doc of docs) {
+    const chunks = toChunks(doc as LeanEmbedding);
+    if (ALL_CHUNK_TYPES.some((c) => chunks[c])) {
+      out.set(String((doc as { _id: unknown })._id), chunks);
+    }
+  }
+  return out;
+}
+
+/**
  * Pure fan-out: similarity of one internal's chunks against a
  * prefetched external-vector map. Returns undefined when there is
  * nothing to compare (keeps MatchingContext.semanticSimilarities

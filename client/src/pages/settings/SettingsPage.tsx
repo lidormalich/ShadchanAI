@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Brain, ChevronLeft, Coins, Cpu, Gauge, Plug, Shield, Sliders } from 'lucide-react';
+import { Bell, Brain, ChevronLeft, Coins, Cpu, Gauge, Plug, Shield, Sliders } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Input, Select } from '@/components/ui/primitives';
@@ -23,6 +23,7 @@ function SectionsList(): Section[] {
     { id: 'ai',          label: 'מנוע AI',      icon: <Cpu className="h-4 w-4" />,     content: <AiEngineSection /> },
     { id: 'pipeline',    label: 'עיבוד ולמידה', icon: <Brain className="h-4 w-4" />,   content: <PipelineSettingsSection /> },
     { id: 'ai-costs',    label: 'עלויות AI',    icon: <Coins className="h-4 w-4" />,   content: <AiCostsSection /> },
+    { id: 'notifications', label: 'התראות',     icon: <Bell className="h-4 w-4" />,    content: <NotificationsSettingsSection /> },
     { id: 'channels',    label: 'ערוצים',       icon: <Plug className="h-4 w-4" />,    content: <ChannelsSettingsSection /> },
   ];
 }
@@ -175,6 +176,28 @@ function SettingRowEditor({ row, onSaved }: { row: SettingRow; onSaved: (value: 
             onClick={() => save.mutate()}
             className="ms-auto"
           >
+            שמור
+          </Button>
+        </div>
+      </li>
+    );
+  }
+
+  if (row.type === 'string') {
+    return (
+      <li className="rounded-md border border-border p-3">
+        <div className="text-sm font-medium">{row.description}</div>
+        <div className="text-[11px] text-ink-faint mt-0.5 font-mono">{row.key}</div>
+        <div className="mt-2 flex items-center gap-2">
+          <Input
+            type="text"
+            dir="ltr"
+            value={String(value ?? '')}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="0501234567"
+            className="w-60"
+          />
+          <Button size="sm" loading={save.isPending} disabled={!dirty} onClick={() => save.mutate()} className="ms-auto">
             שמור
           </Button>
         </div>
@@ -434,6 +457,52 @@ function PipelineSettingsSection() {
           <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
         ) : rows.length === 0 ? (
           <div className="text-xs text-ink-muted">אין הגדרות עיבוד ולמידה זמינות.</div>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map((row) => (
+              <SettingRowEditor
+                key={row.key}
+                row={row}
+                onSaved={(v) => {
+                  qc.setQueryData<{ data: SettingRow[]; meta?: unknown } | undefined>(
+                    ['settings'],
+                    (prev) => prev
+                      ? { ...prev, data: prev.data.map((r) => r.key === row.key ? { ...r, value: v } : r) }
+                      : prev,
+                  );
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function NotificationsSettingsSection() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => settingsApi.list(),
+  });
+  const rows = (list.data?.data ?? []).filter((r) => r.key.startsWith('notifications.'));
+
+  return (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold">התראת התאמה למנהל</h3></CardHeader>
+      <CardBody>
+        <div className="text-xs text-ink-muted mb-3">
+          כשמופעל: ברגע שמועמד חדש נכנס למערכת ונמצאת לו התאמה וקטורית (סמנטית) לאחד המועמדים הפנימיים,
+          נשלח למספר הוואטסאפ שהוגדר כרטיס שידוכים של המועמד החדש + לינק לכרטיס במערכת, עם כותרת מודגשת
+          של שם המועמד/ת שאליו נמצאה ההתאמה. דורש <b>התאמה סמנטית פעילה</b> (בכללי התאמה) וערוץ שליחה תקין.
+        </div>
+        {list.isLoading ? (
+          <LoadingSkeleton rows={2} />
+        ) : list.isError ? (
+          <div className="text-xs text-danger">טעינת ההגדרות נכשלה</div>
+        ) : rows.length === 0 ? (
+          <div className="text-xs text-ink-muted">אין הגדרות התראה זמינות.</div>
         ) : (
           <ul className="space-y-3">
             {rows.map((row) => (

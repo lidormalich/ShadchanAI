@@ -49,6 +49,13 @@ export const ChatJidBodySchema = z.object({
   chatJid: z.string().trim().min(3).max(200),
 });
 
+// Query for previewing a chat's stored messages. chatJid carries '@'
+// and '.', but it's a well-formed jid string so it rides in the query.
+export const ChatMessagesQuerySchema = z.object({
+  chatJid: z.string().trim().min(3).max(200),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
 export const DeleteChannelSchema = z.object({
   // Guard: the operator must confirm the channelId in the body so a
   // bad URL-param typo can't wipe the wrong channel.

@@ -35,6 +35,7 @@ export type FieldKey =
   | 'yeshiva'
   | 'seeking'
   | 'ageRange'
+  | 'maxAge'
   | 'photos'
   | 'phone'
   | 'selfIntro';
@@ -46,19 +47,29 @@ export type FieldKey =
 
 export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
   name: ['שם', 'שמי', 'שם מלא', 'שם פרטי', 'שם המועמד', 'שם המועמדת'],
-  age: ['גיל', 'הגיל', 'גילי'],
+  // 'גיל מדוייק' resolves via prefix; birth-year labels (ילידת/יליד/נולד)
+  // are converted to age by parseAge below.
+  age: ['גיל', 'הגיל', 'גילי', 'גיל מדוייק', 'ילידת', 'יליד', 'נולד', 'נולדה', 'שנת לידה', 'תאריך לידה', 'שנתון'],
   height: ['גובה', 'הגובה'],
   city: ['מגורים', 'מקום מגורים', 'אזור מגורים', 'איזור מגורים', 'א. מגורים', 'א מגורים', 'מגורים בהווה', 'מגורים בהווה ומגורי המשפחה', 'עיר', 'עיר מגורים', 'ישוב', 'יישוב', 'אזור'],
   edah: ['עדה', 'מוצא', 'עדה/מוצא', 'מוצא עדתי', 'רקע עדתי'],
-  sector: ['רמה דתית', 'מגזר', 'מגזר+רמה דתית', 'מגזר ורמה דתית', 'רמה דתית ומגזר', 'השקפה', 'זרם', 'כיוון דתי', 'רמה רוחנית', 'רמת דתיות', 'הגדרה דתית'],
-  status: ['סטטוס', 'רווק/גרוש/אלמן', 'מצב משפחתי', 'מצב אישי', 'סטטוס אישי', 'סטטוס משפחתי'],
-  occupation: ['עיסוק', 'עיסוק+מוסדות לימודים', 'עיסוק+ מוסדות לימוד', 'עיסוק ומוסדות לימוד', 'תעסוקה', 'מקצוע', 'עבודה', 'מה עושה בחיים', 'מה עושה', 'במה עוסק', 'במה עוסקת', 'מה עוסק', 'מה עוסקת'],
-  about: ['תכונות אופי', 'תכונות מאופי', 'תכונות', 'קצת עלי', 'קצת עליי', 'על עצמי', 'אופי', 'תיאור אישי', 'מי אני'],
-  family: ['משפחה', 'קצת על משפחתך', 'קצת על המשפחה', 'רקע משפחתי', 'משפחתי', 'תאר/י בקווים כלליים את משפחתך', 'תאר בקווים כלליים את משפחתך', 'תארי בקווים כלליים את משפחתך'],
+  sector: ['רמה דתית', 'מגזר', 'מגזר+רמה דתית', 'מגזר ורמה דתית', 'רמה דתית ומגזר', 'השקפה', 'השקפה דתית', 'תיאור השקפה דתית', 'סגנון דתי', 'סגנון והשקפה', 'סגנון והשקפה דתית', 'זרם', 'כיוון דתי', 'רמה רוחנית', 'רמת דתיות', 'הגדרה דתית'],
+  status: ['סטטוס', 'רווק/גרוש/אלמן', 'ר/ג/א', 'מצב משפחתי', 'מצב אישי', 'סטטוס אישי', 'סטטוס משפחתי'],
+  occupation: ['עיסוק', 'עיסוק+מוסדות לימודים', 'עיסוק+ מוסדות לימוד', 'עיסוק ומוסדות לימוד', 'התמחות', 'תעסוקה', 'מקצוע', 'עבודה', 'מה עושה בחיים', 'מה עושה', 'במה עוסק', 'במה עוסקת', 'מה עוסק', 'מה עוסקת'],
+  // 'about' also absorbs appearance (מראה), body/skin (גוון עור/מבנה גוף),
+  // hobbies (תחביבים), smoking (עישון/מעשן) and head-covering (מטפחת/פאה)
+  // lines: per the info-only rule these enrich the free-text description
+  // rather than becoming new scored dimensions — but they're preserved.
+  about: ['תכונות אופי', 'תכונות מאופי', 'תכונות', 'תכונות בולטות', 'קצת עלי', 'קצת עליי', 'על עצמי', 'אופי', 'תיאור אישי', 'מי אני', 'מראה', 'מראה כללי', 'מראה חיצוני', 'מראה וסגנון', 'מראה וסגנון לבוש', 'סגנון לבוש', 'גוון עור', 'מבנה גוף', 'תחביבים', 'תחומי עניין', 'תחביבים ותחומי עניין', 'שאיפות', 'שאיפות לעתיד', 'עישון', 'מעשן', 'מטפחת', 'פאה', 'כיסוי ראש'],
+  family: ['משפחה', 'על המשפחה', 'קצת על משפחתך', 'קצת על המשפחה', 'רקע משפחתי', 'משפחתי', 'תאר/י בקווים כלליים את משפחתך', 'תאר בקווים כלליים את משפחתך', 'תארי בקווים כלליים את משפחתך'],
   service: ['שירות צבאי', 'שירות לאומי', 'שירות צבאי/לאומי', 'שירות צבאי/לאומי/ישיבה', 'שירות', 'צבא', 'לאומי'],
   yeshiva: ['ישיבה', 'ישיבה/ מדרשה', 'ישיבה/מדרשה', 'מדרשה', 'סמינר', 'השכלה', 'לימודים', 'מוסדות לימוד'],
   seeking: ['אני מחפש', 'אני מחפשת', 'אני מחפש/ת', 'מה אני מחפש/ת', 'מה אני מחפש', 'מה אני מחפשת', 'מה מחפש', 'מה מחפשת', 'מחפש/ת', 'מחפש', 'מחפשת', 'מעוניין ב', 'מעוניינת ב', 'מה חשוב לי', 'ציפיות', 'דרישות'],
   ageRange: ['טווח גילאים', 'טווח גילים', 'טווח הגילאים', 'טווח גיל', 'גילאים', 'גילים', 'גיל מבוקש'],
+  // Single upper-bound "willing up to age N" labels → seekingAgeMax. The
+  // value is a bare number, so applyField reads it directly (parseAgeRange
+  // needs an "עד" keyword the label already implies).
+  maxAge: ['עד איזה גיל מתפשר', 'איזה גיל מתפשר', 'עד גיל מתפשר', 'גיל מתפשר', 'עד גיל', 'גיל מקסימלי', 'מתפשר עד גיל'],
   photos: ['תמונות', 'תמונה'],
   phone: ['טלפון', 'לפניות', 'לפרטים', 'השדכן', 'השדכנית', 'נייד', 'פלאפון', 'טל', 'ליצירת קשר', 'יצירת קשר', 'מספר טלפון', 'לבירורים', 'טלפון לבירורים'],
   selfIntro: [], // generated from free-text sentences
@@ -69,7 +80,10 @@ export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
 // Covers emojis (most BMP + surrogate pairs), zero-width joiners,
 // variation selectors, and bullet-like punctuation.
 
-const EMOJI_RE = /[\u2190-\u2BFF\u2300-\u27BF\uFE0F\u200D\p{Extended_Pictographic}]+/gu;
+// Includes Emoji_Modifier (skin-tone U+1F3FB\u20131F3FF): these trail a base emoji
+// (\uD83D\uDC73\uD83C\uDFFB, \uD83E\uDD1D\uD83C\uDFFB) and, if left behind, would sit at the head of a line and break
+// label detection (e.g. "\uD83E\uDD1D\uD83C\uDFFB *\u05E9\u05DD \u05DE\u05DC\u05D0:*" \u2192 name missed).
+const EMOJI_RE = /[\u2190-\u2BFF\u2300-\u27BF\uFE0F\u200D\p{Extended_Pictographic}\p{Emoji_Modifier}]+/gu;
 const DECORATION_RE = /^[\s\-*•·★✦➤›»→💘🌷😊👤👳👪🎓🎂🌱🏡🙏📖🌡🎭🎯📸🎚☎⭐️💐🥂✨🇮🇱]+/u;
 
 export function stripDecorations(s: string): string {
@@ -89,6 +103,10 @@ export interface LabelHit {
   field: FieldKey;
   value: string;
   rawLabel: string;
+  /** True when matched via the bold "*label*" path. An empty-value bold hit is
+   *  a section header (value on the next line), NOT a blank-template field —
+   *  the extractor uses this so bold headers don't trip template detection. */
+  viaBold?: boolean;
 }
 
 // Label/value separator. Accepts colon (`:` / fullwidth `：`) AND a question
@@ -98,16 +116,47 @@ export interface LabelHit {
 // to null and are treated as unlabeled prose.
 const SEP_RE = /\s*[:：?？]\s*/;
 
+// Leading value junk: a residual bold "*", dash separators, or spaces left
+// after splitting (e.g. colon-split of "*גובה:* 173" leaves "* 173").
+const VALUE_LEAD_RE = /^[\s*\-–—:]+/;
+
 export function resolveLabel(rawLine: string): LabelHit | null {
+  // A large card family (WhatsApp bold labels) wraps the label in "*...*"
+  // with NO colon: "*שם* אודי", "*גיל* - 30", "*שם מלא:* נחמן". Try that
+  // shape first — the closing "*" is the separator — so those cards parse
+  // instead of falling through to null and losing every labeled field.
+  const bold = resolveBoldLabel(rawLine);
+  if (bold) return bold;
+
   const line = stripDecorations(rawLine);
   if (!line) return null;
   const colonIdx = line.search(SEP_RE);
   if (colonIdx <= 0) return null;
 
   const labelPart = line.slice(0, colonIdx).trim();
-  const valuePart = line.slice(colonIdx).replace(SEP_RE, '').trim();
+  const valuePart = line.slice(colonIdx).replace(SEP_RE, '').replace(VALUE_LEAD_RE, '').trim();
   if (!labelPart) return null;
 
+  return matchLabel(labelPart, valuePart, false);
+}
+
+// Bold-delimited label: "*label* value" / "*label* - value" / "*label:* value".
+// Runs on the emoji-stripped line (keeping the "*" markers) and returns a hit
+// only when the wrapped text resolves to a known label — a stray *bold* phrase
+// in free text falls through to the normal path and then to unlabeled prose.
+function resolveBoldLabel(rawLine: string): LabelHit | null {
+  const s = rawLine.replace(EMOJI_RE, ' ').trim();
+  const m = s.match(/^\*+\s*([^*\n]+?)\s*\*+\s*[-–—:]?\s*(.*)$/);
+  if (!m) return null;
+  // Drop a trailing ":" / "?" that lived inside the bold ("*גיל מדוייק:*").
+  const labelPart = (m[1] ?? '').replace(/[:?？]+\s*$/, '').trim();
+  const valuePart = (m[2] ?? '').replace(VALUE_LEAD_RE, '').trim();
+  if (!labelPart) return null;
+  return matchLabel(labelPart, valuePart, true);
+}
+
+// Resolve a bare label string to a field key (exact, then longest-prefix).
+function matchLabel(labelPart: string, valuePart: string, viaBold: boolean): LabelHit | null {
   const labelNorm = normalizeLabel(labelPart);
 
   // Pass 1: exact match wins outright — prevents a short variant of one
@@ -115,7 +164,7 @@ export function resolveLabel(rawLine: string): LabelHit | null {
   for (const [field, variants] of Object.entries(LABEL_SYNONYMS) as [FieldKey, string[]][]) {
     for (const variant of variants) {
       if (labelNorm === normalizeLabel(variant)) {
-        return { field, value: valuePart, rawLabel: labelPart };
+        return { field, value: valuePart, rawLabel: labelPart, viaBold };
       }
     }
   }
@@ -134,7 +183,7 @@ export function resolveLabel(rawLine: string): LabelHit | null {
       }
     }
   }
-  if (best) return { field: best.field, value: valuePart, rawLabel: labelPart };
+  if (best) return { field: best.field, value: valuePart, rawLabel: labelPart, viaBold };
   return null;
 }
 
@@ -142,6 +191,12 @@ function normalizeLabel(s: string): string {
   return s
     .replace(/[()]/g, '')
     .replace(/[״"׳']/g, '')
+    // Slashes/backslashes are decorative separators in labels
+    // ("ר/ג/א/", "תאר\\י", "אני מחפש/ת") — strip them so a card's variant
+    // matches its synonym regardless of which (or whether a) slash is used.
+    // Applied symmetrically to both label and synonym, so it can't create
+    // a spurious cross-field match.
+    .replace(/[/\\]/g, '')
     .replace(/[\s]+/g, ' ')
     .trim();
 }
@@ -149,11 +204,21 @@ function normalizeLabel(s: string): string {
 // ── Value parsers ────────────────────────────────────────
 
 export function parseAge(raw: string): { age?: number; ageText?: string } {
-  const m = raw.match(/(\d{1,2}(?:\.\d+)?)/);
-  if (!m) return { ageText: raw };
-  const n = Number(m[1]);
-  if (Number.isNaN(n) || n < 15 || n > 99) return { ageText: raw };
-  return { age: Math.round(n), ageText: raw };
+  // Prefer an explicit 1-2 digit age. Remove any 4-digit years first so
+  // "1981" doesn't get read as "19"; and so "30 (ילידת 1994)" still yields 30.
+  const withoutYear = raw.replace(/\b(?:19\d{2}|20[0-2]\d)\b/g, ' ');
+  const m = withoutYear.match(/(\d{1,2}(?:\.\d+)?)/);
+  if (m) {
+    const n = Number(m[1]);
+    if (!Number.isNaN(n) && n >= 15 && n <= 99) return { age: Math.round(n), ageText: raw };
+  }
+  // No usable age, but a birth year ("ילידת: 1981") → derive age from it.
+  const yr = raw.match(/\b(19\d{2}|20[0-2]\d)\b/);
+  if (yr) {
+    const age = new Date().getFullYear() - Number(yr[1]);
+    if (age >= 15 && age <= 99) return { age, ageText: raw };
+  }
+  return { ageText: raw };
 }
 
 /** Height: accepts "1.65", "1,65", "1.65 מ'", "172", "172 ס\"מ". Always returns cm. */
@@ -199,16 +264,48 @@ export function parseSectorGroup(raw: string): SectorGroup | undefined {
   // Constrain to the head of the value — the primary self-label — so
   // parenthetical notes further along don't hijack classification.
   const s = raw.slice(0, 40);
-  if (/חרדל|חרד"ל/.test(s)) return SectorGroup.HARDAL;
-  if (/תורני/.test(s)) return SectorGroup.TORANI;
-  // accept "דתי לאומי", "דתיה לאומית", "דתי-לאומי", "דת״ל"
-  if (/דתי[-\s]*לאומי|דתיה[-\s]*לאומית|דת["״]ל/.test(s)) return SectorGroup.DATI_LEUMI;
-  if (/מסורת/.test(s)) return SectorGroup.MASORTI;
-  // "דתי" / "דתיה" / "דתית" — matched before HAREDI so "בית חרדי"
-  // background phrases don't outrank the self-label.
-  if (/דתי[הת]?/.test(s)) return SectorGroup.DATI;
-  if (/חרדי/.test(s)) return SectorGroup.HAREDI;
-  return undefined;
+
+  // Explicit compound abbreviations are unambiguous — take them outright.
+  if (/חרדל|חרד["״]ל/.test(s)) return SectorGroup.HARDAL;
+  if (/דת["״]ל/.test(s)) return SectorGroup.DATI_LEUMI;
+
+  // Base sect = whichever primary self-label (חרדי / דתי / מסורתי) appears
+  // EARLIEST in the head. This is the key fix: a self-label at position 0
+  // ("חרדית עם ראש פתוח…") must not be overridden by a secondary mention
+  // later in the same sentence ("…פתוחה גם לדתיים תורניים"). Position wins,
+  // so "דתיה (מבית חרדי)" → dati and "חרדית … דתיים" → haredi, both correct.
+  const idxHaredi = firstIndex(s, /חרדי/);
+  const idxDati = firstIndex(s, /דתי[הת]?/);
+  const idxMasorti = firstIndex(s, /מסורת/);
+  const base = idxHaredi < idxDati && idxHaredi < idxMasorti
+    ? SectorGroup.HAREDI
+    : idxMasorti < idxDati && idxMasorti < idxHaredi
+      ? SectorGroup.MASORTI
+      : idxDati < Infinity
+        ? SectorGroup.DATI
+        : undefined;
+
+  if (base === undefined) {
+    // No base label, but a bare "תורני"/"לאומי" still implies dati-leumi-ish.
+    if (/תורני/.test(s)) return SectorGroup.TORANI;
+    if (/לאומי/.test(s)) return SectorGroup.DATI_LEUMI;
+    return undefined;
+  }
+
+  // Qualifier upgrade applies ONLY to a DATI base — "דתי" + לאומי/תורני is a
+  // compound self-label. A חרדי base is never upgraded: a "דתיים תורניים"
+  // that describes who she's open to must not reclassify a חרדי candidate.
+  if (base === SectorGroup.DATI) {
+    if (/לאומי/.test(s)) return SectorGroup.DATI_LEUMI;
+    if (/תורני/.test(s)) return SectorGroup.TORANI;
+  }
+  return base;
+}
+
+/** Index of the first match of `re` in `s`, or Infinity if absent. */
+function firstIndex(s: string, re: RegExp): number {
+  const m = re.exec(s);
+  return m ? m.index : Infinity;
 }
 
 export function parseAgeRange(raw: string): { min?: number; max?: number } | undefined {

@@ -11,6 +11,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { FileText, MessageSquare } from 'lucide-react';
 import { Badge, Card, CardBody, CardHeader } from '@/components/ui/primitives';
+import { AuthImage } from '@/components/AuthImage';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { externalCandidatesApi, internalCandidatesApi, type SourceCardMessage } from '@/services/api/candidates';
 import { formatDate } from '@/utils/format';
@@ -89,9 +90,7 @@ function SourceMessage({ m }: { m: SourceCardMessage }) {
           <span className="num ms-auto">{formatDate(m.createdAt)}</span>
         </div>
         {m.mediaUrl && (
-          <a href={m.mediaUrl} target="_blank" rel="noreferrer">
-            <img src={m.mediaUrl} alt={m.mediaCaption ?? 'מדיה'} className="max-h-80 rounded-md border border-border object-contain" />
-          </a>
+          <AuthImage src={m.mediaUrl} alt={m.mediaCaption ?? 'מדיה'} className="max-h-80 rounded-md border border-border object-contain" />
         )}
         {text ? (
           <pre className="whitespace-pre-wrap font-sans text-sm text-ink leading-relaxed">{text}</pre>

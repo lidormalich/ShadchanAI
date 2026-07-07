@@ -478,6 +478,66 @@ export async function backfillChatExtraction(
   return enqueued;
 }
 
+// ── Preview a pending chat's stored messages ────────────────
+//
+// Returns the most recent inbound messages we've already stored for a
+// chat, newest first — so the operator can read what's actually in the
+// group before deciding to approve/ignore it. The group's *name* is
+// often wrong or missing (a group's participantName is a sender's
+// pushName, not the subject), so the message bodies are the reliable
+// signal for "what is this chat".
+//
+// Message carries a denormalized chatJid, so we can read straight by
+// (channelId, chatJid) without resolving conversations. Not gated on
+// ingestion.decision — an unmapped chat's messages are all held back
+// anyway, and once approved the operator may still want to look back.
+export interface ChatMessagePreview {
+  id: string;
+  senderName?: string;
+  senderPhone?: string;
+  direction: string;
+  contentType: string;
+  body?: string;
+  mediaCaption?: string;
+  mediaMimeType?: string;
+  createdAt: string;
+}
+
+export async function listChatMessages(
+  channelId: string,
+  chatJid: string,
+  limit = 50,
+): Promise<{ channelId: string; chatJid: string; messages: ChatMessagePreview[] }> {
+  const ch = await channelMgr.findById(channelId);
+  if (!ch) throw new NotFoundError('Channel', channelId);
+
+  const capped = Math.min(Math.max(limit, 1), 200);
+  const rows = await Message.find({ channelId, chatJid })
+    .select('senderName senderPhone direction contentType body mediaCaption mediaMimeType createdAt')
+    .sort({ createdAt: -1 })
+    .limit(capped)
+    .lean()
+    .exec();
+
+  // Newest-first for the query (so a capped read keeps the latest), then
+  // flip to chronological for reading top-to-bottom like a chat thread.
+  const messages: ChatMessagePreview[] = rows
+    .reverse()
+    .map((m) => ({
+      id: String(m._id),
+      senderName: m.senderName,
+      senderPhone: m.senderPhone,
+      direction: m.direction,
+      contentType: m.contentType,
+      body: m.body,
+      mediaCaption: m.mediaCaption,
+      mediaMimeType: m.mediaMimeType,
+      createdAt: m.createdAt.toISOString(),
+    }));
+
+  return { channelId, chatJid, messages };
+}
+
 // ── Best-effort WhatsApp history pull for a chat ────────────
 //
 // Asks the live Baileys session to fetch older history for this chat.

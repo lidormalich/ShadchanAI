@@ -50,11 +50,17 @@ export type SettingKey =
   | 'extraction.regex_skip_ai_confidence'
   // Candidate learning agent (services/ai/candidate-learning.service.ts).
   | 'learning.refresh_enabled'
-  | 'learning.refresh_limit';
+  | 'learning.refresh_limit'
+  // Manager alert: WhatsApp ping to a configured number whenever a NEW
+  // external candidate enters and has a strong vector (semantic) match to
+  // one of the shadchan's internal candidates. Consumed by
+  // services/notifications/new-match-alert.service.ts.
+  | 'notifications.new_match_alert_enabled'
+  | 'notifications.new_match_alert_phone';
 
 export interface SettingDef {
   key: SettingKey;
-  type: 'number' | 'boolean' | 'enum';
+  type: 'number' | 'boolean' | 'enum' | 'string';
   // For numbers
   min?: number;
   max?: number;
@@ -159,6 +165,20 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
     type: 'number', min: 1, max: 100, default: 15,
     description: 'כמה מועמדים לכל היותר לרענן בכל ריצת למידה (הגנת עלות)',
   },
+  'notifications.new_match_alert_enabled': {
+    key: 'notifications.new_match_alert_enabled',
+    type: 'boolean',
+    // Default ON — the feature still no-ops until a destination number is set
+    // below, so this is safe to enable out of the box.
+    default: true,
+    description: 'התראת מנהל: שליחת כרטיס המועמד בוואטסאפ ברגע שמועמד חדש נכנס ונמצאה לו התאמה וקטורית. דורש התאמה סמנטית פעילה ומספר יעד למטה.',
+  },
+  'notifications.new_match_alert_phone': {
+    key: 'notifications.new_match_alert_phone',
+    type: 'string',
+    default: '',
+    description: 'מספר הוואטסאפ של המנהל לקבלת התראות התאמה (לדוגמה: 0501234567). ריק = כבוי.',
+  },
 };
 
 function requireDef(key: string): SettingDef {
@@ -216,11 +236,14 @@ export async function getSettingBoolean(key: SettingKey): Promise<boolean> {
 
 export async function getSettingString(key: SettingKey): Promise<string> {
   const def = requireDef(key);
-  if (def.type !== 'enum') throw new ValidationError(`${key} is not an enum setting`);
+  if (def.type !== 'enum' && def.type !== 'string') {
+    throw new ValidationError(`${key} is not a string/enum setting`);
+  }
   const fallback = def.default as string;
   const row = await Setting.findOne({ key }).lean().exec();
   if (!row || typeof row.value !== 'string') return fallback;
-  if (def.options && !def.options.includes(row.value)) return fallback;
+  // Enums are constrained to their option list; free-text strings are not.
+  if (def.type === 'enum' && def.options && !def.options.includes(row.value)) return fallback;
   return row.value;
 }
 
@@ -248,7 +271,7 @@ export async function listSettings(): Promise<Array<SettingDef & { value: number
     if (row) {
       if (def.type === 'number' && typeof row.value === 'number') value = row.value;
       else if (def.type === 'boolean' && typeof row.value === 'boolean') value = row.value;
-      else if (def.type === 'enum' && typeof row.value === 'string') value = row.value;
+      else if ((def.type === 'enum' || def.type === 'string') && typeof row.value === 'string') value = row.value;
     }
     return { ...def, value };
   });
@@ -273,6 +296,9 @@ export async function upsertSetting(
       throw new ValidationError(`Value for ${key} must be one of: ${def.options?.join(', ') ?? ''}`);
     }
     value = s;
+  } else if (def.type === 'string') {
+    // Free-text setting (e.g. a phone number). Trim only; empty means "off".
+    value = (typeof rawValue === 'string' ? rawValue : String(rawValue ?? '')).trim();
   } else {
     const n = typeof rawValue === 'number' ? rawValue : Number(rawValue);
     if (!Number.isFinite(n)) throw new ValidationError(`Value for ${key} must be a number`);

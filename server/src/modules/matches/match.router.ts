@@ -16,6 +16,7 @@ import {
   SendProposalSchema,
   AcknowledgeResponseSchema,
   ForceSuggestionSchema,
+  SandboxCheckSchema,
 } from './match.validator.js';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
@@ -39,6 +40,8 @@ matchRouter.get('/semantic-backfill/state', ctrl.semanticBackfillStateHandler);
 matchRouter.get('/:id', validate({ params: IdParamSchema }), ctrl.getHandler);
 
 matchRouter.post('/evaluate', validate({ body: EvaluatePairSchema }), ctrl.evaluateHandler);
+// Ad-hoc free-text pair check ("בדוק מועמדים") — no persistence.
+matchRouter.post('/sandbox-check', validate({ body: SandboxCheckSchema }), ctrl.sandboxCheckHandler);
 matchRouter.get('/find-for/:id', validate({ params: IdParamSchema }), ctrl.findForInternalHandler);
 matchRouter.get('/find-for/:id/blocked', validate({ params: IdParamSchema }), ctrl.findBlockedForInternalHandler);
 matchRouter.post('/', validate({ body: CreateManualSuggestionSchema }), ctrl.createManualHandler);

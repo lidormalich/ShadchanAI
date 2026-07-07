@@ -115,7 +115,7 @@ export const messages = {
 // Returns the WhatsApp-assigned externalMessageId on success.
 
 import { BusinessRuleError } from '../../utils/errors.js';
-import { getChannelClient } from './providers/baileys/baileys.client.js';
+import { getChannelClient, snapshotClientRegistry } from './providers/baileys/baileys.client.js';
 import { assertOutboundAllowed } from '../safe-mode/safe-mode.service.js';
 
 export interface SendTextRequest {
@@ -174,6 +174,50 @@ export async function sendTextFromChannel(req: SendTextRequest): Promise<string>
   // Errors from the socket bubble up to the caller, which wraps them in
   // the correct audit + Message-row failure path.
   return client.sendText(req.jid, req.body);
+}
+
+// ── Operator-facing notification (safe-mode-exempt) ──────
+//
+// A ping to the SHADCHAN's OWN number (e.g. the new-match manager alert),
+// NOT candidate outreach. It deliberately bypasses the outbound safe-mode
+// gate, the ENABLE_OUTBOUND_MESSAGES env, and the match_sending role
+// restriction — those exist to protect real candidates from accidental
+// messaging, which does not apply to internal system→operator pings.
+//
+// Channel selection: use the active match_sending channel when its socket
+// is live; otherwise fall back to ANY currently-connected channel (e.g.
+// profiles_source). Throws when nothing is connected.
+
+export interface OperatorNotificationRequest {
+  jid: string;
+  body: string;
+}
+
+export async function sendOperatorNotification(req: OperatorNotificationRequest): Promise<string> {
+  const client = await resolveConnectedClient();
+  if (!client) {
+    throw new BusinessRuleError(
+      'No connected WhatsApp channel available to send the notification',
+      { code: 'no_connected_channel' },
+    );
+  }
+  return client.sendText(req.jid, req.body);
+}
+
+/** Pick a live Baileys client: the match_sending channel first, then any
+ *  channel whose socket is currently connected. */
+async function resolveConnectedClient(): Promise<ReturnType<typeof getChannelClient>> {
+  const preferred = await findActiveChannelByRole(ChannelRole.MATCH_SENDING);
+  if (preferred) {
+    const c = getChannelClient(preferred.channelId);
+    if (c && c.status.state === 'connected') return c;
+  }
+  for (const entry of snapshotClientRegistry()) {
+    if (entry.state !== 'connected') continue;
+    const c = getChannelClient(entry.channelId);
+    if (c) return c;
+  }
+  return undefined;
 }
 
 /** Resolve a participant phone into a Baileys JID.

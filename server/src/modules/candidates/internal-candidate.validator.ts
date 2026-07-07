@@ -78,7 +78,21 @@ export const CreateInternalCandidateSchema = z.object({
   motherName: z.string().max(100).optional(),
   phone: z.string().max(30).optional(),
   email: z.string().email().max(200).optional(),
-  photoUrl: z.string().url().optional(),
+  // Server-managed relative proxy path or absolute URL — not necessarily a
+  // bare URL. A plain .url() rejects the stored /api/media/... path and blocks
+  // every edit save (the form re-submits the whole candidate). '', null, or
+  // missing all mean "no photo" and must save cleanly.
+  photoUrl: z.preprocess(
+    (val) => (val === '' || val === null ? undefined : val),
+    z
+      .string()
+      .trim()
+      .max(500)
+      .refine((s) => s.startsWith('/') || /^https?:\/\//i.test(s), {
+        message: 'photoUrl must be an absolute URL or a relative path',
+      })
+      .optional(),
+  ),
   photoApproved: z.boolean().optional(),
 
   city: z.string().max(100).optional(),

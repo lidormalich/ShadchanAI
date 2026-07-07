@@ -4,7 +4,7 @@ export type SettingValue = number | boolean | string;
 
 export interface SettingRow {
   key: string;
-  type: 'number' | 'boolean' | 'enum';
+  type: 'number' | 'boolean' | 'enum' | 'string';
   min?: number;
   max?: number;
   options?: string[];

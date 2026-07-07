@@ -4,6 +4,8 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import * as svc from './match.service.js';
+import { checkPairFromText } from './sandbox.service.js';
+import type { SandboxCheckBody } from './match.validator.js';
 import * as scanSvc from '../../services/matching/match-scan.service.js';
 import {
   startSemanticBackfill,
@@ -42,6 +44,17 @@ export async function evaluateHandler(req: Request, res: Response, next: NextFun
       mode: SourceMode;
     };
     const result = await svc.evaluatePair(internalCandidateId, externalCandidateId, mode);
+    ok(res, result);
+  } catch (e) { next(e); }
+}
+
+// Ad-hoc "בדוק מועמדים": compatibility check between two pasted free-text
+// people. No candidates are saved; the result is computed and thrown away.
+export async function sandboxCheckHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    const { sideA, sideB, mode } = req.body as SandboxCheckBody;
+    const result = await checkPairFromText({ sideA, sideB, mode, userId: user.id });
     ok(res, result);
   } catch (e) { next(e); }
 }

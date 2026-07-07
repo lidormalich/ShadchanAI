@@ -8,6 +8,7 @@ import {
   ChannelIdParamSchema,
   AssignChatRoleSchema,
   ChatJidBodySchema,
+  ChatMessagesQuerySchema,
   DeleteChannelSchema,
   ForceReleaseLockSchema,
 } from './channel.validator.js';
@@ -55,6 +56,9 @@ channelRouter.patch('/:channelId/chats/role', validate({ params: ChannelIdParamS
 // plus the actions to act on them: backfill the held-back messages
 // into extraction, or pull older history from WhatsApp (best-effort).
 channelRouter.get('/:channelId/pending', validate({ params: ChannelIdParamSchema }), ctrl.listPendingChatsHandler);
+// Read the messages already stored for a chat — so the operator can see
+// what's actually in the group before mapping it (the name is unreliable).
+channelRouter.get('/:channelId/chats/messages', validate({ params: ChannelIdParamSchema, query: ChatMessagesQuerySchema }), ctrl.listChatMessagesHandler);
 channelRouter.post('/:channelId/chats/backfill', validate({ params: ChannelIdParamSchema, body: ChatJidBodySchema }), ctrl.backfillChatHandler);
 channelRouter.post('/:channelId/chats/history-sync', validate({ params: ChannelIdParamSchema, body: ChatJidBodySchema }), ctrl.historySyncHandler);
 // Using POST (not DELETE) so the operator-confirmation body is

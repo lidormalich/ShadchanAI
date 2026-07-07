@@ -12,12 +12,12 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Hourglass, History, RefreshCw, Users } from 'lucide-react';
+import { Hourglass, History, MessagesSquare, RefreshCw, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, CardBody, CardHeader, Select } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
-import { channelsApi, type DiscoveredChat } from '@/services/api/channels';
+import { channelsApi, type ChatMessagePreview, type DiscoveredChat } from '@/services/api/channels';
 import { toast } from '@/components/ui/Toast';
 
 // Maps the server's history-sync skip reasons to clear Hebrew.
@@ -153,7 +153,11 @@ function PendingList({ channelId }: { channelId: string }) {
 function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredChat }) {
   const qc = useQueryClient();
   const [approveOpen, setApproveOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const pendingCount = chat.pendingMessageCount ?? 0;
+  // There are stored messages to preview if any are held back or a
+  // conversation already exists for this chat.
+  const hasMessages = pendingCount > 0 || chat.hasConversation;
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['channel', channelId, 'pending'] });
@@ -206,7 +210,18 @@ function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredCh
     <li className="px-5 py-3 flex items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-sm font-medium truncate">{chat.name}</div>
+          {hasMessages ? (
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(true)}
+              className="text-sm font-medium truncate text-start hover:text-brand hover:underline"
+              title="צפה בהודעות של הצ׳אט"
+            >
+              {chat.name}
+            </button>
+          ) : (
+            <div className="text-sm font-medium truncate">{chat.name}</div>
+          )}
           <Badge tone={chat.chatType === 'group' ? 'info' : 'neutral'}>
             <Users className="h-3 w-3 ms-1 inline" />
             {chat.chatType === 'group' ? 'קבוצה' : 'פרטי'}
@@ -235,6 +250,16 @@ function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredCh
         >
           התעלם
         </Button>
+        {hasMessages && (
+          <Button
+            size="sm"
+            variant="subtle"
+            leftIcon={<MessagesSquare className="h-3.5 w-3.5" />}
+            onClick={() => setPreviewOpen(true)}
+          >
+            צפה בהודעות
+          </Button>
+        )}
         <Button
           size="sm"
           variant="subtle"
@@ -245,6 +270,13 @@ function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredCh
           סרוק היסטוריה
         </Button>
       </div>
+
+      <ChatPreviewDialog
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        channelId={channelId}
+        chat={chat}
+      />
 
       <Dialog
         open={approveOpen}
@@ -266,6 +298,67 @@ function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredCh
             : undefined
         }
       />
+    </li>
+  );
+}
+
+// Read-only preview of the messages already stored for a pending chat, so
+// the operator can see what's really in the group before mapping it — the
+// group name shown in the list is frequently a sender's pushName or the
+// bare jid, not the real subject.
+function ChatPreviewDialog({
+  open, onClose, channelId, chat,
+}: { open: boolean; onClose: () => void; channelId: string; chat: DiscoveredChat }) {
+  const preview = useQuery({
+    queryKey: ['channel', channelId, 'chat-messages', chat.chatJid],
+    queryFn: () => channelsApi.chatMessages(channelId, chat.chatJid, 100),
+    enabled: open,
+  });
+  const messages = preview.data?.data.messages ?? [];
+
+  return (
+    <Dialog open={open} onClose={onClose} title={`הודעות מהצ׳אט "${chat.name}"`}>
+      <div className="text-[11px] text-ink-faint font-mono truncate mb-2">{chat.chatJid}</div>
+      {preview.isLoading ? (
+        <LoadingSkeleton rows={4} />
+      ) : preview.isError ? (
+        <ErrorState description={(preview.error as Error).message} onRetry={() => preview.refetch()} />
+      ) : messages.length === 0 ? (
+        <EmptyState
+          title="אין הודעות שמורות"
+          description="עדיין לא נשמרו הודעות מהצ׳אט הזה. נסה לסרוק היסטוריה או המתן שתגיע הודעה חדשה."
+        />
+      ) : (
+        <ul className="max-h-[55vh] overflow-y-auto space-y-2 pe-1">
+          {messages.map((m) => (
+            <PreviewMessage key={m.id} msg={m} />
+          ))}
+        </ul>
+      )}
+    </Dialog>
+  );
+}
+
+function PreviewMessage({ msg }: { msg: ChatMessagePreview }) {
+  const text = msg.body || msg.mediaCaption;
+  const isMedia = !text && msg.contentType !== 'text';
+  return (
+    <li className="rounded-lg bg-bg-subtle px-3 py-2 text-sm">
+      <div className="flex items-baseline justify-between gap-2 mb-0.5">
+        <span className="text-xs font-medium text-ink-muted truncate">
+          {msg.senderName || msg.senderPhone || 'לא ידוע'}
+        </span>
+        <span className="text-[11px] text-ink-faint shrink-0">
+          {new Date(msg.createdAt).toLocaleString('he-IL')}
+        </span>
+      </div>
+      {text ? (
+        <div className="whitespace-pre-wrap break-words text-ink">{text}</div>
+      ) : (
+        <div className="italic text-ink-faint">
+          {isMedia ? `[${msg.contentType}${msg.mediaMimeType ? ` · ${msg.mediaMimeType}` : ''}]` : '[ללא תוכן]'}
+        </div>
+      )}
     </li>
   );
 }

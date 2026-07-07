@@ -81,7 +81,10 @@ export function extractProfileFromText(rawText: string): RegexExtractionResult {
 
     labeledLines += 1;
     if (!hit.value) {
-      labeledEmptyLines += 1;
+      // A colon-form empty ("גיל:") is a blank fill-in template field. A bold
+      // section-header ("*על עצמי*") is NOT — its value sits on the next line
+      // and is read as free text — so it must not trip template detection.
+      if (!hit.viaBold) labeledEmptyLines += 1;
       continue;
     }
 
@@ -190,6 +193,14 @@ function applyField(profile: ExtractedProfile, field: FieldKey, value: string): 
         if (range.min !== undefined) profile.seekingAgeMin = range.min;
         if (range.max !== undefined) profile.seekingAgeMax = range.max;
       }
+      return;
+    }
+    case 'maxAge': {
+      // "עד איזה גיל מתפשר: 31" — the label already means an upper bound, so
+      // a bare number is the seeking-age ceiling.
+      const m = value.match(/\d{1,2}/);
+      const n = m ? Number(m[0]) : NaN;
+      if (!Number.isNaN(n) && n >= 15 && n <= 99) profile.seekingAgeMax = n;
       return;
     }
     case 'photos':

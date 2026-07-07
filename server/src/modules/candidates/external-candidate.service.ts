@@ -30,10 +30,8 @@ import {
 } from '../../services/storage/candidate-photo.service.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import { attachSourcePhotoToExternalCandidate } from '../../services/storage/photo-maintenance.service.js';
-import {
-  scheduleInitialEmbedding,
-  scheduleChunkInvalidation,
-} from '../../services/embedding/embedding.service.js';
+import { scheduleChunkInvalidation } from '../../services/embedding/embedding.service.js';
+import { scheduleNewExternalCandidateAlert } from '../../services/notifications/new-match-alert.service.js';
 import type {
   CreateExternalCandidateInput,
   UpdateExternalCandidateInput,
@@ -282,8 +280,9 @@ export async function createExternalCandidate(
     // Best-effort — the 30-min backfill sweep is the safety net.
   }
 
-  // Semantic add-on (no-op when the admin toggle is off).
-  scheduleInitialEmbedding(String(doc._id), 'external');
+  // Semantic add-on: embed the new candidate (no-op when the toggle is off)
+  // and, if the manager-alert feature is armed, WhatsApp a match card.
+  scheduleNewExternalCandidateAlert(String(doc._id));
 
   return doc;
 }

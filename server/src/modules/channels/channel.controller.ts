@@ -176,6 +176,15 @@ export async function listPendingChatsHandler(req: Request, res: Response, next:
   } catch (e) { next(e); }
 }
 
+export async function listChatMessagesHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { channelId } = getValidatedParams<{ channelId: string }>(req);
+    const { chatJid, limit } = getValidatedQuery<{ chatJid: string; limit?: number }>(req);
+    ok(res, await svc.listChatMessages(channelId, chatJid, limit));
+  } catch (e) { next(e); }
+}
+
 export async function backfillChatHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = ensureUser(req.user);

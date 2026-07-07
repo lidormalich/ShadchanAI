@@ -16,6 +16,18 @@ export interface DiscoveredChat {
   lastPendingAt?: string;
 }
 
+export interface ChatMessagePreview {
+  id: string;
+  senderName?: string;
+  senderPhone?: string;
+  direction: string;
+  contentType: string;
+  body?: string;
+  mediaCaption?: string;
+  mediaMimeType?: string;
+  createdAt: string;
+}
+
 export interface ChatDiscoveryResult {
   channelId: string;
   liveSessionAvailable: boolean;
@@ -115,6 +127,10 @@ export const channelsApi = {
   backfillChat: (channelId: string, chatJid: string) =>
     api.post<{ channelId: string; chatJid: string; enqueued: number }>(
       `/channels/${channelId}/chats/backfill`, { chatJid },
+    ),
+  chatMessages: (channelId: string, chatJid: string, limit = 50) =>
+    api.get<{ channelId: string; chatJid: string; messages: ChatMessagePreview[] }>(
+      `/channels/${channelId}/chats/messages`, { chatJid, limit },
     ),
   historySync: (channelId: string, chatJid: string) =>
     api.post<{ requested: boolean; reason?: string }>(

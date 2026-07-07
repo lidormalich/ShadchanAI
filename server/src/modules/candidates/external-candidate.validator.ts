@@ -123,7 +123,23 @@ export const CreateExternalCandidateSchema = z.object({
   additionalInfo: z.string().max(2000).optional(),
   referenceName: z.string().max(200).optional(),
   referencePhone: z.string().max(30).optional(),
-  photoUrl: z.string().url().optional(),
+  // photoUrl is a server-managed value: a relative auth-gated proxy path
+  // (e.g. /api/media/candidate/external/<id>) or an absolute R2/http URL —
+  // NOT necessarily an absolute URL. The edit form re-submits the whole
+  // candidate, so a plain .url() here rejects the stored proxy path and
+  // blocks every save. Accept path-or-URL. '', null, or missing all mean
+  // "no photo" and must save cleanly (deleted-photo / never-had-photo).
+  photoUrl: z.preprocess(
+    (val) => (val === '' || val === null ? undefined : val),
+    z
+      .string()
+      .trim()
+      .max(500)
+      .refine((s) => s.startsWith('/') || /^https?:\/\//i.test(s), {
+        message: 'photoUrl must be an absolute URL or a relative path',
+      })
+      .optional(),
+  ),
 
   sharePhoto: z.boolean().default(false),
   availabilityStatus: z.nativeEnum(AvailabilityStatus).default(AvailabilityStatus.UNKNOWN),

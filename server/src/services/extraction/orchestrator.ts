@@ -39,7 +39,7 @@ import { extractProfileWithAI, type AIExtractedProfile } from './ai.extractor.js
 import { extractProfileFromImage, visionExtractionAvailable } from './vision.extractor.js';
 import { downloadInboundMedia } from '../whatsapp/media.service.js';
 import { attachSourcePhotoToExternalCandidate } from '../storage/photo-maintenance.service.js';
-import { scheduleInitialEmbedding } from '../embedding/embedding.service.js';
+import { scheduleNewExternalCandidateAlert } from '../notifications/new-match-alert.service.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
 import { getSettingCached } from '../../modules/settings/settings.service.js';
 import { normalizePhone } from '../../utils/phone.js';
@@ -184,14 +184,24 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   // service, yeshiva, about, seeking). This is why sparse-but-confident
   // cards still go through AI. (Cost: more AI calls; OpenAI fallback + the
   // reconciler retry cover Groq rate limits.)
+  // Substantial free text regex COULDN'T attach to a label (multi-line field
+  // continuations, header-style labels, alt separators like " - ") lands in
+  // unmatchedLines and is otherwise silently dropped. If there's a real amount
+  // of it, the AI is the only thing that can recover it — so do NOT skip AI,
+  // even when regex looks rich. Short decoration lines (בס"ד, כרטיס שידוך) are
+  // excluded by the length floor; ≥2 real lines means regex left content on
+  // the table (the shadchan/phone line alone is 1 and won't trip this).
+  const droppedContentLines = regex.unmatchedLines.filter((l) => l.length >= 15).length;
+
   const regexRich =
     regex.confidence >= thresholds.regexSkipAi &&
     regex.isLikelyProfile &&
     !!profile.firstName &&
-    (!!profile.about || !!profile.whatSeeking || !!profile.occupation);
+    (!!profile.about || !!profile.whatSeeking || !!profile.occupation) &&
+    droppedContentLines < 2;
 
   if (regexRich) {
-    flow.info({ messageId }, 'ai_skipped (regex already rich)');
+    flow.info({ messageId, droppedContentLines }, 'ai_skipped (regex already rich)');
   } else {
     flow.info({ messageId }, 'ai_calling');
     try {
@@ -414,18 +424,33 @@ function mergeProfiles(regexP: ExtractedProfile, ai: AIExtractedProfile): Extrac
   if (!out.sectorGroup && ai.sectorGroup) out.sectorGroup = ai.sectorGroup;
   if (!out.religiousLevelText && ai.religiousLevelText) out.religiousLevelText = ai.religiousLevelText;
   if (!out.personalStatus && ai.personalStatus) out.personalStatus = ai.personalStatus;
-  if (!out.occupation && ai.occupation) out.occupation = ai.occupation;
-  if (!out.family && ai.family) out.family = ai.family;
   if (!out.service && ai.service) out.service = ai.service;
   if (!out.yeshiva && ai.yeshiva) out.yeshiva = ai.yeshiva;
-  if (!out.about && ai.about) out.about = ai.about;
-  if (!out.whatSeeking && ai.whatSeeking) out.whatSeeking = ai.whatSeeking;
+  // Narrative free-text fields: regex grabs only the single labeled line, so
+  // multi-line continuations ("אני מחפשת: …" + 3 lines below it, family with
+  // "אבא… / אמא…") end up in the AI's fuller read. Prefer whichever is MORE
+  // COMPLETE rather than always keeping regex's partial first line. (The AI
+  // is told to condense only past ~1200 chars, so "longer" ≈ "more complete";
+  // if the AI returned less, we keep regex — never a net loss.)
+  out.occupation = pickFuller(out.occupation, ai.occupation);
+  out.family = pickFuller(out.family, ai.family);
+  out.about = pickFuller(out.about, ai.about);
+  out.whatSeeking = pickFuller(out.whatSeeking, ai.whatSeeking);
   if (!out.seekingAgeMin && ai.seekingAgeMin) out.seekingAgeMin = ai.seekingAgeMin;
   if (!out.seekingAgeMax && ai.seekingAgeMax) out.seekingAgeMax = ai.seekingAgeMax;
   if ((!out.contactPhones || out.contactPhones.length === 0) && ai.contactPhones?.length) {
     out.contactPhones = ai.contactPhones;
   }
   return out;
+}
+
+/** Pick the more complete of two free-text values (longer wins; either may be
+ *  undefined). Used for narrative fields where the AI's whole-card read tends
+ *  to recover continuation lines the single-line regex grab missed. */
+function pickFuller(regexVal?: string, aiVal?: string): string | undefined {
+  if (!aiVal) return regexVal;
+  if (!regexVal) return aiVal;
+  return aiVal.length > regexVal.length ? aiVal : regexVal;
 }
 
 async function linkToExisting(candidate: IExternalCandidate, message: IMessage): Promise<IExternalCandidate> {
@@ -497,8 +522,9 @@ async function createFromProfile(profile: ExtractedProfile, message: IMessage): 
 
   // Seed the semantic embedding immediately, same as the manual-create path —
   // otherwise WhatsApp-extracted candidates never enter semantic matching
-  // until an unrelated edit happens to trigger it. Fire-and-forget, gated.
-  scheduleInitialEmbedding(String(created._id), 'external');
+  // until an unrelated edit happens to trigger it. Also fires the manager
+  // match-alert when armed. Fire-and-forget, gated.
+  scheduleNewExternalCandidateAlert(String(created._id));
 
   return created;
 }

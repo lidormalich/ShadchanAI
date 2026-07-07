@@ -375,6 +375,190 @@ describe('regex.extractor — real samples', () => {
     expect(r.confidence).toBeLessThan(0.3);
   });
 
+  // ── Sample 12: ליאל פינטו — "ר/ג/א/" status shorthand + "תאר\י" backslash
+  const SAMPLE_12 = `😊שם : ליאל פינטו
+🎂גיל: 29
+🌱גובה: 1.63
+👤ר/ג/א/ : רווקה
+👳 מוצא : חצי מרוקאית וחצי אשכנזיה
+🏡 אזור מגורים: מרכז
+🙏רמה דתית: דתיה - תורנית עם פתיחות מחשבתית.
+✡ שירות צבאי/לאומי : שנה אחת של שירות לאומי
+🎭תכונות אופי : בוגרת, אחראית יצירתית, נאמנה
+👪תאר\\י בקווים כלליים את משפחתך: משפחה טובה מאוד ופעילה בקהילה
+🎯אני מחפש/ת: בחור בוגר, אחראי, מסודר
+👥️ *שדכן: יוסף אושפיז  050-2755277*`;
+
+  it('sample 12: ליאל — "ר/ג/א/" → single, "תאר\\י" → family, torani sector', () => {
+    const r = extractProfileFromText(SAMPLE_12);
+    expect(r.profile.firstName).toBe('ליאל');
+    expect(r.profile.age).toBe(29);
+    expect(r.profile.height).toBe(163);
+    expect(r.profile.personalStatus).toBe(PersonalStatus.SINGLE);
+    expect(r.profile.city).toBe('מרכז');
+    expect(r.profile.sectorGroup).toBe(SectorGroup.TORANI);
+    expect(r.profile.service).toContain('לאומי');
+    expect(r.profile.family).toContain('קהילה');
+    expect(r.profile.gender).toBe(Gender.FEMALE);
+    expect(r.profile.contactPhones).toContain('0502755277');
+  });
+
+  // ── Sample 13: עבריה — appearance ("מראה וסגנון לבוש") + "התמחות" occupation
+  const SAMPLE_13 = `🍷שם: עבריה טרבלסי
+🍷גיל: 30
+🍷גובה: 165
+🍷מראה וסגנון לבוש: בהירה, מתלבשת יפה ועדכני
+🍷סטטוס: רווקה
+🍷התמחות: הנה"ח חשבת שכר
+🍷עיסוק: חברת תקשוב
+🍷מוצא : טונסאי
+🍷מקום מגורים : טבריה
+תכונות: בית טוב, טובת לב, חייכנית
+פלאפון לבירורים:
+058-4506530`;
+
+  it('sample 13: עבריה — appearance folds into about, "התמחות" → occupation', () => {
+    const r = extractProfileFromText(SAMPLE_13);
+    expect(r.profile.firstName).toBe('עבריה');
+    expect(r.profile.age).toBe(30);
+    expect(r.profile.height).toBe(165);
+    expect(r.profile.personalStatus).toBe(PersonalStatus.SINGLE);
+    expect(r.profile.city).toBe('טבריה');
+    // Both 'התמחות' and 'עיסוק' map to occupation; the canonical 'עיסוק'
+    // line wins (last write), and 'התמחות' would be recovered by AI enrich.
+    expect(r.profile.occupation).toBe('חברת תקשוב');
+    expect(r.profile.about).toContain('מתלבשת'); // מראה וסגנון לבוש → about
+    expect(r.profile.about).toContain('חייכנית'); // תכונות → about
+    expect(r.profile.contactPhones).toContain('0584506530');
+  });
+
+  // ── Sample 14: עודד — "סגנון דתי" sector + "תחומי עניין" hobbies → about
+  const SAMPLE_14 = `שם: עודד
+גיל: 40
+גובה:  175
+עיסוק: מנהל חשבונות וחשב שכר
+סגנון דתי: דתי לאומי, קובע עיתים לתורה.
+תכונות אופי: אחראי, עדין, חוש הומור
+תחומי עניין: ספורט, מוזיקה, לקרוא, ים
+מחפש: בחורה משפחתית שמחה`;
+
+  it('sample 14: עודד — "סגנון דתי" → DL, "תחומי עניין" folds into about', () => {
+    const r = extractProfileFromText(SAMPLE_14);
+    expect(r.profile.firstName).toBe('עודד');
+    expect(r.profile.age).toBe(40);
+    expect(r.profile.height).toBe(175);
+    expect(r.profile.sectorGroup).toBe(SectorGroup.DATI_LEUMI);
+    expect(r.profile.about).toContain('אחראי');
+    expect(r.profile.about).toContain('ספורט'); // תחומי עניין → about
+    expect(r.profile.whatSeeking).toContain('משפחתית');
+    expect(r.profile.gender).toBe(Gender.MALE);
+  });
+
+  // ── Sample 15: אביגיל דבורה כהן — "חרדית" head label must win over a
+  // later "דתיים תורניים" (who she's open to), not be misread as dati.
+  const SAMPLE_15 = `*שם:אביגיל דבורה כהן
+* גיל: 44
+*סטטוס:רווקה
+*גובה:1.70
+*עדה:ספרדיה
+*מגורים:ירושלים
+* רמה דתית+סגנון: חרדית עם ראש פתוח,פתוחה  גם לבחורים דתיים תורניים.
+*תחביבים: אוהבת לטייל, לקרוא, כושר
+*תכונות אופי: אוהבת ילדים, משפחתית, חמה`;
+
+  it('sample 15: חרדית self-label → haredi (not overridden by later "דתיים")', () => {
+    const r = extractProfileFromText(SAMPLE_15);
+    expect(r.profile.firstName).toBe('אביגיל');
+    expect(r.profile.personalStatus).toBe(PersonalStatus.SINGLE);
+    expect(r.profile.sectorGroup).toBe(SectorGroup.HAREDI);
+    // appearance/hobbies + traits both fold into about, nothing dropped.
+    expect(r.profile.about).toContain('כושר');
+    expect(r.profile.about).toContain('משפחתית');
+    expect(r.profile.gender).toBe(Gender.FEMALE);
+  });
+
+  // ── Sample 16: bold "*label* value" format (no colon) — the whole card
+  // used to parse to phone-only; now every labeled field resolves.
+  const SAMPLE_16 = `*שם* אודי .ח
+*גיל* 24
+*גובה* 1.70
+*עדה* עירקי
+*מצב משפחתי* רווק
+*אזור מגורים* פתח תקווה
+*מה עושה כרגע בחיים* כרגע לומד בישיבה גדולה ועובד בסופי שבוע
+*עישון?* מעשן רק אלקטרונית
+*מי אני* בחור ממוקד, נינוח, חברותי
+*תחביבים* קריאה, מוזיקה, אוהב לטייל
+*שדכן יאיר בואטסאפ 0529677868*`;
+
+  it('sample 16: bold "*label* value" format parses every field', () => {
+    const r = extractProfileFromText(SAMPLE_16);
+    expect(r.isLikelyProfile).toBe(true);
+    expect(r.profile.firstName).toBe('אודי');
+    expect(r.profile.lastName).toBe('.ח');
+    expect(r.profile.age).toBe(24);
+    expect(r.profile.height).toBe(170);
+    expect(r.profile.edah).toBe('עירקי');
+    expect(r.profile.personalStatus).toBe(PersonalStatus.SINGLE);
+    expect(r.profile.city).toBe('פתח תקווה');
+    expect(r.profile.occupation).toContain('ישיבה');
+    expect(r.profile.about).toContain('ממוקד'); // מי אני
+    expect(r.profile.about).toContain('קריאה'); // תחביבים folded in
+    expect(r.profile.contactPhones).toContain('0529677868');
+    expect(r.profile.gender).toBe(Gender.MALE);
+  });
+
+  // ── Sample 17: bold-COLON "*label:* value" — the closing "*" must not leak
+  // into the value (city was "* ירושלים"); + "עד גיל מתפשר" → seekingAgeMax.
+  const SAMPLE_17 = `🤝🏻 *שם מלא:* נחמן ה
+🎂 *גיל מדוייק:* 28
+🌱 *גובה:* 1.73
+🎗️ *מצב משפחתי:* רווק
+🏡 *אזור מגורים:* ירושלים
+🙏 *רמה דתית:* חרדי
+🔧 *מה עושה כרגע בחיים?* לומד תורה ועובד אינסטלציה
+⛔ *איזה גיל מתפשר/ת?*28
+👰 *מה אני מחפש* רגועה, שמחה, נאה
+*שדכן יאיר בואטסאפ 0529677868*`;
+
+  it('sample 17: bold-colon values are clean (no leaked "*") + maxAge', () => {
+    const r = extractProfileFromText(SAMPLE_17);
+    expect(r.profile.firstName).toBe('נחמן');
+    expect(r.profile.age).toBe(28);
+    expect(r.profile.height).toBe(173);
+    expect(r.profile.city).toBe('ירושלים'); // NOT "* ירושלים"
+    expect(r.profile.sectorGroup).toBe(SectorGroup.HAREDI);
+    expect(r.profile.seekingAgeMax).toBe(28); // איזה גיל מתפשר
+    expect(r.profile.whatSeeking).toContain('רגועה');
+    expect(r.profile.personalStatus).toBe(PersonalStatus.SINGLE);
+  });
+
+  // ── Sample 18: birth-year label ("ילידת: 1981") → age derived.
+  it('sample 18: birth year "ילידת: 1981" → age (current year − 1981)', () => {
+    const r = extractProfileFromText(`שם :מלכה
+מצב משפחתי: רווקה
+ילידת: 1981
+גובה:: 160`);
+    expect(r.profile.firstName).toBe('מלכה');
+    expect(r.profile.age).toBe(new Date().getFullYear() - 1981);
+    expect(r.profile.height).toBe(160); // double-colon tolerated
+  });
+
+  // ── Sample 19: bold-DASH "*label* - value" + "עד איזה גיל מתפשר" max age.
+  it('sample 19: bold-dash "*label* - value" format + maxAge ceiling', () => {
+    const r = extractProfileFromText(`*שם* - הראל ו
+*גיל* - 30
+*עדה* - תימני
+*עיסוק* - אבטחת מידע (סייבר)
+*עד איזה גיל מתפשר* - 31
+*לפרטים שדכן יאיר בואטסאפ 0529677868*`);
+    expect(r.profile.firstName).toBe('הראל');
+    expect(r.profile.age).toBe(30);
+    expect(r.profile.edah).toBe('תימני');
+    expect(r.profile.occupation).toContain('אבטחת מידע');
+    expect(r.profile.seekingAgeMax).toBe(31);
+  });
+
   it('sample 11: question-style labels ("מה עושה בחיים?") parsed', () => {
     const r = extractProfileFromText(SAMPLE_QUESTION);
     expect(r.isLikelyProfile).toBe(true);
