@@ -52,3 +52,8 @@ export class BusinessRuleError extends AppError {
     super('business_rule', message, 422, details);
   }
 }
+
+/** MongoDB duplicate-key error (unique index violation, code 11000). */
+export function isDuplicateKeyError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: number }).code === 11000;
+}

@@ -29,6 +29,7 @@ import { reconcileIndexes } from './config/index-migrations.js';
 import { env } from './config/env.js';
 import { runBootChecks } from './config/boot-checks.js';
 import { startJobScheduler, stopJobScheduler } from './services/jobs/job.scheduler.js';
+import { refreshParserLabels } from './modules/extraction/card-label.service.js';
 import {
   startAllChannels,
   stopAllChannels,
@@ -60,6 +61,14 @@ async function main(): Promise<void> {
   await runBootChecks();
   await connectDB();
   await reconcileIndexes();
+  // Load operator-taught card-label mappings into the parser (Feature C).
+  // Best-effort — a failure here must not block boot; the parser still has
+  // its built-in synonyms.
+  try {
+    await refreshParserLabels();
+  } catch (err) {
+    log.error({ error: (err as Error).message }, 'card_labels_boot_load_failed');
+  }
   const app = buildApp();
   startJobScheduler();
 

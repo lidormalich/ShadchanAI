@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
+import { buildIdentityKey } from '../../utils/identity.js';
 import {
   Gender,
   SectorGroup,
@@ -300,6 +301,10 @@ export interface IExternalCandidate extends Document {
   // this differs from the freshly-computed hash. See match-scan.service.
   scoringHash?: string;
   scoringHashAt?: Date;
+  // Deterministic name+age identity key (see utils/identity). Maintained by
+  // the pre-save hook; a partial unique index on it makes the concurrent-
+  // repost race unable to mint a second identical candidate.
+  identityKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -490,6 +495,9 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     // ── Match-scan change detection ───────────────────────
     scoringHash: { type: String },
     scoringHashAt: { type: Date },
+
+    // ── Duplicate-guard identity key (name+age, hook-maintained) ──
+    identityKey: { type: String },
   },
   {
     timestamps: true,
@@ -523,6 +531,39 @@ externalCandidateSchema.index({ createdAt: -1 });
 
 // Text search
 externalCandidateSchema.index({ firstName: 'text', lastName: 'text', sourceName: 'text' });
+
+// ── Duplicate guard ──────────────────────────────────────
+// Keep identityKey (normalized firstName|lastName|age) in sync on every save,
+// so the create paths and manual edits all carry it. Cleared when the profile
+// no longer has all three parts, so an incomplete card is never constrained.
+externalCandidateSchema.pre('save', function (next) {
+  // Archived candidates must NOT carry an identityKey: they'd occupy the unique
+  // partial index and block re-creating a person after their old card was
+  // archived. (We can't express "exclude archived" in the partial filter —
+  // Mongo forbids $exists:false there — so we exclude them by clearing the key.)
+  const key = this.archivedAt ? undefined : buildIdentityKey(this.firstName, this.lastName, this.age);
+  if (key) this.identityKey = key;
+  else this.set('identityKey', undefined);
+  next();
+});
+
+// A profile re-posted 2-3× in the same burst used to race past the matcher's
+// check-then-create (all copies read "no existing candidate" before any wrote)
+// and mint identical twins. This partial unique index makes that impossible at
+// the DB level: the 2nd/3rd concurrent create throws E11000, which the
+// orchestrator turns into a link-to-existing. Excludes archived candidates so a
+// genuinely re-available person can be re-created after their old card was
+// archived. Only covers documents that actually HAVE a key (name+age present).
+externalCandidateSchema.index(
+  { identityKey: 1 },
+  {
+    unique: true,
+    // Only `$exists:true` is allowed here (Mongo forbids $exists:false in
+    // partial indexes). Archived candidates are kept OUT of this index by the
+    // pre-save hook clearing their identityKey — see above.
+    partialFilterExpression: { identityKey: { $exists: true } },
+  },
+);
 
 export const ExternalCandidate = mongoose.model<IExternalCandidate>(
   'ExternalCandidate',

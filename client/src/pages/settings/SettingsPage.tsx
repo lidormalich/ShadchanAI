@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Bell, Brain, ChevronLeft, Coins, Cpu, Gauge, Plug, Shield, Sliders } from 'lucide-react';
+import { Bell, Brain, ChevronLeft, Coins, Cpu, Gauge, Plug, Shield, Sliders, Trash2 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Input, Select } from '@/components/ui/primitives';
 import { LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { settingsApi, type SettingRow, type SettingValue } from '@/services/api/settings';
+import { extractionApi, type CardLabelField } from '@/services/api/extraction';
 import { AiCostsSection } from './AiCostsSection';
 
 interface Section {
@@ -445,6 +446,7 @@ function PipelineSettingsSection() {
   );
 
   return (
+    <div className="space-y-4">
     <Card>
       <CardHeader><h3 className="text-base font-semibold">עיבוד ולמידה</h3></CardHeader>
       <CardBody>
@@ -472,6 +474,93 @@ function PipelineSettingsSection() {
                   );
                 }}
               />
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+    <CardLabelsCard />
+    </div>
+  );
+}
+
+// ── Card-label dictionary (Feature C) ────────────────────
+// Operator-taught "label → field" mappings the parser learns from. New rows
+// are usually added straight from a review card ("למד"); this card is the full
+// list to review/remove them.
+const CARD_FIELD_LABELS: Record<CardLabelField, string> = {
+  name: 'שם', age: 'גיל', height: 'גובה', city: 'עיר / מגורים', edah: 'עדה',
+  sector: 'רמה דתית / מגזר', status: 'מצב משפחתי', occupation: 'עיסוק', about: 'על עצמו',
+  family: 'משפחה', service: 'שירות צבאי/לאומי', yeshiva: 'ישיבה / השכלה', seeking: 'מה מחפש',
+  ageRange: 'טווח גילאים', maxAge: 'עד גיל', photos: 'תמונות', phone: 'טלפון',
+};
+
+function CardLabelsCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['card-labels'], queryFn: () => extractionApi.listCardLabels() });
+  const rows = q.data?.data ?? [];
+  const [labelText, setLabelText] = useState('');
+  const [field, setField] = useState<CardLabelField>('name');
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['card-labels'] });
+  const add = useMutation({
+    mutationFn: () => extractionApi.addCardLabel(labelText.trim(), field),
+    onSuccess: () => { toast.success('התווית נוספה', 'תיכנס לתוקף בכרטיסים הבאים'); setLabelText(''); invalidate(); },
+    onError: (e) => toast.error('ההוספה נכשלה', (e as Error).message),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => extractionApi.deleteCardLabel(id),
+    onSuccess: () => { toast.success('התווית הוסרה'); invalidate(); },
+    onError: (e) => toast.error('ההסרה נכשלה', (e as Error).message),
+  });
+
+  return (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold">מילון תוויות כרטיסי שידוך</h3></CardHeader>
+      <CardBody>
+        <div className="text-xs text-ink-muted mb-3">
+          מיפוי של תווית כפי שמופיעה בכרטיס (למשל <b>כינוי</b>) לשדה מובנה. הפענוח לומד אותן וכל כרטיס
+          עתידי בפורמט הזה מפוענח אוטומטית — כך התור מתקצר מעצמו. אפשר להוסיף גם ישירות מכרטיס בתור הסקירה
+          (כפתור "למד").
+        </div>
+        <div className="flex items-end gap-2 flex-wrap mb-4">
+          <div>
+            <div className="text-[11px] text-ink-muted mb-0.5">תווית (כפי שמופיעה בכרטיס)</div>
+            <Input value={labelText} onChange={(e) => setLabelText(e.target.value)} placeholder="כינוי" className="w-48" />
+          </div>
+          <div>
+            <div className="text-[11px] text-ink-muted mb-0.5">ממופה לשדה</div>
+            <Select value={field} onChange={(e) => setField(e.target.value as CardLabelField)} className="w-48">
+              {(Object.keys(CARD_FIELD_LABELS) as CardLabelField[]).map((f) => (
+                <option key={f} value={f}>{CARD_FIELD_LABELS[f]}</option>
+              ))}
+            </Select>
+          </div>
+          <Button size="sm" loading={add.isPending} disabled={!labelText.trim()} onClick={() => add.mutate()}>
+            הוסף
+          </Button>
+        </div>
+
+        {q.isLoading ? (
+          <LoadingSkeleton rows={2} />
+        ) : rows.length === 0 ? (
+          <div className="text-xs text-ink-muted">עדיין לא נלמדו תוויות מותאמות. הבסיס המובנה ממשיך לעבוד כרגיל.</div>
+        ) : (
+          <ul className="space-y-1.5">
+            {rows.map((r) => (
+              <li key={r._id} className="flex items-center gap-2 text-sm rounded-md border border-border px-3 py-1.5">
+                <span className="font-medium">{r.label}</span>
+                <span className="text-ink-faint text-xs">→</span>
+                <Badge tone="neutral">{CARD_FIELD_LABELS[r.field] ?? r.field}</Badge>
+                <button
+                  className="ms-auto text-ink-faint hover:text-danger"
+                  title="הסר"
+                  onClick={() => remove.mutate(r._id)}
+                  disabled={remove.isPending}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </li>
             ))}
           </ul>
         )}

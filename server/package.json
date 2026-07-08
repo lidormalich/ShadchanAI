@@ -11,6 +11,8 @@
     "wa:unlock": "tsx src/scripts/wa-unlock.ts",
     "wa:rehome": "tsx src/scripts/rehome-orphaned-channels.ts",
     "extraction:recover": "tsx src/scripts/extraction-recover.ts",
+    "dedupe:externals": "tsx src/scripts/merge-duplicate-externals.ts",
+    "extraction:reprocess-stuck": "tsx src/scripts/reprocess-stuck-extractions.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
