@@ -16,7 +16,8 @@ import {
   type IExternalCandidate,
 } from '../../models/index.js';
 import { audit } from '../../services/audit.service.js';
-import { NotFoundError, BusinessRuleError, ConflictError } from '../../utils/errors.js';
+import { NotFoundError, BusinessRuleError, ConflictError, isDuplicateKeyError } from '../../utils/errors.js';
+import { buildIdentityKey } from '../../utils/identity.js';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
 import { assertOwnership } from '../../utils/ownership.assert.js';
@@ -255,14 +256,32 @@ export async function createExternalCandidate(
     }
   }
 
-  const doc = await ExternalCandidate.create({
-    ...input,
-    contactPhoneNormalized: normalizedPhone ?? undefined,
-    sourceImportedAt: new Date(),
-    importedBy: new Types.ObjectId(performedBy),
-    ownerUserId: new Types.ObjectId(performedBy),
-    shareCard: { approvedForShare: true },
-  });
+  let doc: IExternalCandidate;
+  try {
+    doc = await ExternalCandidate.create({
+      ...input,
+      contactPhoneNormalized: normalizedPhone ?? undefined,
+      sourceImportedAt: new Date(),
+      importedBy: new Types.ObjectId(performedBy),
+      ownerUserId: new Types.ObjectId(performedBy),
+      shareCard: { approvedForShare: true },
+    });
+  } catch (err) {
+    // Same-identity (name+age) active candidate already exists — refuse rather
+    // than mint a duplicate, and name the existing card so the UI can offer to
+    // open it instead.
+    if (isDuplicateKeyError(err)) {
+      const key = buildIdentityKey(input.firstName, input.lastName, input.age);
+      const existing = key
+        ? await ExternalCandidate.findOne({ identityKey: key, archivedAt: { $exists: false } }).select('_id').lean().exec()
+        : null;
+      throw new ConflictError(
+        'An external candidate with the same name and age already exists',
+        { code: 'duplicate_identity', existingCandidateId: existing ? String(existing._id) : undefined },
+      );
+    }
+    throw err;
+  }
   await audit({
     entityType: AuditEntityType.EXTERNAL_CANDIDATE,
     entityId: String(doc._id),
@@ -304,7 +323,25 @@ export async function updateExternalCandidate(
     doc.contactPhoneNormalized = normalizePhone(input.contactPhone) ?? undefined;
   }
   doc.lastSourceUpdateAt = new Date();
-  await doc.save();
+  try {
+    await doc.save();
+  } catch (err) {
+    // Edit would make this card a name+age twin of an existing active one.
+    if (isDuplicateKeyError(err)) {
+      const existing = doc.identityKey
+        ? await ExternalCandidate.findOne({
+            identityKey: doc.identityKey,
+            archivedAt: { $exists: false },
+            _id: { $ne: doc._id },
+          }).select('_id').lean().exec()
+        : null;
+      throw new ConflictError(
+        'This edit would duplicate an existing candidate with the same name and age',
+        { code: 'duplicate_identity', existingCandidateId: existing ? String(existing._id) : undefined },
+      );
+    }
+    throw err;
+  }
 
   await audit({
     entityType: AuditEntityType.EXTERNAL_CANDIDATE,

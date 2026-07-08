@@ -14,6 +14,7 @@ import { searchApi, type SearchResult } from '@/services/api/search';
 const TYPE_LABEL: Record<SearchResult['type'], string> = {
   internal_candidate: 'פנימי',
   external_candidate: 'חיצוני',
+  pending_review: 'לסקירה',
   match: 'הצעה',
   conversation: 'שיחה',
   task: 'משימה',
@@ -106,10 +107,16 @@ export function TopbarSearch({
                     onClick={() => go(r)}
                     className="w-full text-start px-3 py-2 hover:bg-bg-hover flex items-center gap-2"
                   >
-                    <span className="text-[11px] text-ink-faint shrink-0 w-12">{TYPE_LABEL[r.type]}</span>
+                    <span className={`text-[11px] shrink-0 w-12 ${r.type === 'pending_review' ? 'text-amber-600 font-medium' : 'text-ink-faint'}`}>
+                      {TYPE_LABEL[r.type]}
+                    </span>
                     <span className="min-w-0 flex-1">
                       <span className="text-sm text-ink truncate block">{r.title}</span>
-                      {r.subtitle && <span className="text-[11px] text-ink-muted truncate block">{r.subtitle}</span>}
+                      {r.subtitle && (
+                        <span className={`text-[11px] truncate block ${r.type === 'pending_review' ? 'text-amber-600' : 'text-ink-muted'}`}>
+                          {r.subtitle}
+                        </span>
+                      )}
                     </span>
                   </button>
                 </li>

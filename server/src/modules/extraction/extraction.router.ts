@@ -14,3 +14,10 @@ extractionRouter.post('/messages/:messageId/run', ctrl.runHandler);
 extractionRouter.post('/messages/:messageId/requeue', ctrl.requeueHandler);
 extractionRouter.post('/messages/:messageId/approve', ctrl.approveHandler);
 extractionRouter.post('/messages/:messageId/reject', ctrl.rejectHandler);
+
+// Card-label dictionary (Feature C — teach the parser new formats)
+extractionRouter.get('/card-labels', ctrl.listCardLabelsHandler);
+extractionRouter.post('/card-labels', ctrl.createCardLabelHandler);
+extractionRouter.post('/card-labels/analyze', ctrl.analyzeCardHandler);
+extractionRouter.post('/card-labels/bulk', ctrl.bulkCardLabelsHandler);
+extractionRouter.delete('/card-labels/:id', ctrl.deleteCardLabelHandler);

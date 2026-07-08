@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ClipboardList, Search, UserPlus } from 'lucide-react';
+import { CheckCircle2, ClipboardList, ClipboardCheck, Search, UserPlus } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from '@/components/ui/Toast';
 import { Avatar, Badge, Button, Card, CardBody, Input, Select, TBody, THead, Table, Td, Th, Tr } from '@/components/ui/primitives';
 import { EmptyState, ErrorState, RowSkeleton } from '@/components/states/states';
 import { externalCandidatesApi } from '@/services/api/candidates';
+import { extractionApi, type ReviewQueueItem, type ReviewReason } from '@/services/api/extraction';
 import { ExternalCandidateDrawer } from './ExternalCandidateDrawer';
 import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { Pagination } from '@/components/ui/Pagination';
@@ -16,6 +17,15 @@ import type { ExternalCandidate } from '@/types/domain';
 
 const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani'] as const;
 const AVAILABILITIES = ['available', 'dating', 'unavailable', 'unknown'] as const;
+
+// Why a profile is still awaiting review (mirrors the review page).
+const REVIEW_REASON_LABEL: Record<ReviewReason, string> = {
+  suspected_duplicate: 'חשד לכפול',
+  low_confidence: 'ביטחון נמוך',
+  no_identifier: 'חסר שם/טלפון',
+  no_corroboration: 'ללא אימות מבני',
+  vision_image: 'חולץ מתמונה',
+};
 
 // What the needs-details tab flags as "חסר" on each card. Gender is the
 // entry criterion for the tab; the rest give the operator the full
@@ -51,10 +61,13 @@ export function ExternalCandidatesListPage() {
   const [page, setPage] = useState(1);
   // 'all' — the regular list; 'needsDetails' — gender unknown, not yet
   // marked "מולא" (deep link: ?tab=needsDetails).
-  const [tab, setTab] = useState<'all' | 'needsDetails'>(
-    searchParams.get('tab') === 'needsDetails' ? 'needsDetails' : 'all',
+  const [tab, setTab] = useState<'all' | 'needsDetails' | 'pendingReview'>(
+    searchParams.get('tab') === 'needsDetails' ? 'needsDetails'
+      : searchParams.get('tab') === 'pendingReview' ? 'pendingReview'
+      : 'all',
   );
   const needsDetails = tab === 'needsDetails';
+  const pendingReview = tab === 'pendingReview';
   const limit = 25;
   // Tables don't fit a phone — show cards on mobile.
   const isMobile = useIsMobile();
@@ -81,6 +94,24 @@ export function ExternalCandidatesListPage() {
     queryKey: ['externals', 'needs-details-count'],
     queryFn: () => externalCandidatesApi.list({ needsDetails: true, limit: 1 }),
   });
+
+  // Profiles still in the review queue (no candidate yet). Fetched once and
+  // filtered client-side by the same search box, so a stuck person is findable
+  // here with a "ממתין לסקירה" badge that links straight into their review.
+  const reviewQueue = useQuery({
+    queryKey: ['extraction', 'review-queue', 'externals-tab'],
+    queryFn: () => extractionApi.reviewQueue(200),
+  });
+  const reviewItems = reviewQueue.data?.data ?? [];
+  const reviewFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return reviewItems;
+    const terms = q.split(/\s+/);
+    return reviewItems.filter((r) => {
+      const hay = `${r.extractedFields.firstName ?? ''} ${r.extractedFields.lastName ?? ''} ${r.body ?? ''}`.toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    });
+  }, [reviewItems, search]);
 
   const markFilled = useMutation({
     mutationFn: (id: string) => externalCandidatesApi.setDetailsCompleted(id),
@@ -134,17 +165,31 @@ export function ExternalCandidatesListPage() {
               <Badge tone="warning">{needsDetailsCount.data?.meta?.total}</Badge>
             )}
           </button>
+          <button
+            className={`px-3 py-2 text-sm rounded-t-lg border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5 ${
+              tab === 'pendingReview'
+                ? 'border-brand-600 text-brand-700 font-medium'
+                : 'border-transparent text-ink-muted hover:text-ink'
+            }`}
+            onClick={() => setTab('pendingReview')}
+          >
+            <ClipboardCheck className="h-4 w-4" />
+            ממתין לסקירה
+            {reviewItems.length > 0 && <Badge tone="warning">{reviewItems.length}</Badge>}
+          </button>
         </div>
         <div className="p-4 border-b border-border flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-0 sm:min-w-[240px] w-full sm:w-auto">
             <Search className="absolute top-1/2 -translate-y-1/2 start-3 h-4 w-4 text-ink-faint" />
             <Input className="ps-9" placeholder="חיפוש" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <Select className="w-full sm:w-auto" value={sectorGroup} onChange={(e) => setSectorGroup(e.target.value)}>
-            <option value="">כל המגזרים</option>
-            {SECTORS.map((s) => <option key={s} value={s}>{label('sectorGroup', s)}</option>)}
-          </Select>
-          {!needsDetails && (
+          {!pendingReview && (
+            <Select className="w-full sm:w-auto" value={sectorGroup} onChange={(e) => setSectorGroup(e.target.value)}>
+              <option value="">כל המגזרים</option>
+              {SECTORS.map((s) => <option key={s} value={s}>{label('sectorGroup', s)}</option>)}
+            </Select>
+          )}
+          {!needsDetails && !pendingReview && (
             <>
               <Select className="w-full sm:w-auto" value={availabilityStatus} onChange={(e) => setAvailabilityStatus(e.target.value)}>
                 <option value="">כל הזמינות</option>
@@ -160,7 +205,15 @@ export function ExternalCandidatesListPage() {
           )}
         </div>
 
-        {list.isError ? (
+        {pendingReview ? (
+          <PendingReviewSection
+            items={reviewFiltered}
+            loading={reviewQueue.isLoading}
+            error={reviewQueue.error as Error | null}
+            onRetry={() => reviewQueue.refetch()}
+            searching={!!search.trim()}
+          />
+        ) : list.isError ? (
           <ErrorState description={(list.error as Error).message} onRetry={() => list.refetch()} />
         ) : isMobile ? (
           <CardBody>
@@ -263,7 +316,7 @@ export function ExternalCandidatesListPage() {
             </TBody>
           </Table>
         )}
-        {list.data && (
+        {!pendingReview && list.data && (
           <Pagination
             page={page}
             totalPages={list.data.meta?.totalPages ?? 1}
@@ -276,6 +329,63 @@ export function ExternalCandidatesListPage() {
       <ExternalCandidateDrawer id={drawerId} onClose={() => setDrawerId(null)} />
       <ExternalCandidateForm open={formOpen} onClose={() => setFormOpen(false)} />
     </div>
+  );
+}
+
+// Pending-review tab: profiles the pipeline extracted but parked for a human.
+// No ExternalCandidate exists yet — each row links into the review page where
+// one click ("אשר וצור") turns it into a regular candidate.
+function PendingReviewSection({ items, loading, error, onRetry, searching }: {
+  items: ReviewQueueItem[];
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  searching: boolean;
+}) {
+  if (error) return <ErrorState description={error.message} onRetry={onRetry} />;
+  if (loading) return <CardBody><div className="grid grid-cols-1 gap-3">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="skeleton h-20 rounded-xl" />)}</div></CardBody>;
+  if (!items.length) {
+    return (
+      <EmptyState
+        title={searching ? 'לא נמצאו פרופילים ממתינים שתואמים לחיפוש' : 'אין פרופילים שממתינים לסקירה 🎉'}
+        description={searching ? undefined : 'כל מה שהגיע כבר עובד למועמדים.'}
+      />
+    );
+  }
+  return (
+    <CardBody>
+      <div className="grid grid-cols-1 gap-3">
+        {items.map((r) => {
+          const name = `${r.extractedFields.firstName ?? ''} ${r.extractedFields.lastName ?? ''}`.trim();
+          const snippet = (r.body ?? '').replace(/\s+/g, ' ').slice(0, 60);
+          return (
+            <Link
+              key={r.messageId}
+              to={`/review?messageId=${r.messageId}`}
+              className="block rounded-xl border border-amber-200 bg-amber-50/40 p-3 hover:shadow-rise transition-shadow"
+            >
+              <div className="flex items-start gap-3">
+                <Avatar name={name || 'פרופיל'} size={40} src={r.mediaUrl} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold truncate">{name || snippet || 'פרופיל ממתין'}</span>
+                    <Badge tone="warning">ממתין לסקירה</Badge>
+                    {r.reviewReason && (
+                      <Badge tone="neutral">{REVIEW_REASON_LABEL[r.reviewReason] ?? r.reviewReason}</Badge>
+                    )}
+                  </div>
+                  <div className="text-xs text-ink-muted truncate mt-0.5">
+                    {[r.extractedFields.city, r.extractedFields.age ? `גיל ${r.extractedFields.age}` : null]
+                      .filter(Boolean).join(' · ') || snippet}
+                  </div>
+                  <div className="text-[11px] text-amber-700 mt-1">פתח סקירה ואשר →</div>
+                </div>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    </CardBody>
   );
 }
 

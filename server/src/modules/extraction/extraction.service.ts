@@ -26,8 +26,9 @@ import { Message, ExternalCandidate, ChatMapping, type IMessage } from '../../mo
 import { processMessageExtraction } from '../../services/extraction/orchestrator.js';
 import { enqueueExtraction } from '../../services/extraction/queue.js';
 import { extractProfileFromText, type ExtractedProfile } from '../../services/extraction/regex.extractor.js';
-import { NotFoundError, ValidationError } from '../../utils/errors.js';
+import { ConflictError, NotFoundError, ValidationError, isDuplicateKeyError } from '../../utils/errors.js';
 import { normalizePhone } from '../../utils/phone.js';
+import { buildIdentityKey } from '../../utils/identity.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import { attachSourcePhotoToExternalCandidate, runExternalPhotoBackfillNow } from '../../services/storage/photo-maintenance.service.js';
 import { scheduleNewExternalCandidateAlert } from '../../services/notifications/new-match-alert.service.js';
@@ -109,7 +110,11 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
     // same text the orchestrator extracted from — not just `body`.
     const effectiveText = m.body?.trim() || m.mediaCaption?.trim() || '';
     const persisted = m.extraction?.extractedProfile as ExtractedProfile | undefined;
-    const regex = persisted ? undefined : extractProfileFromText(effectiveText);
+    // Always run regex — even when a persisted profile exists — so the review
+    // card can surface the lines the parser did NOT recognize (unmatchedLines).
+    // Those are the operator's cue to teach a new label→field mapping (the
+    // card-label dictionary), which shrinks the queue over time.
+    const regex = extractProfileFromText(effectiveText);
     const suspectId = m.extraction?.suspectedCandidateId
       ? String(m.extraction.suspectedCandidateId)
       : undefined;
@@ -123,8 +128,11 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
       mediaUrl: m.mediaUrl,
       createdAt: m.createdAt,
       extraction: m.extraction,
-      extractedFields: persisted ?? regex?.profile ?? {},
-      regexConfidence: regex?.confidence ?? m.extraction?.confidence,
+      extractedFields: persisted ?? regex.profile ?? {},
+      regexConfidence: persisted ? m.extraction?.confidence : regex.confidence,
+      // Lines the deterministic parser couldn't attach to a known label —
+      // candidate labels for the operator to teach (Feature C).
+      unmatchedLines: regex.unmatchedLines,
       reviewReason: m.extraction?.reviewReason,
       suspectedCandidate: suspect
         ? {
@@ -377,45 +385,60 @@ async function approveClaimed(
         .select('chatName').lean().exec())?.chatName ?? undefined
     : undefined;
 
-  const created = await ExternalCandidate.create({
-    sourceType: ExternalSourceType.WHATSAPP_GROUP,
-    sourceChannelId: message.channelId,
-    sourceChatJid: message.chatJid,
-    sourceGroupName: groupName,
-    sourceSenderName: message.senderName,
-    sourceSenderPhone: message.senderPhone,
-    sourceImportedAt: message.createdAt,
-    lastSourceUpdateAt: message.createdAt,
-    contactPhone: primaryPhone,
-    contactPhoneNormalized: normalizedPhone ?? undefined,
-    sourceMessageIds: [message._id],
-    firstName: profile.firstName,
-    lastName: profile.lastName,
-    gender: profile.gender,
-    age: profile.age,
-    city: profile.city,
-    sectorGroup: profile.sectorGroup,
-    personalStatus: profile.personalStatus,
-    height: profile.height,
-    ethnicity: profile.edah,
-    familyBackground: profile.family,
-    currentOccupation: profile.occupation,
-    educationInstitution: profile.yeshiva,
-    armyService: profile.service,
-    about: profile.about,
-    whatSeeking: profile.whatSeeking,
-    additionalInfo: profile.religiousLevelText,
-    agePreferences: (profile.seekingAgeMin || profile.seekingAgeMax)
-      ? { min: profile.seekingAgeMin, max: profile.seekingAgeMax }
-      : undefined,
-    status: ExternalCandidateStatus.ACTIVE,
-    // Freshly-posted profile → available (else hidden by the list's default
-    // "available" filter). Operator can change it later.
-    availabilityStatus: AvailabilityStatus.AVAILABLE,
-    importedBy: new Types.ObjectId(userId),
-    // The operator who approved the extraction becomes the owner.
-    ownerUserId: new Types.ObjectId(userId),
-  });
+  let created;
+  try {
+    created = await ExternalCandidate.create({
+      sourceType: ExternalSourceType.WHATSAPP_GROUP,
+      sourceChannelId: message.channelId,
+      sourceChatJid: message.chatJid,
+      sourceGroupName: groupName,
+      sourceSenderName: message.senderName,
+      sourceSenderPhone: message.senderPhone,
+      sourceImportedAt: message.createdAt,
+      lastSourceUpdateAt: message.createdAt,
+      contactPhone: primaryPhone,
+      contactPhoneNormalized: normalizedPhone ?? undefined,
+      sourceMessageIds: [message._id],
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      gender: profile.gender,
+      age: profile.age,
+      city: profile.city,
+      sectorGroup: profile.sectorGroup,
+      personalStatus: profile.personalStatus,
+      height: profile.height,
+      ethnicity: profile.edah,
+      familyBackground: profile.family,
+      currentOccupation: profile.occupation,
+      educationInstitution: profile.yeshiva,
+      armyService: profile.service,
+      about: profile.about,
+      whatSeeking: profile.whatSeeking,
+      additionalInfo: profile.religiousLevelText,
+      agePreferences: (profile.seekingAgeMin || profile.seekingAgeMax)
+        ? { min: profile.seekingAgeMin, max: profile.seekingAgeMax }
+        : undefined,
+      status: ExternalCandidateStatus.ACTIVE,
+      // Freshly-posted profile → available (else hidden by the list's default
+      // "available" filter). Operator can change it later.
+      availabilityStatus: AvailabilityStatus.AVAILABLE,
+      importedBy: new Types.ObjectId(userId),
+      // The operator who approved the extraction becomes the owner.
+      ownerUserId: new Types.ObjectId(userId),
+    });
+  } catch (err) {
+    // Same-identity (name+age) candidate already exists — the unique index
+    // rejected this create. Point the operator at the existing card so they can
+    // link via the duplicates tab instead of minting a twin. (The outer
+    // approveExtraction releases the review claim so they can retry.)
+    if (isDuplicateKeyError(err)) {
+      throw new ConflictError(
+        'A candidate with the same name and age already exists — link to it instead of creating a duplicate',
+        { code: 'duplicate_identity', existingCandidateId: await findIdentityDuplicateId(profile) },
+      );
+    }
+    throw err;
+  }
 
   await updateMessageExtraction(message, {
     status: MessageExtractionStatus.CREATED_NEW,
@@ -469,6 +492,18 @@ export async function rejectExtraction(
 }
 
 // ── Helpers ──────────────────────────────────────────────
+
+/** Locate the active candidate that owns this profile's identity key, so a
+ *  duplicate-create conflict can name the card to link to. */
+async function findIdentityDuplicateId(profile: ExtractedProfile): Promise<string | undefined> {
+  const key = buildIdentityKey(profile.firstName, profile.lastName, profile.age);
+  if (!key) return undefined;
+  const existing = await ExternalCandidate.findOne({ identityKey: key, archivedAt: { $exists: false } })
+    .select('_id')
+    .lean()
+    .exec();
+  return existing ? String(existing._id) : undefined;
+}
 
 // Whitelist & coerce the fields we accept from the operator review UI.
 // Anything outside this shape is dropped — avoids accidental persistence

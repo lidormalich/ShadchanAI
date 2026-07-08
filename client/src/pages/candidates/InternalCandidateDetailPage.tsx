@@ -19,6 +19,7 @@ import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { CandidatePhoto } from '@/features/candidates/CandidatePhoto';
 import { PhotoTab } from '@/features/candidates/PhotoTab';
 import { CandidateInsightTab } from '@/features/candidates/CandidateInsightTab';
+import { InsightFitBadge, useInsightFits } from '@/features/matches/InsightFitBadge';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
 import { EmptyState, ErrorState, LoadingSkeleton, NotFoundState } from '@/components/states/states';
@@ -355,6 +356,10 @@ function FindMatchesDialog({
   // Reset the visible window whenever the dialog reopens or the result set changes.
   useEffect(() => { setVisibleCount(CHUNK); }, [open, allMatches.length]);
 
+  // Advisory ⭐ insight-fit for every candidate in the pool (one batch call).
+  const insightPairs = allMatches.map((m) => ({ internalCandidateId, externalCandidateId: m.externalCandidateId }));
+  const { fitFor } = useInsightFits(insightPairs);
+
   const createSuggestion = useMutation({
     mutationFn: (externalCandidateId: string) => matchesApi.createManual({
       internalCandidateId, externalCandidateId, mode: 'strict',
@@ -396,6 +401,7 @@ function FindMatchesDialog({
                         {label('matchType', m.matchType)}
                       </Badge>
                       {m.sectorGroup && <Badge tone="neutral">{label('sectorGroup', m.sectorGroup)}</Badge>}
+                      <InsightFitBadge fit={fitFor(internalCandidateId, m.externalCandidateId)} />
                     </div>
                     <div className="text-xs text-ink-muted mt-1 flex items-center gap-2 flex-wrap">
                       {m.city && <span>{m.city}</span>}

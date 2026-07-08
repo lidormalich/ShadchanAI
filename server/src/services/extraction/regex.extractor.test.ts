@@ -8,6 +8,23 @@
 import { describe, it, expect } from 'vitest';
 import { Gender, PersonalStatus, SectorGroup } from '@shadchanai/shared';
 import { extractProfileFromText } from './regex.extractor.js';
+import { setCustomLabelSynonyms } from './templates.js';
+
+describe('operator-taught label synonyms (Feature C)', () => {
+  it('parses a card whose label was taught at runtime, then reverts on reset', () => {
+    // "כינוי" is not a built-in name synonym — a card using it fails to bind.
+    expect(extractProfileFromText('כינוי: משה\nגיל: 30').profile.firstName).toBeUndefined();
+    try {
+      setCustomLabelSynonyms({ name: ['כינוי'] });
+      const r = extractProfileFromText('כינוי: משה\nגיל: 30');
+      expect(r.profile.firstName).toBe('משה');
+      expect(r.profile.age).toBe(30);
+    } finally {
+      setCustomLabelSynonyms({}); // reset so other tests see built-ins only
+    }
+    expect(extractProfileFromText('כינוי: משה').profile.firstName).toBeUndefined();
+  });
+});
 
 // ── Sample 1: הדס .ו (female, DL) ────────────────────────
 const SAMPLE_1 = `שם: הדס .ו
@@ -557,6 +574,33 @@ describe('regex.extractor — real samples', () => {
     expect(r.profile.edah).toBe('תימני');
     expect(r.profile.occupation).toContain('אבטחת מידע');
     expect(r.profile.seekingAgeMax).toBe(31);
+  });
+
+  // ── Sample 20: emoji labels each prefixed with a zero-width space (U+200B).
+  // Real "שליש גן עדן" group card format — the leading U+200B before every
+  // emoji used to survive stripDecorations (JS \s / trim don't cover it), so
+  // labels resolved as "​שם" and matched nothing → whole card extracted only
+  // the phone → gated to needs_review. Must parse fully now.
+  it('sample 20: zero-width-space + emoji prefixed labels parse fully', () => {
+    const r = extractProfileFromText(
+      '​כרטיס שידוכים\n\n' +
+      '​😊 שם: ורוניק הודיה\n\n' +
+      '​🎂 גיל: 40\n\n' +
+      '​🌱 גובה: 1.60\n\n' +
+      '​👳 עדה: מרוקאית\n\n' +
+      '​🎗️ מצב משפחתי: גרושה ללא ילדים\n\n' +
+      '​🏡 אזור מגורים: נתיבות\n\n' +
+      '​לווצאפ: 052-797-6000',
+    );
+    expect(r.isLikelyProfile).toBe(true);
+    expect(r.confidence).toBeGreaterThanOrEqual(0.8);
+    expect(r.profile.firstName).toBe('ורוניק');
+    expect(r.profile.lastName).toBe('הודיה');
+    expect(r.profile.age).toBe(40);
+    expect(r.profile.height).toBe(160);
+    expect(r.profile.edah).toBe('מרוקאית');
+    expect(r.profile.city).toBe('נתיבות');
+    expect(r.profile.contactPhones).toContain('0527976000');
   });
 
   it('sample 11: question-style labels ("מה עושה בחיים?") parsed', () => {

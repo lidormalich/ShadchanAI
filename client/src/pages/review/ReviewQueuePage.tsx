@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Copy, Filter, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, X } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
@@ -27,6 +27,7 @@ import { AuthImage } from '@/components/AuthImage';
 import { toast } from '@/components/ui/Toast';
 import {
   extractionApi,
+  type CardLabelField,
   type ExtractedProfileInput,
   type FailedQueueItem,
   type IngestionDecision,
@@ -35,6 +36,27 @@ import {
   type ReviewReason,
 } from '@/services/api/extraction';
 import { label } from '@/utils/labels';
+
+// Field a raw card label can be taught to map to (Feature C). Hebrew names
+// mirror the profile fields the parser fills.
+const CARD_FIELD_OPTIONS: { value: CardLabelField; label: string }[] = [
+  { value: 'name', label: 'שם' },
+  { value: 'age', label: 'גיל' },
+  { value: 'height', label: 'גובה' },
+  { value: 'city', label: 'עיר / מגורים' },
+  { value: 'edah', label: 'עדה' },
+  { value: 'sector', label: 'רמה דתית / מגזר' },
+  { value: 'status', label: 'מצב משפחתי' },
+  { value: 'occupation', label: 'עיסוק' },
+  { value: 'about', label: 'על עצמו' },
+  { value: 'family', label: 'משפחה' },
+  { value: 'service', label: 'שירות צבאי/לאומי' },
+  { value: 'yeshiva', label: 'ישיבה / השכלה' },
+  { value: 'seeking', label: 'מה מחפש' },
+  { value: 'ageRange', label: 'טווח גילאים' },
+  { value: 'maxAge', label: 'עד גיל' },
+  { value: 'phone', label: 'טלפון' },
+];
 
 // Hebrew labels for the pipeline's review reason — why a message
 // landed in the queue instead of auto-creating a candidate.
@@ -59,6 +81,7 @@ export function ReviewQueuePage() {
   const [searchParams] = useSearchParams();
   const focusMessageId = searchParams.get('messageId');
   const [tab, setTab] = useState<'review' | 'duplicates' | 'failed' | 'filtered'>('review');
+  const [learnOpen, setLearnOpen] = useState(false);
 
   const queue = useQuery({
     queryKey: ['extraction', 'review-queue'],
@@ -141,6 +164,14 @@ export function ReviewQueuePage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => setLearnOpen(true)}
+            leftIcon={<GraduationCap className="h-4 w-4" />}
+            title="הדבק כרטיס שידוך שלם — המערכת תלמד את התוויות שלו וכל כרטיס עתידי בפורמט הזה יפוענח לבד"
+          >
+            למד פורמט חדש
+          </Button>
           <Button
             variant="secondary"
             onClick={() => refreshAll.mutate()}
@@ -240,7 +271,136 @@ export function ReviewQueuePage() {
           ))}
         </div>
       )}
+
+      <LearnFormatDialog open={learnOpen} onClose={() => setLearnOpen(false)} onLearned={invalidate} />
     </div>
+  );
+}
+
+// ── "Learn a new format" dialog (Feature C+) ─────────────
+// Paste a full card → the parser reports recognized fields + unknown labels,
+// the AI proposes a field per unknown label, the operator confirms, and the
+// whole format is taught at once. Every future card in that format then parses.
+function LearnFormatDialog({ open, onClose, onLearned }: {
+  open: boolean;
+  onClose: () => void;
+  onLearned: () => void;
+}) {
+  const qc = useQueryClient();
+  const [text, setText] = useState('');
+  const [picks, setPicks] = useState<Record<string, CardLabelField | ''>>({});
+
+  const analyze = useMutation({
+    mutationFn: () => extractionApi.analyzeCard(text),
+    onSuccess: (res) => {
+      // Pre-fill each unknown label with the AI's suggestion.
+      const seed: Record<string, CardLabelField | ''> = {};
+      for (const u of res.data.unknownLabels) seed[u.label] = u.suggestedField ?? '';
+      setPicks(seed);
+    },
+    onError: (e: Error) => toast.error('הניתוח נכשל', e.message),
+  });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const mappings = Object.entries(picks)
+        .filter(([, f]) => !!f)
+        .map(([label, field]) => ({ label, field: field as CardLabelField }));
+      return extractionApi.addCardLabelsBulk(mappings);
+    },
+    onSuccess: (res) => {
+      toast.success('הפורמט נלמד', `${res.data.created} תוויות נוספו${res.data.skipped ? ` · ${res.data.skipped} כבר קיימות` : ''}`);
+      qc.invalidateQueries({ queryKey: ['card-labels'] });
+      onLearned();
+      reset();
+      onClose();
+    },
+    onError: (e: Error) => toast.error('השמירה נכשלה', e.message),
+  });
+
+  const reset = () => { setText(''); setPicks({}); analyze.reset(); };
+  const result = analyze.data?.data;
+  const chosenCount = Object.values(picks).filter(Boolean).length;
+
+  return (
+    <Dialog
+      open={open}
+      onClose={() => { reset(); onClose(); }}
+      title="למד פורמט כרטיס חדש"
+      secondaryAction={{ label: 'סגור', onClick: () => { reset(); onClose(); } }}
+      primaryAction={result && result.unknownLabels.length > 0
+        ? { label: `שמור ${chosenCount} תוויות`, onClick: () => save.mutate(), loading: save.isPending, disabled: chosenCount === 0 }
+        : undefined}
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-ink-muted">
+          הדבק כרטיס שידוך שלם. המערכת תראה מה היא כבר מזהה ומה לא — וה-AI יציע לאיזה שדה למפות כל תווית לא-מזוהה.
+          אחרי שמירה, כל כרטיס עתידי בפורמט הזה יפוענח אוטומטית.
+        </p>
+        <Textarea
+          rows={6}
+          dir="rtl"
+          placeholder={'הדבק כאן כרטיס שידוך שלם…\nלמשל: שם: … גיל: … כינוי: …'}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <div className="flex justify-end">
+          <Button
+            variant="secondary"
+            onClick={() => analyze.mutate()}
+            disabled={!text.trim() || analyze.isPending}
+            leftIcon={<Sparkles className="h-4 w-4" />}
+          >
+            {analyze.isPending ? 'מנתח…' : 'נתח'}
+          </Button>
+        </div>
+
+        {result && (
+          <div className="space-y-3 border-t border-border pt-3">
+            {result.recognizedFields.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-ink-muted mb-1">כבר מזוהה ({result.recognizedFields.length})</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {result.recognizedFields.map((f) => (
+                    <Badge key={f} tone="success">
+                      {CARD_FIELD_OPTIONS.find((o) => o.value === f)?.label ?? f}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.unknownLabels.length === 0 ? (
+              <div className="text-sm text-success">כל התוויות בכרטיס כבר מוכרות — אין מה ללמד 🎉</div>
+            ) : (
+              <div>
+                <div className="text-xs font-medium text-ink-muted mb-1">תוויות לא-מזוהות — מפה כל אחת (הצעת AI מסומנת)</div>
+                <div className="space-y-1.5">
+                  {result.unknownLabels.map((u) => (
+                    <div key={u.label} className="flex items-center gap-2 flex-wrap text-sm">
+                      <span className="font-medium text-ink">{u.label}</span>
+                      {u.value && <span className="text-xs text-ink-faint truncate max-w-[12rem]">= {u.value}</span>}
+                      <span className="text-ink-faint text-xs">→</span>
+                      <Select
+                        className="w-44"
+                        value={picks[u.label] ?? ''}
+                        onChange={(e) => setPicks((p) => ({ ...p, [u.label]: e.target.value as CardLabelField | '' }))}
+                      >
+                        <option value="">אל תמפה</option>
+                        {CARD_FIELD_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                      </Select>
+                      {u.suggestedField && picks[u.label] === u.suggestedField && (
+                        <span className="text-[11px] text-brand-600">הצעת AI</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Dialog>
   );
 }
 
@@ -499,6 +659,65 @@ function FilteredCard({ item, onReprocess, busy }: {
 const SECTOR_OPTIONS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani', 'other'];
 const STATUS_OPTIONS = ['single', 'divorced', 'widowed', 'separated'];
 
+// ── Label-learning panel (Feature C) ─────────────────────
+// Shows the labeled lines the deterministic parser did NOT recognize. The
+// operator maps a line's label to a canonical field once; the parser learns it
+// (card-label dictionary) so every future card in that format auto-parses and
+// never reaches this queue. After teaching, we re-run this message so the
+// operator sees it re-parse immediately.
+function LearnLabelsPanel({ item, onTaught }: { item: ReviewQueueItem; onTaught: () => void }) {
+  // Only lines shaped like "label: value" are teachable labels.
+  const labelLines = (item.unmatchedLines ?? [])
+    .map((l) => {
+      const m = l.match(/^\s*([^:：?？]{1,40})[:：?？]\s*(.*)$/);
+      return m ? { raw: l, label: m[1]!.trim(), value: (m[2] ?? '').trim() } : null;
+    })
+    .filter((x): x is { raw: string; label: string; value: string } => !!x && x.label.length > 0);
+
+  const [picks, setPicks] = useState<Record<string, CardLabelField | ''>>({});
+
+  const learn = useMutation({
+    mutationFn: ({ label: lbl, field }: { label: string; field: CardLabelField }) => extractionApi.addCardLabel(lbl, field),
+    onSuccess: () => { toast.success('התווית נלמדה', 'מריץ עיבוד מחדש להחלה'); onTaught(); },
+    onError: (e: Error) => toast.error('לימוד התווית נכשל', e.message),
+  });
+
+  if (labelLines.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-dashed border-amber-300 bg-amber-50/40 p-3 space-y-2">
+      <div className="text-xs font-medium text-amber-800">
+        תוויות שהפענוח לא זיהה — למד אותן וכל כרטיס עתידי בפורמט הזה יפוענח לבד
+      </div>
+      <div className="space-y-1.5">
+        {labelLines.map((ll) => (
+          <div key={ll.raw} className="flex items-center gap-2 flex-wrap text-sm">
+            <span className="font-medium text-ink">{ll.label}</span>
+            {ll.value && <span className="text-xs text-ink-faint truncate max-w-[14rem]">= {ll.value}</span>}
+            <span className="text-ink-faint text-xs">→</span>
+            <Select
+              className="w-40"
+              value={picks[ll.label] ?? ''}
+              onChange={(e) => setPicks((p) => ({ ...p, [ll.label]: e.target.value as CardLabelField | '' }))}
+            >
+              <option value="">בחר שדה…</option>
+              {CARD_FIELD_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </Select>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!picks[ll.label] || learn.isPending}
+              onClick={() => picks[ll.label] && learn.mutate({ label: ll.label, field: picks[ll.label] as CardLabelField })}
+            >
+              למד
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReviewCard({
   item, focused, onApprove, onReject, onRerun, busy,
 }: {
@@ -634,6 +853,8 @@ function ReviewCard({
             </div>
           </div>
         </div>
+
+        <LearnLabelsPanel item={item} onTaught={onRerun} />
 
         <Divider />
 

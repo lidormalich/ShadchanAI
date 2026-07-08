@@ -78,6 +78,30 @@ export async function findExistingCandidate(profile: ExtractedProfile): Promise<
     }
   }
 
+  // ── Tier 2b: firstName + age (±1), NO last name on the incoming card ──
+  // Single-first-name cards ("שם: שמרית", no surname) are extremely common in
+  // WhatsApp groups and can't use any name+name tier — so a person reposted
+  // across groups used to create a fresh candidate every time. When the incoming
+  // card has no last name, a same-first-name + adjacent-age existing candidate
+  // is enough to SUSPECT a duplicate. Reported 'weak' (lower confidence than a
+  // full name+age hit) → the orchestrator routes it to the duplicates review
+  // tab; it is NEVER auto-merged, since two different people can share a common
+  // first name and age.
+  if (profile.firstName && !profile.lastName && profile.age) {
+    const hit = await ExternalCandidate.findOne({
+      firstName: profile.firstName,
+      age: { $gte: profile.age - 1, $lte: profile.age + 1 },
+      status: { $ne: 'archived' },
+    }).exec();
+    if (hit) {
+      return {
+        strength: 'weak',
+        candidate: hit,
+        reason: `first-name+age match (no surname): ${profile.firstName} ~${profile.age}`,
+      };
+    }
+  }
+
   // ── Tier 3: firstName + lastName (name-only) ──────────
   if (profile.firstName && profile.lastName) {
     const hit = await ExternalCandidate.findOne({

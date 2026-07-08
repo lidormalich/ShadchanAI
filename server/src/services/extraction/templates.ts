@@ -75,6 +75,30 @@ export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
   selfIntro: [], // generated from free-text sentences
 };
 
+// All canonical field keys (for validating operator-added label mappings).
+export const FIELD_KEYS = Object.keys(LABEL_SYNONYMS) as FieldKey[];
+
+// ── Operator-taught label synonyms (Feature C) ───────────
+// The parser learns new card formats WITHOUT a code change: operators map a
+// raw label they saw ("כינוי" → name) in the UI, it's stored in the DB, and
+// the card-label service pushes the merged dictionary here at boot + on every
+// edit. Starts as just the built-ins, so behavior is unchanged until taught.
+let ACTIVE_SYNONYMS: Record<FieldKey, string[]> = LABEL_SYNONYMS;
+
+function mergeSynonyms(custom: Partial<Record<FieldKey, string[]>>): Record<FieldKey, string[]> {
+  const merged = {} as Record<FieldKey, string[]>;
+  for (const key of FIELD_KEYS) {
+    merged[key] = [...LABEL_SYNONYMS[key], ...(custom[key] ?? [])];
+  }
+  return merged;
+}
+
+/** Replace the operator-taught synonym overlay. Called by the card-label
+ *  service on boot and after every add/remove. Pass {} to reset to built-ins. */
+export function setCustomLabelSynonyms(custom: Partial<Record<FieldKey, string[]>>): void {
+  ACTIVE_SYNONYMS = mergeSynonyms(custom);
+}
+
 // ── Emoji + decoration stripper ──────────────────────────
 // Remove WhatsApp decorations from the start of a label/value.
 // Covers emojis (most BMP + surrogate pairs), zero-width joiners,
@@ -86,12 +110,28 @@ export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
 const EMOJI_RE = /[\u2190-\u2BFF\u2300-\u27BF\uFE0F\u200D\p{Extended_Pictographic}\p{Emoji_Modifier}]+/gu;
 const DECORATION_RE = /^[\s\-*•·★✦➤›»→💘🌷😊👤👳👪🎓🎂🌱🏡🙏📖🌡🎭🎯📸🎚☎⭐️💐🥂✨🇮🇱]+/u;
 
+// Invisible formatting characters that WhatsApp/RTL cards sprinkle in — zero-
+// width spaces/joiners, the BOM, word joiner, and bidi directional marks/
+// isolates. JS `\s` and String.trim() do NOT treat most of these as
+// whitespace, so a leading U+200B before an emoji ("​😊 שם:") survived every
+// strip and left the label as "​שם" — which matched no field, so entire cards
+// extracted only their phone and got gated into needs_review. Must run BEFORE
+// the emoji/decoration strips so those can then see a clean line head.
+const ZERO_WIDTH_RE = /[​-‏‪-‮⁠⁦-⁩﻿؜]/g;
+
 export function stripDecorations(s: string): string {
   return s
+    .replace(ZERO_WIDTH_RE, '')
     .replace(EMOJI_RE, ' ')
     .replace(DECORATION_RE, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Remove invisible formatting characters (zero-width + bidi marks). Exposed so
+ *  the bold-label path can clean its input the same way stripDecorations does. */
+export function stripZeroWidth(s: string): string {
+  return s.replace(ZERO_WIDTH_RE, '');
 }
 
 // ── Label resolver ───────────────────────────────────────
@@ -145,7 +185,7 @@ export function resolveLabel(rawLine: string): LabelHit | null {
 // only when the wrapped text resolves to a known label — a stray *bold* phrase
 // in free text falls through to the normal path and then to unlabeled prose.
 function resolveBoldLabel(rawLine: string): LabelHit | null {
-  const s = rawLine.replace(EMOJI_RE, ' ').trim();
+  const s = stripZeroWidth(rawLine).replace(EMOJI_RE, ' ').trim();
   const m = s.match(/^\*+\s*([^*\n]+?)\s*\*+\s*[-–—:]?\s*(.*)$/);
   if (!m) return null;
   // Drop a trailing ":" / "?" that lived inside the bold ("*גיל מדוייק:*").
@@ -161,7 +201,7 @@ function matchLabel(labelPart: string, valuePart: string, viaBold: boolean): Lab
 
   // Pass 1: exact match wins outright — prevents a short variant of one
   // field ("גיל") from prefix-hijacking another field's label ("גילאים").
-  for (const [field, variants] of Object.entries(LABEL_SYNONYMS) as [FieldKey, string[]][]) {
+  for (const [field, variants] of Object.entries(ACTIVE_SYNONYMS) as [FieldKey, string[]][]) {
     for (const variant of variants) {
       if (labelNorm === normalizeLabel(variant)) {
         return { field, value: valuePart, rawLabel: labelPart, viaBold };
@@ -173,7 +213,7 @@ function matchLabel(labelPart: string, valuePart: string, viaBold: boolean): Lab
   // The LONGEST matching variant claims the label, so the most specific
   // synonym wins regardless of declaration order in LABEL_SYNONYMS.
   let best: { field: FieldKey; len: number } | null = null;
-  for (const [field, variants] of Object.entries(LABEL_SYNONYMS) as [FieldKey, string[]][]) {
+  for (const [field, variants] of Object.entries(ACTIVE_SYNONYMS) as [FieldKey, string[]][]) {
     for (const variant of variants) {
       const v = normalizeLabel(variant);
       if (v.length < 2) continue;
@@ -187,7 +227,7 @@ function matchLabel(labelPart: string, valuePart: string, viaBold: boolean): Lab
   return null;
 }
 
-function normalizeLabel(s: string): string {
+export function normalizeLabel(s: string): string {
   return s
     .replace(/[()]/g, '')
     .replace(/[״"׳']/g, '')

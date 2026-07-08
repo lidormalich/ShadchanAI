@@ -67,6 +67,27 @@ export interface ReviewQueueItem {
   regexConfidence: number;
   reviewReason?: ReviewReason;
   suspectedCandidate?: SuspectedCandidate;
+  /** Lines the deterministic parser could not attach to a known label —
+   *  candidates for the operator to teach as new label→field mappings. */
+  unmatchedLines?: string[];
+}
+
+// Canonical parser field keys an operator can map a label to (Feature C).
+export type CardLabelField =
+  | 'name' | 'age' | 'height' | 'city' | 'edah' | 'sector' | 'status'
+  | 'occupation' | 'about' | 'family' | 'service' | 'yeshiva' | 'seeking'
+  | 'ageRange' | 'maxAge' | 'photos' | 'phone';
+
+export interface CardLabel {
+  _id: string;
+  label: string;
+  field: CardLabelField;
+  createdAt: string;
+}
+
+export interface CardAnalysis {
+  recognizedFields: string[];
+  unknownLabels: { label: string; value: string; suggestedField: CardLabelField | null }[];
 }
 
 export type ExtractedProfileInput = ReviewQueueItem['extractedFields'];
@@ -133,4 +154,14 @@ export const extractionApi = {
     api.post<{ photosScanned: number; photosAttached: number; semanticStarted: boolean }>(
       '/extraction/refresh-all',
     ),
+  // Card-label dictionary — teach the parser new formats (Feature C).
+  listCardLabels: () => api.get<CardLabel[]>('/extraction/card-labels'),
+  addCardLabel: (label: string, field: CardLabelField) =>
+    api.post<CardLabel>('/extraction/card-labels', { label, field }),
+  deleteCardLabel: (id: string) =>
+    api.del<{ deleted: boolean }>(`/extraction/card-labels/${id}`),
+  analyzeCard: (text: string) =>
+    api.post<CardAnalysis>('/extraction/card-labels/analyze', { text }),
+  addCardLabelsBulk: (mappings: { label: string; field: CardLabelField }[]) =>
+    api.post<{ created: number; skipped: number }>('/extraction/card-labels/bulk', { mappings }),
 };

@@ -25,6 +25,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import * as svc from './extraction.service.js';
+import * as cardLabels from './card-label.service.js';
 import { ensureUser, canManageChannels } from '../../middleware/permissions.js';
 import { ok } from '../../utils/response.js';
 
@@ -120,5 +121,56 @@ export async function rejectHandler(req: Request, res: Response, next: NextFunct
     canManageChannels(user);
     const messageId = String(req.params['messageId'] ?? '');
     ok(res, await svc.rejectExtraction(messageId));
+  } catch (e) { next(e); }
+}
+
+// ── Card-label dictionary (operator-taught label→field mappings) ──
+
+export async function listCardLabelsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    ok(res, await cardLabels.listCardLabels());
+  } catch (e) { next(e); }
+}
+
+export async function createCardLabelHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const body = req.body as { label?: string; field?: string } | undefined;
+    ok(res, await cardLabels.createCardLabel(String(body?.label ?? ''), String(body?.field ?? ''), user.id));
+  } catch (e) { next(e); }
+}
+
+export async function deleteCardLabelHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    await cardLabels.deleteCardLabel(String(req.params['id'] ?? ''));
+    ok(res, { deleted: true });
+  } catch (e) { next(e); }
+}
+
+// Analyze a pasted card → recognized fields + unknown labels (with AI-suggested
+// field per label) so a whole new format can be taught in one shot.
+export async function analyzeCardHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const body = req.body as { text?: string } | undefined;
+    ok(res, await cardLabels.analyzeCard(String(body?.text ?? ''), user.id));
+  } catch (e) { next(e); }
+}
+
+export async function bulkCardLabelsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const body = req.body as { mappings?: Array<{ label?: unknown; field?: unknown }> } | undefined;
+    const mappings = (body?.mappings ?? [])
+      .map((m) => ({ label: String(m.label ?? ''), field: String(m.field ?? '') }))
+      .filter((m) => m.label && m.field);
+    ok(res, await cardLabels.createCardLabelsBulk(mappings, user.id));
   } catch (e) { next(e); }
 }

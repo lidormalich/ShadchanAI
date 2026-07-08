@@ -11,6 +11,7 @@ import {
   startSemanticBackfill,
   getSemanticBackfillState,
 } from '../../services/embedding/semantic-backfill.service.js';
+import { insightFitForPairs, type PairInput } from '../../services/ai/insight-fit.service.js';
 import { getValidatedQuery, getValidatedParams } from '../../middleware/validate.middleware.js';
 import { ok, created } from '../../utils/response.js';
 import { ensureUser, canApproveMatches } from '../../middleware/permissions.js';
@@ -230,8 +231,20 @@ export async function closeHandler(req: Request, res: Response, next: NextFuncti
     const user = ensureUser(req.user);
     canApproveMatches(user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    const { reason } = req.body as { reason: string };
-    ok(res, await svc.closeSuggestion(id, reason, user.id, user));
+    const { reason, closureReason, sideAReason, sideBReason } = req.body as {
+      reason: string; closureReason?: string; sideAReason?: string; sideBReason?: string;
+    };
+    ok(res, await svc.closeSuggestion(id, reason, user.id, user, { closureReason, sideAReason, sideBReason }));
+  } catch (e) { next(e); }
+}
+
+// Advisory ⭐ insight-fit for internal×external pairs. Read-only heuristic
+// (learned signals vs external profile) — never touches the match score.
+export async function insightFitHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { pairs } = req.body as { pairs: PairInput[] };
+    ok(res, await insightFitForPairs(pairs));
   } catch (e) { next(e); }
 }
 

@@ -14,6 +14,8 @@ import { BlockedBanner } from '@/components/domain/banners';
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { AskAIPanel } from '@/features/ai/AskAIPanel';
 import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
+import { MatchOutcomeDialog, type OutcomePayload } from '@/features/matches/MatchOutcomeDialog';
+import { InsightFitBadge, useInsightFits } from '@/features/matches/InsightFitBadge';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
@@ -54,6 +56,12 @@ export function MatchDetailPage() {
     queryFn: () => externalCandidatesApi.get(externalId!),
     enabled: !!externalId,
   });
+
+  // Advisory ⭐ insight-fit for this exact pair (single-pair batch).
+  const insightPairs = internalId && externalId
+    ? [{ internalCandidateId: internalId, externalCandidateId: externalId }]
+    : [];
+  const { fitFor } = useInsightFits(insightPairs);
 
   // Breadcrumb shows the pair's names ("internal × external") instead of
   // the raw suggestion id from the URL, once both sides have loaded.
@@ -155,11 +163,46 @@ export function MatchDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['match', id] }),
   });
   const close = useMutation({
-    mutationFn: (reason: string) => matchesApi.close(id!, { reason }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['match', id] }),
+    mutationFn: (body: { reason: string; closureReason?: string; sideAReason?: string; sideBReason?: string }) =>
+      matchesApi.close(id!, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['match', id] });
+      toast.success('ההצעה נסגרה');
+    },
+    onError: (err) => toast.error('הסגירה נכשלה', (err as Error).message),
+  });
+  const markDating = useMutation({
+    mutationFn: (reason?: string) => matchesApi.markDating(id!, reason ? { reason } : {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['match', id] });
+      toast.success('סומן — יוצאים 💚');
+    },
+    onError: (err) => toast.error('העדכון נכשל', (err as Error).message),
   });
 
-  const [confirm, setConfirm] = useState<null | { type: 'defer' | 'close'; title: string; desc?: string }>(null);
+  // Route the chosen outcome to the right lifecycle action. Happy outcomes
+  // (dating/engaged/married) never fabricate a "why not"; "not_suitable"
+  // carries per-side reasons the learning agent reads. Never scores.
+  const handleOutcome = (p: OutcomePayload) => {
+    const done = { onSuccess: () => setOutcomeOpen(false) };
+    if (p.outcome === 'dating') {
+      markDating.mutate(p.note, done);
+    } else if (p.outcome === 'engaged') {
+      close.mutate({ reason: p.note ? `התארסו — ${p.note}` : 'התארסו 🎉', closureReason: 'engaged' }, done);
+    } else if (p.outcome === 'married') {
+      close.mutate({ reason: p.note ? `התחתנו — ${p.note}` : 'התחתנו 🎊', closureReason: 'married' }, done);
+    } else {
+      close.mutate({
+        reason: p.note || 'לא התאים',
+        closureReason: 'not_interested',
+        sideAReason: p.sideAReason,
+        sideBReason: p.sideBReason,
+      }, done);
+    }
+  };
+
+  const [confirm, setConfirm] = useState<null | { type: 'defer'; title: string; desc?: string }>(null);
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
   const [approveReasonOpen, setApproveReasonOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
@@ -241,6 +284,11 @@ export function MatchDetailPage() {
   if (!match.data) return null;
 
   const m = match.data.data;
+  // Lifecycle-aware action gating — hide buttons that don't apply to the
+  // current status so a closed/expired match doesn't offer approve/close/send.
+  const terminal = m.status === 'closed' || m.status === 'expired';
+  const canApprove = m.status === 'draft' || m.status === 'pending_approval';
+  const canDefer = !terminal && !m.isDeferred;
   const preview = sendPreview.data?.data;
   const activeDraftBody = draftSide === 'a' ? m.drafts?.sideA?.body ?? '' : m.drafts?.sideB?.body ?? '';
   const activeDraftMeta = draftSide === 'a' ? m.drafts?.sideA : m.drafts?.sideB;
@@ -252,6 +300,9 @@ export function MatchDetailPage() {
         <CardBody className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
             <MatchTypeBadge type={m.matchType} />
+            {internalId && externalId && <InsightFitBadge fit={fitFor(internalId, externalId)} />}
+            {m.status === 'dating' && <Badge tone="success">יוצאים 💚</Badge>}
+            {terminal && <Badge tone="neutral">{label('matchStatus', m.status)}</Badge>}
             {m.isDeferred && <Badge tone="warning">מושהה</Badge>}
             {m.riskLevel !== 'none' && <Badge tone={m.riskLevel === 'high' ? 'danger' : 'warning'}>סיכון {label('riskLevel', m.riskLevel)}</Badge>}
             {m.flexibilityOverrideApplied && <Badge tone="purple">גמישות הופעלה</Badge>}
@@ -279,15 +330,17 @@ export function MatchDetailPage() {
             >
               הצע צעד הבא
             </Button>
-            <Button
-              variant="secondary"
-              loading={draftMessage.isPending}
-              disabled={!internal.data || !external.data}
-              onClick={() => draftMessage.mutate()}
-              title="טיוטה לבדיקה — לא נשלח אוטומטית"
-            >
-              טיוטת הודעה
-            </Button>
+            {!terminal && (
+              <Button
+                variant="secondary"
+                loading={draftMessage.isPending}
+                disabled={!internal.data || !external.data}
+                onClick={() => draftMessage.mutate()}
+                title="טיוטה לבדיקה — לא נשלח אוטומטית"
+              >
+                טיוטת הודעה
+              </Button>
+            )}
             <Button
               variant="subtle"
               leftIcon={<Sparkles className="h-4 w-4" />}
@@ -297,28 +350,34 @@ export function MatchDetailPage() {
             >
               שאל על ההצעה
             </Button>
-            <Button
-              variant="secondary"
-              leftIcon={<Clock className="h-4 w-4" />}
-              onClick={() => setConfirm({ type: 'defer', title: 'השהה הצעה', desc: 'ההצעה תעבור לתור ההצעות המושהות. ניתן לפתוח בעתיד.' })}
-            >
-              השהה
-            </Button>
-            <Button
-              variant="secondary"
-              leftIcon={<CheckCircle2 className="h-4 w-4" />}
-              onClick={() => setApproveReasonOpen(true)}
-              loading={approve.isPending}
-            >
-              אשר
-            </Button>
-            <Button
-              variant="danger"
-              leftIcon={<XCircle className="h-4 w-4" />}
-              onClick={() => setConfirm({ type: 'close', title: 'סגור הצעה' })}
-            >
-              סגור
-            </Button>
+            {canDefer && (
+              <Button
+                variant="secondary"
+                leftIcon={<Clock className="h-4 w-4" />}
+                onClick={() => setConfirm({ type: 'defer', title: 'השהה הצעה', desc: 'ההצעה תעבור לתור ההצעות המושהות. ניתן לפתוח בעתיד.' })}
+              >
+                השהה
+              </Button>
+            )}
+            {canApprove && (
+              <Button
+                variant="secondary"
+                leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                onClick={() => setApproveReasonOpen(true)}
+                loading={approve.isPending}
+              >
+                אשר
+              </Button>
+            )}
+            {!terminal && (
+              <Button
+                variant="danger"
+                leftIcon={<XCircle className="h-4 w-4" />}
+                onClick={() => setOutcomeOpen(true)}
+              >
+                סגור
+              </Button>
+            )}
           </div>
         </CardBody>
       </Card>
@@ -420,18 +479,21 @@ export function MatchDetailPage() {
           </Card>
         )}
 
-        {/* Send preview + action bar */}
-        <Card>
-          <CardHeader><h3 className="text-sm font-semibold">מצב שליחה</h3></CardHeader>
-          <CardBody>
-            {sendPreview.isLoading ? <LoadingSkeleton rows={4} /> : preview ? (
-              <SendPreviewBlock preview={preview} onSend={() => setSendOpen(true)} safeMode={safeMode} />
-            ) : null}
-          </CardBody>
-        </Card>
+        {/* Send preview + action bar — hidden once the match is terminal */}
+        {!terminal && (
+          <Card>
+            <CardHeader><h3 className="text-sm font-semibold">מצב שליחה</h3></CardHeader>
+            <CardBody>
+              {sendPreview.isLoading ? <LoadingSkeleton rows={4} /> : preview ? (
+                <SendPreviewBlock preview={preview} onSend={() => setSendOpen(true)} safeMode={safeMode} />
+              ) : null}
+            </CardBody>
+          </Card>
+        )}
       </div>
 
       {/* Persisted proposal drafts — AI fills this, operator edits, send modal prefills from it */}
+      {!terminal && (
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -475,6 +537,7 @@ export function MatchDetailPage() {
           </div>
         </CardBody>
       </Card>
+      )}
 
       {/* Linked conversations per side (populated when a proposal is sent) */}
       <Card>
@@ -504,9 +567,17 @@ export function MatchDetailPage() {
         onConfirm={() => {
           if (!confirm) return;
           if (confirm.type === 'defer') defer.mutate('הוחלט להשהות');
-          if (confirm.type === 'close') close.mutate('החלטת שדכן');
           setConfirm(null);
         }}
+      />
+
+      <MatchOutcomeDialog
+        open={outcomeOpen}
+        internalName={i ? `${i.firstName} ${i.lastName}`.trim() : ''}
+        externalName={e ? `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() : ''}
+        loading={close.isPending || markDating.isPending}
+        onClose={() => setOutcomeOpen(false)}
+        onSubmit={handleOutcome}
       />
 
       <StatusReasonDialog

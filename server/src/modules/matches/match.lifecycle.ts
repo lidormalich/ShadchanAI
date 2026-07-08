@@ -210,6 +210,7 @@ export async function closeSuggestion(
   reason: string,
   performedBy: string,
   actor?: AuthUser,
+  opts?: { closureReason?: string; sideAReason?: string; sideBReason?: string },
 ): Promise<IMatchSuggestion> {
   const doc = await getMatchById(id);
   if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'match suggestion' });
@@ -217,7 +218,30 @@ export async function closeSuggestion(
   doc.status = MatchSuggestionStatus.CLOSED;
   doc.closedAt = new Date();
   doc.closeReason = reason;
-  recordStatusChange(doc, MatchSuggestionStatus.CLOSED, reason, performedBy);
+
+  // Per-side "why it didn't fit" — persisted on each side's response so
+  // the candidate-learning agent (which reads sideXResponse.declineReason)
+  // learns what THIS candidate specifically didn't want. Only touched when
+  // a reason is actually provided, so a happy close never fabricates one.
+  const sideAReason = opts?.sideAReason?.trim();
+  const sideBReason = opts?.sideBReason?.trim();
+  if (sideAReason) {
+    doc.sideAResponse = { ...(doc.sideAResponse ?? { status: 'pending' }), declineReason: sideAReason } as IMatchSuggestion['sideAResponse'];
+    doc.markModified('sideAResponse');
+  }
+  if (sideBReason) {
+    doc.sideBResponse = { ...(doc.sideBResponse ?? { status: 'pending' }), declineReason: sideBReason } as IMatchSuggestion['sideBResponse'];
+    doc.markModified('sideBResponse');
+  }
+
+  // Fold the structured outcome + per-side notes into the journal reason so
+  // the learning corpus gets the full picture in one entry.
+  const journalReason = [
+    reason,
+    sideAReason ? `צד א: ${sideAReason}` : undefined,
+    sideBReason ? `צד ב: ${sideBReason}` : undefined,
+  ].filter(Boolean).join(' — ');
+  recordStatusChange(doc, MatchSuggestionStatus.CLOSED, journalReason, performedBy);
   await doc.save();
 
   await audit({
@@ -227,7 +251,7 @@ export async function closeSuggestion(
     performedBy,
     before,
     after: doc.toObject(),
-    metadata: { transition: 'close', reason },
+    metadata: { transition: 'close', reason, closureReason: opts?.closureReason, sideAReason, sideBReason },
   });
 
   publishMatchUpdate(doc, 'closed');

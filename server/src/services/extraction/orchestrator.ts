@@ -35,6 +35,7 @@ import {
 } from '../../models/index.js';
 import { extractProfileFromText, type ExtractedProfile } from './regex.extractor.js';
 import { findExistingCandidate, type MatchResult } from './candidate.matcher.js';
+import { buildIdentityKey } from '../../utils/identity.js';
 import { extractProfileWithAI, type AIExtractedProfile } from './ai.extractor.js';
 import { extractProfileFromImage, visionExtractionAvailable } from './vision.extractor.js';
 import { downloadInboundMedia } from '../whatsapp/media.service.js';
@@ -42,6 +43,7 @@ import { attachSourcePhotoToExternalCandidate } from '../storage/photo-maintenan
 import { scheduleNewExternalCandidateAlert } from '../notifications/new-match-alert.service.js';
 import { publishRealtimeEvent } from '../realtime/realtime.service.js';
 import { getSettingCached } from '../../modules/settings/settings.service.js';
+import { isDuplicateKeyError } from '../../utils/errors.js';
 import { normalizePhone } from '../../utils/phone.js';
 import { createLogger } from '../../utils/logger.js';
 
@@ -170,12 +172,14 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       matchResult: match.strength,
     });
   }
-  // A 'strong' (name + age±1, no phone corroboration) hit is NOT auto-linked:
+  // A 'strong' (name + age±1) or 'weak' (name-only) hit is NOT auto-linked:
   // two different people routinely share a common Hebrew name and adjacent
-  // age, and a silent merge makes the second person vanish. Carry the
-  // suspect forward — the message lands in the duplicates review tab where
-  // the operator decides link-to-existing vs create-new.
-  let suspectedDuplicate = match.strength === 'strong' ? match.candidate : undefined;
+  // age, and a silent merge makes the second person vanish. But we also don't
+  // auto-CREATE past it — a name match is enough signal to send the message to
+  // the duplicates review tab, where the operator decides link-to-existing vs
+  // create-new (and sees any differing details side by side).
+  let suspectedDuplicate = isNameMatch(match.strength) ? match.candidate : undefined;
+  let suspectedStrength: MatchResult['strength'] | undefined = suspectedDuplicate ? match.strength : undefined;
 
   // ── 3. Decide whether to call AI ──────────────────────
   // Skip AI ONLY when regex already produced a RICH profile (name + some
@@ -244,8 +248,9 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
           matchResult: match.strength,
         });
       }
-      if (match.strength === 'strong') {
+      if (isNameMatch(match.strength)) {
         suspectedDuplicate = match.candidate ?? suspectedDuplicate;
+        suspectedStrength = match.strength;
       }
       } // end else (AI returned a profile)
     } catch (err) {
@@ -298,7 +303,7 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
       method,
       confidence: combinedConfidence,
       matchedFields: Object.keys(profile),
-      matchResult: 'strong',
+      matchResult: suspectedStrength ?? 'weak',
       extractedProfile: profile,
       reviewReason: 'suspected_duplicate',
       suspectedCandidateId: String(suspectedDuplicate._id),
@@ -335,7 +340,30 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
     });
   }
 
-  const created = await createFromProfile(profile, message);
+  let created: IExternalCandidate;
+  try {
+    created = await createFromProfile(profile, message);
+  } catch (err) {
+    // Lost the concurrent-repost race: a sibling message of the SAME person
+    // (identical name+age) created the candidate microseconds earlier, and the
+    // partial unique index on identityKey rejected this twin. Link to the
+    // winner instead of failing — the operator sees one card, not three.
+    const linked = isDuplicateKeyError(err)
+      ? await linkToRaceWinner(profile, message)
+      : null;
+    if (linked) {
+      flow.info({ messageId, candidateId: String(linked._id) }, 'flow_stop: matched_existing (identity-key race → linked)');
+      return finalize(message, {
+        status: MessageExtractionStatus.MATCHED_EXISTING,
+        method,
+        candidateId: String(linked._id),
+        confidence: combinedConfidence,
+        matchedFields: Object.keys(profile),
+        matchResult: 'exact',
+      });
+    }
+    throw err;
+  }
   flow.info({ messageId, candidateId: String(created._id), confidence: combinedConfidence }, 'flow_stop: created_new (profile created)');
   return finalize(message, {
     status: MessageExtractionStatus.CREATED_NEW,
@@ -347,6 +375,30 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
 }
 
 // ── Helpers ──────────────────────────────────────────────
+
+/** A name-based match (strong = name+age±1, weak = name-only). Both route to
+ *  the duplicates review tab rather than auto-create. 'exact' (name+phone) is
+ *  handled separately (auto-link); 'none' means genuinely new. */
+function isNameMatch(strength: MatchResult['strength']): boolean {
+  return strength === 'strong' || strength === 'weak';
+}
+
+/** After an identityKey unique-index collision, find the candidate that won the
+ *  race and link this message to it. Returns null if it can't be located (the
+ *  caller then re-throws the original error). */
+async function linkToRaceWinner(
+  profile: ExtractedProfile,
+  message: IMessage,
+): Promise<IExternalCandidate | null> {
+  const key = buildIdentityKey(profile.firstName, profile.lastName, profile.age);
+  if (!key) return null;
+  const winner = await ExternalCandidate.findOne({
+    identityKey: key,
+    archivedAt: { $exists: false },
+  }).exec();
+  if (!winner) return null;
+  return linkToExisting(winner, message);
+}
 
 /**
  * Vision path for image-only cards. Returns a finalize-ready outcome, or
