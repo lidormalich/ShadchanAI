@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { z } from 'zod';
-import { MatchSuggestionStatus, MatchType, SourceMode } from '@shadchanai/shared';
+import { ClosureReason, MatchSuggestionStatus, MatchType, SourceMode } from '@shadchanai/shared';
 import { PaginationQuerySchema } from '../../utils/pagination.js';
 import { optionalBooleanString } from '../../utils/zod-bool.js';
 
@@ -44,12 +44,27 @@ export const DeferSchema = z.object({
 
 export const CloseMatchSchema = z.object({
   reason: z.string().min(1).max(500),
+  // Structured outcome so the learning corpus can tell a happy close
+  // (engaged/married) from a "didn't fit" close. Advisory — never scores.
+  closureReason: z.nativeEnum(ClosureReason).optional(),
+  // Per-side "why it didn't fit" free text — written to each side's
+  // declineReason, which the candidate-learning agent reads to refine
+  // future match direction for that specific candidate.
+  sideAReason: z.string().max(1000).optional(),
+  sideBReason: z.string().max(1000).optional(),
 });
 
 export const DeclineSchema = z.object({
   side: z.enum(['a', 'b']),
   reason: z.string().max(500).optional(),
   notes: z.string().max(1000).optional(),
+});
+
+export const InsightFitSchema = z.object({
+  pairs: z.array(z.object({
+    internalCandidateId: ObjectIdString,
+    externalCandidateId: ObjectIdString,
+  })).min(1).max(300),
 });
 
 export const IdParamSchema = z.object({ id: ObjectIdString });

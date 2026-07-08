@@ -23,9 +23,10 @@ import { Badge, Button, Card, Select } from '@/components/ui/primitives';
 import { EmptyState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { label, matchTypeTone } from '@/utils/labels';
-import { matchesApi, type ScanResultItem } from '@/services/api/matches';
+import { matchesApi, type ScanResultItem, type InsightFitResult } from '@/services/api/matches';
 import { pairReviewsApi } from '@/services/api/pair-reviews';
 import { MatchScanBar } from '@/features/matching/MatchScanBar';
+import { InsightFitBadge, useInsightFits } from '@/features/matches/InsightFitBadge';
 
 type TabId = 'inbox' | 'review_later' | 'rejected';
 
@@ -48,6 +49,13 @@ export function ProposalInboxPage() {
     rejected: useTabQuery('rejected', direction, minScore),
   };
   const active = queries[tab];
+
+  // Advisory ⭐ insight-fit for the visible rows (spans many internals — one
+  // batched call handles all pairs at once).
+  const rows = active.data?.data ?? [];
+  const { fitFor } = useInsightFits(
+    rows.map((r) => ({ internalCandidateId: r.internalCandidateId, externalCandidateId: r.externalCandidateId })),
+  );
 
   return (
     <div className="space-y-4">
@@ -105,7 +113,12 @@ export function ProposalInboxPage() {
         <Card className="p-0 overflow-hidden">
           <ul className="divide-y divide-border">
             {active.data.data.map((r) => (
-              <ProposalRow key={`${r.internalCandidateId}:${r.externalCandidateId}`} row={r} tab={tab} />
+              <ProposalRow
+                key={`${r.internalCandidateId}:${r.externalCandidateId}`}
+                row={r}
+                tab={tab}
+                fit={fitFor(r.internalCandidateId, r.externalCandidateId)}
+              />
             ))}
           </ul>
         </Card>
@@ -151,7 +164,7 @@ function TabButton({ active, onClick, icon, count, children }: {
   );
 }
 
-function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
+function ProposalRow({ row, tab, fit }: { row: ScanResultItem; tab: TabId; fit?: InsightFitResult['fit'] }) {
   const qc = useQueryClient();
 
   // Refresh every tab + the pipeline after any decision so counts stay correct.
@@ -211,6 +224,7 @@ function ProposalRow({ row, tab }: { row: ScanResultItem; tab: TabId }) {
         </div>
         <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap mt-0.5">
           <Badge tone={matchTypeTone(row.matchType)}>{label('matchType', row.matchType)}</Badge>
+          <InsightFitBadge fit={fit} />
           <DeltaBadge row={row} />
           {row.ageOutOfRange && (
             <Badge tone="warning" icon={<AlertTriangle className="h-3 w-3" />}

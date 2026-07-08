@@ -96,6 +96,15 @@ export interface MatchExplanation {
   };
 }
 
+// Advisory ⭐ insight-fit: whether an external candidate aligns with what
+// the engine LEARNED about the internal candidate. Heuristic, never scores.
+export type InsightFitTier = 'aligned' | 'conflict' | 'neutral';
+export interface InsightFitResult {
+  internalCandidateId: string;
+  externalCandidateId: string;
+  fit: { tier: InsightFitTier; reason?: string; confidence: number };
+}
+
 export const matchesApi = {
   list: (query: Record<string, unknown> = {}) =>
     api.get<MatchSuggestion[]>('/matches', query),
@@ -107,6 +116,8 @@ export const matchesApi = {
   get: (id: string) => api.get<MatchSuggestion>(`/matches/${id}`),
   evaluate: (body: { internalCandidateId: string; externalCandidateId: string; mode?: string }) =>
     api.post<MatchSuggestion>('/matches/evaluate', body),
+  insightFit: (body: { pairs: Array<{ internalCandidateId: string; externalCandidateId: string }> }) =>
+    api.post<InsightFitResult[]>('/matches/insight-fit', body),
   findForInternal: (internalId: string, query: { mode?: string; limit?: number } = {}) =>
     api.get<FindMatchItem[]>(`/matches/find-for/${internalId}`, query),
   findBlockedForInternal: (internalId: string, query: { mode?: string; limit?: number } = {}) =>
@@ -124,8 +135,10 @@ export const matchesApi = {
   reopenDeferred: (id: string) => api.post<MatchSuggestion>(`/matches/${id}/reopen-deferred`),
   markDating: (id: string, body: { reason?: string } = {}) =>
     api.post<MatchSuggestion>(`/matches/${id}/mark-dating`, body.reason ? { reason: body.reason } : undefined),
-  close: (id: string, body: { reason: string }) =>
-    api.post<MatchSuggestion>(`/matches/${id}/close`, body),
+  close: (
+    id: string,
+    body: { reason: string; closureReason?: string; sideAReason?: string; sideBReason?: string },
+  ) => api.post<MatchSuggestion>(`/matches/${id}/close`, body),
   explanation: (id: string) => api.get<Record<string, unknown>>(`/matches/${id}/explanation`),
   explain: (id: string, body: { force?: boolean } = {}) =>
     api.post<MatchExplanation>(`/matches/${id}/explain`, body),

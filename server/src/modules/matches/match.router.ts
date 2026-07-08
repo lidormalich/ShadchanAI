@@ -11,6 +11,7 @@ import {
   DeferSchema,
   CloseMatchSchema,
   DeclineSchema,
+  InsightFitSchema,
   IdParamSchema,
   SaveDraftSchema,
   SendProposalSchema,
@@ -40,6 +41,8 @@ matchRouter.get('/semantic-backfill/state', ctrl.semanticBackfillStateHandler);
 matchRouter.get('/:id', validate({ params: IdParamSchema }), ctrl.getHandler);
 
 matchRouter.post('/evaluate', validate({ body: EvaluatePairSchema }), ctrl.evaluateHandler);
+// Advisory ⭐ insight-fit — literal route, registered before '/:id'.
+matchRouter.post('/insight-fit', validate({ body: InsightFitSchema }), ctrl.insightFitHandler);
 // Ad-hoc free-text pair check ("בדוק מועמדים") — no persistence.
 matchRouter.post('/sandbox-check', validate({ body: SandboxCheckSchema }), ctrl.sandboxCheckHandler);
 matchRouter.get('/find-for/:id', validate({ params: IdParamSchema }), ctrl.findForInternalHandler);
