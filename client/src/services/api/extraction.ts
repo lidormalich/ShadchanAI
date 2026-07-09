@@ -70,13 +70,27 @@ export interface ReviewQueueItem {
   /** Lines the deterministic parser could not attach to a known label —
    *  candidates for the operator to teach as new label→field mappings. */
   unmatchedLines?: string[];
+  /** Other cards currently in the queue that look like the SAME person (same
+   *  first name + age/phone/city). Lets the operator merge same-person reposts
+   *  even when none is a candidate yet. */
+  pendingDuplicates?: {
+    messageId: string;
+    firstName?: string;
+    lastName?: string;
+    age?: number;
+    city?: string;
+    contactPhone?: string;
+  }[];
 }
 
 // Canonical parser field keys an operator can map a label to (Feature C).
+// 'other' = keep as general info (NOT scored/matched); 'ignore' = recognized
+// then dropped (stops showing as an unknown label).
 export type CardLabelField =
   | 'name' | 'age' | 'height' | 'city' | 'edah' | 'sector' | 'status'
   | 'occupation' | 'about' | 'family' | 'service' | 'yeshiva' | 'seeking'
-  | 'ageRange' | 'maxAge' | 'photos' | 'phone';
+  | 'ageRange' | 'maxAge' | 'photos' | 'phone'
+  | 'other' | 'ignore';
 
 export interface CardLabel {
   _id: string;
@@ -139,6 +153,8 @@ export const extractionApi = {
     api.post<{ messageId: string; queued: boolean }>(`/extraction/messages/${messageId}/requeue`),
   requeueAllFailed: () =>
     api.post<{ requeued: number }>('/extraction/requeue-all-failed'),
+  reprocessNeedsReview: () =>
+    api.post<{ requeued: number }>('/extraction/reprocess-needs-review'),
   ingestionLog: (decision: IngestionDecision | 'ignored' | 'all' = 'ignored', limit = 100) =>
     api.get<IngestionLogItem[]>('/extraction/ingestion-log', { decision, limit }),
   approve: (messageId: string, opts: { profile?: ExtractedProfileInput; linkToCandidateId?: string } = {}) =>

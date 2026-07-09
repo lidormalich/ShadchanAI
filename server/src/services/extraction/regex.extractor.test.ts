@@ -24,6 +24,35 @@ describe('operator-taught label synonyms (Feature C)', () => {
     }
     expect(extractProfileFromText('כינוי: משה').profile.firstName).toBeUndefined();
   });
+
+  it("'other' captures the value as general info (folded into about, not a scored field)", () => {
+    try {
+      setCustomLabelSynonyms({ other: ['תחביב מיוחד'] });
+      const r = extractProfileFromText('שם: יוסי\nגיל: 30\nתחביב מיוחד: אספן בולים');
+      // Value is kept as free-text info…
+      expect(r.profile.about).toContain('אספן בולים');
+      // …but does NOT create a scored field or count as a core signal.
+      expect(r.matchedFields).not.toContain('other');
+      expect(r.profile.firstName).toBe('יוסי');
+    } finally {
+      setCustomLabelSynonyms({});
+    }
+  });
+
+  it("'ignore' recognizes the label then drops it (not in fields, not in unmatched)", () => {
+    const before = extractProfileFromText('שם: יוסי\nמזהה פנימי: 12345');
+    // Untaught, the odd label lands in unmatchedLines.
+    expect(before.unmatchedLines.some((l) => l.includes('מזהה פנימי'))).toBe(true);
+    try {
+      setCustomLabelSynonyms({ ignore: ['מזהה פנימי'] });
+      const r = extractProfileFromText('שם: יוסי\nמזהה פנימי: 12345');
+      expect(r.unmatchedLines.some((l) => l.includes('מזהה פנימי'))).toBe(false); // recognized → dropped
+      expect(r.matchedFields).not.toContain('ignore'); // contributes no signal
+      expect(r.profile.firstName).toBe('יוסי');
+    } finally {
+      setCustomLabelSynonyms({});
+    }
+  });
 });
 
 // ── Sample 1: הדס .ו (female, DL) ────────────────────────

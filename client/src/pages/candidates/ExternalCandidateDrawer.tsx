@@ -14,6 +14,9 @@ import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { PhotoTab } from '@/features/candidates/PhotoTab';
+import { SourceCardTab } from '@/features/candidates/SourceCardTab';
+import { ProfileCompletionTab } from '@/features/candidates/ProfileCompletionTab';
+import { missingCompletionFields } from '@/features/candidates/completion';
 import type { ExternalCandidate } from '@/types/domain';
 
 /** Shareable card text for an external candidate (used by the photo tab's copy). */
@@ -103,9 +106,18 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
           <Tabs
             tabs={[
               { id: 'profile', label: 'פרופיל מלא', content: <FullProfile c={c} /> },
+              // Only shown when something is missing — a fast fill-the-gaps editor.
+              ...(missingCompletionFields(c).length > 0 ? [{
+                id: 'complete',
+                label: 'השלמת פרטים',
+                badge: <Badge tone="warning">{missingCompletionFields(c).length}</Badge>,
+                content: <ProfileCompletionTab c={c} />,
+              }] : []),
               { id: 'photo', label: 'תמונה', content: <PhotoTab type="external" candidateId={c._id} name={`${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'מועמד'} photoUrl={c.photoUrl} cardText={buildExternalCardText(c)} /> },
               { id: 'match', label: 'ניתוח התאמה', badge: <Badge tone="brand">{matching.data?.data.length ?? 0}</Badge>, content: <MatchingInternals items={matching.data?.data ?? []} loading={matching.isLoading} /> },
               { id: 'share', label: 'תצוגה מקדימה לשיתוף', content: <ShareCardPreview c={c} /> },
+              // The original WhatsApp card the profile was extracted from.
+              { id: 'source', label: 'כרטיס מקורי', content: <SourceCardTab kind="external" candidateId={c._id} /> },
               { id: 'history', label: 'היסטוריה', content: <EntityTimeline entityType="external_candidate" entityId={c._id} title="יומן פעילות" asCard={false} /> },
               { id: 'tasks', label: 'משימות', content: <TasksRail related={{ type: 'external_candidate', id: c._id }} /> },
               { id: 'notes', label: 'הערות', content: <NotesRail entityType="external_candidate" entityId={c._id} /> },

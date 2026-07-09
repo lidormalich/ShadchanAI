@@ -88,8 +88,15 @@ export function extractProfileFromText(rawText: string): RegexExtractionResult {
       continue;
     }
 
+    // Operator marked this label as "ignore": it's recognized (so it won't show
+    // as an unknown label) but contributes NOTHING — no field, no signal.
+    if (hit.field === 'ignore') continue;
+
     applyField(profile, hit.field, hit.value);
-    matchedFields.add(hit.field);
+    // 'other' is general info (folded into `about`) — recognized so it leaves
+    // unmatchedLines, but it must NOT count as a matched field / extraction
+    // signal (the operator said it shouldn't affect scoring or matching).
+    if (hit.field !== 'other') matchedFields.add(hit.field);
   }
 
   // Contact phones — scan the whole text regardless of labels, since
@@ -203,9 +210,15 @@ function applyField(profile: ExtractedProfile, field: FieldKey, value: string): 
       if (!Number.isNaN(n) && n >= 15 && n <= 99) profile.seekingAgeMax = n;
       return;
     }
+    case 'other':
+      // General info the operator chose to keep but NOT score/match — fold it
+      // into the free-text `about` (the existing info-only sink).
+      profile.about = appendParagraph(profile.about, value);
+      return;
     case 'photos':
     case 'phone':
     case 'selfIntro':
+    case 'ignore':
       return;
   }
 }

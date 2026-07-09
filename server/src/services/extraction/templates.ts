@@ -38,7 +38,12 @@ export type FieldKey =
   | 'maxAge'
   | 'photos'
   | 'phone'
-  | 'selfIntro';
+  | 'selfIntro'
+  // Operator-only targets (never built-in synonyms): 'other' captures the value
+  // as GENERAL INFO (folded into the free-text `about`; never scored/matched);
+  // 'ignore' recognizes the label and drops it (so it stops showing as unknown).
+  | 'other'
+  | 'ignore';
 
 // ── Label synonyms ───────────────────────────────────────
 // Map Hebrew labels as they appear in the wild to a canonical
@@ -73,6 +78,8 @@ export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
   photos: ['תמונות', 'תמונה'],
   phone: ['טלפון', 'לפניות', 'לפרטים', 'השדכן', 'השדכנית', 'נייד', 'פלאפון', 'טל', 'ליצירת קשר', 'יצירת קשר', 'מספר טלפון', 'לבירורים', 'טלפון לבירורים'],
   selfIntro: [], // generated from free-text sentences
+  other: [],  // operator-taught only → general info (folded into `about`)
+  ignore: [], // operator-taught only → recognized then dropped
 };
 
 // All canonical field keys (for validating operator-added label mappings).

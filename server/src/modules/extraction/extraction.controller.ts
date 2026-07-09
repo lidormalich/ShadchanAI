@@ -77,6 +77,14 @@ export async function requeueAllFailedHandler(req: Request, res: Response, next:
   } catch (e) { next(e); }
 }
 
+export async function reprocessNeedsReviewHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    ok(res, await svc.reprocessNeedsReview());
+  } catch (e) { next(e); }
+}
+
 // ── Ingestion log (what arrived & how it was routed) ─────
 
 export async function ingestionLogHandler(req: Request, res: Response, next: NextFunction): Promise<void> {

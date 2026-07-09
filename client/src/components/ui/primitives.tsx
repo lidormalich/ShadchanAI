@@ -269,6 +269,10 @@ export interface TabDef {
 
 export function Tabs({ tabs, initialId, className }: { tabs: TabDef[]; initialId?: string; className?: string }) {
   const [active, setActive] = useState(initialId ?? tabs[0]?.id);
+  // Tabs can be added/removed dynamically (e.g. the "השלמת פרטים" tab hides once
+  // the profile is complete). If the active tab no longer exists, fall back to
+  // the first one instead of rendering a blank body.
+  const currentId = tabs.some((t) => t.id === active) ? active : tabs[0]?.id;
   return (
     <div className={className}>
       <div className="flex gap-2 border-b border-border overflow-x-auto">
@@ -278,7 +282,7 @@ export function Tabs({ tabs, initialId, className }: { tabs: TabDef[]; initialId
             onClick={() => setActive(t.id)}
             className={clsx(
               'relative px-4 py-2.5 text-sm font-medium whitespace-nowrap',
-              active === t.id
+              currentId === t.id
                 ? 'text-brand-700 border-b-2 border-brand'
                 : 'text-ink-muted hover:text-ink',
             )}
@@ -291,7 +295,7 @@ export function Tabs({ tabs, initialId, className }: { tabs: TabDef[]; initialId
         ))}
       </div>
       <div className="pt-4">
-        {tabs.find((t) => t.id === active)?.content}
+        {tabs.find((t) => t.id === currentId)?.content}
       </div>
     </div>
   );

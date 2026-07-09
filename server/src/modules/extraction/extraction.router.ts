@@ -10,6 +10,7 @@ extractionRouter.get('/failed-queue', ctrl.failedQueueHandler);
 extractionRouter.get('/ingestion-log', ctrl.ingestionLogHandler);
 extractionRouter.post('/refresh-all', ctrl.refreshAllHandler);
 extractionRouter.post('/requeue-all-failed', ctrl.requeueAllFailedHandler);
+extractionRouter.post('/reprocess-needs-review', ctrl.reprocessNeedsReviewHandler);
 extractionRouter.post('/messages/:messageId/run', ctrl.runHandler);
 extractionRouter.post('/messages/:messageId/requeue', ctrl.requeueHandler);
 extractionRouter.post('/messages/:messageId/approve', ctrl.approveHandler);

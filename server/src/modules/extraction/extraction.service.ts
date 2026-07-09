@@ -29,6 +29,7 @@ import { extractProfileFromText, type ExtractedProfile } from '../../services/ex
 import { ConflictError, NotFoundError, ValidationError, isDuplicateKeyError } from '../../utils/errors.js';
 import { normalizePhone } from '../../utils/phone.js';
 import { buildIdentityKey } from '../../utils/identity.js';
+import { attachPendingDuplicates, type PendingDuplicate } from '../../services/extraction/queue-duplicates.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import { attachSourcePhotoToExternalCandidate, runExternalPhotoBackfillNow } from '../../services/storage/photo-maintenance.service.js';
 import { scheduleNewExternalCandidateAlert } from '../../services/notifications/new-match-alert.service.js';
@@ -105,7 +106,7 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
     : [];
   const suspectById = new Map(suspects.map((s) => [String(s._id), s]));
 
-  return messages.map((m) => {
+  const rows = messages.map((m) => {
     // Caption-only profiles (image card with text caption) must review the
     // same text the orchestrator extracted from — not just `body`.
     const effectiveText = m.body?.trim() || m.mediaCaption?.trim() || '';
@@ -146,8 +147,15 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
             contactPhone: suspect.contactPhone,
           }
         : undefined,
+      // Other cards CURRENTLY in the queue that look like the same person —
+      // filled in below. Lets the operator merge same-person reposts even when
+      // none has become a candidate yet (so the matcher couldn't flag them).
+      pendingDuplicates: [] as PendingDuplicate[],
     };
   });
+
+  attachPendingDuplicates(rows);
+  return rows;
 }
 
 // ── Failed queue (extractions that fell — usually rate-limit) ──
@@ -221,6 +229,26 @@ export async function requeueAllFailed(limit = 500): Promise<{ requeued: number 
   }
   log.info({ requeued: failed.length }, 'requeue_all_failed');
   return { requeued: failed.length };
+}
+
+/**
+ * Re-run extraction on every message still awaiting review (not mid-approval).
+ * After teaching the parser new labels, this lets the operator shrink the queue
+ * in one click — cards whose format is now understood auto-create/link instead
+ * of waiting. Enqueued through the throttled queue so it won't blow AI limits;
+ * most now parse via regex and skip AI entirely.
+ */
+export async function reprocessNeedsReview(limit = 1000): Promise<{ requeued: number }> {
+  const capped = Math.min(limit || 1000, 2000);
+  const msgs = await Message.find({
+    'extraction.status': MessageExtractionStatus.NEEDS_REVIEW,
+    'extraction.reviewClaimedAt': { $exists: false },
+  }).select('_id').limit(capped).lean().exec();
+  for (const m of msgs) {
+    void enqueueExtraction(String(m._id)).catch(() => undefined);
+  }
+  log.info({ requeued: msgs.length }, 'reprocess_needs_review');
+  return { requeued: msgs.length };
 }
 
 // ── Ingestion log (what arrived & how it was routed) ─────

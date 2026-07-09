@@ -385,6 +385,21 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
     }
   }
 
+  // Pairs the operator already ENDED (closed/expired). Never auto-create a new
+  // draft for these — otherwise a scan resurfaces a suggestion the operator
+  // dismissed (the partial unique index doesn't cover closed rows, so a fresh
+  // draft would insert fine). Consistent with findMatchingInternals hiding them.
+  const terminatedKeys = new Set<string>();
+  {
+    const ended = await MatchSuggestion.find({
+      internalCandidateId: { $in: internalIds },
+      status: { $in: ['closed', 'expired'] },
+    }).select('internalCandidateId externalCandidateId').lean().exec();
+    for (const s of ended) {
+      terminatedKeys.add(`${String(s.internalCandidateId)}:${String(s.externalCandidateId)}`);
+    }
+  }
+
   // ── Build the work-list (so progressTotal is exact) ──────
   type IR = (typeof internalRows)[number];
   type ER = (typeof externalRows)[number];
@@ -499,6 +514,7 @@ async function executeScan(opts: ScanOpts & { mode: ScanMode }): Promise<ScanSum
       r.matchScore >= autoMinScore &&
       r.matchScore >= scanMinScore &&
       ownerId &&
+      !terminatedKeys.has(pairKey) &&
       draftsCreated < MAX_AUTO_CREATES_PER_SCAN
     ) {
       try {

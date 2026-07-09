@@ -493,6 +493,7 @@ const CARD_FIELD_LABELS: Record<CardLabelField, string> = {
   sector: 'רמה דתית / מגזר', status: 'מצב משפחתי', occupation: 'עיסוק', about: 'על עצמו',
   family: 'משפחה', service: 'שירות צבאי/לאומי', yeshiva: 'ישיבה / השכלה', seeking: 'מה מחפש',
   ageRange: 'טווח גילאים', maxAge: 'עד גיל', photos: 'תמונות', phone: 'טלפון',
+  other: 'אחר — מידע כללי (לא בניקוד)', ignore: 'התעלם משדה זה',
 };
 
 function CardLabelsCard() {
