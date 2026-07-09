@@ -7,6 +7,8 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { ZodError, type ZodType } from 'zod';
+import { ValidationError } from '../utils/errors.js';
+import { describeZodIssues } from '../utils/zod.js';
 
 export interface ValidateSchemas {
   body?: ZodType;
@@ -27,8 +29,12 @@ export function validate(schemas: ValidateSchemas) {
       }
       next();
     } catch (err) {
+      // Turn request-validation failures into a descriptive ValidationError
+      // (400) that names the offending field, instead of a flat "Invalid
+      // request data". A raw ZodError from anywhere else is left to the global
+      // handler, which now logs it.
       if (err instanceof ZodError) {
-        next(err);
+        next(new ValidationError(describeZodIssues(err), err.issues));
         return;
       }
       next(err);

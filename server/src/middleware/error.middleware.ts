@@ -9,18 +9,22 @@ import { ZodError } from 'zod';
 import { AppError } from '../utils/errors.js';
 import type { ApiEnvelope } from '../utils/response.js';
 import { createLogger } from '../utils/logger.js';
+import { describeZodIssues } from '../utils/zod.js';
 
 const log = createLogger('error-middleware');
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function errorMiddleware(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
-  // Zod validation errors
+export function errorMiddleware(err: unknown, req: Request, res: Response, _next: NextFunction): void {
+  // Raw Zod errors (e.g. a direct schema.parse in a handler). The `validate`
+  // middleware already converts request-validation failures into a descriptive
+  // ValidationError, so anything reaching here is worth logging — previously
+  // these were swallowed with a flat 400 and no log, hiding the real field.
   if (err instanceof ZodError) {
+    log.warn({ path: `${req.method} ${req.originalUrl}`, issues: err.issues }, 'zod validation error');
     const body: ApiEnvelope = {
       success: false,
       error: {
         code: 'validation_error',
-        message: 'Invalid request data',
+        message: describeZodIssues(err),
         details: err.issues,
       },
     };
@@ -29,6 +33,11 @@ export function errorMiddleware(err: unknown, _req: Request, res: Response, _nex
   }
 
   if (err instanceof AppError) {
+    // Validation errors carry the offending field in details — log it so the
+    // cause is visible server-side, not just in the client toast.
+    if (err.code === 'validation_error') {
+      log.warn({ path: `${req.method} ${req.originalUrl}`, message: err.message, details: err.details }, 'validation error');
+    }
     const body: ApiEnvelope = {
       success: false,
       error: { code: err.code, message: err.message, details: err.details },
