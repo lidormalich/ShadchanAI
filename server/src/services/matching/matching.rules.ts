@@ -76,6 +76,18 @@ function block(
   return { code, severity, overridable, message, detail };
 }
 
+// Hebrew labels for enum values embedded in blocker messages, so the
+// operator-facing text stays fully in Hebrew (blocker.message is rendered
+// verbatim across the match screens). Unknown values fall back to raw.
+const GENDER_HE: Record<string, string> = { male: 'גבר', female: 'אישה' };
+const PERSONAL_STATUS_HE: Record<string, string> = {
+  single: 'רווק/ה', divorced: 'גרוש/ה', widowed: 'אלמן/ה', separated: 'פרוד/ה',
+};
+const CANDIDATE_STATUS_HE: Record<string, string> = {
+  active: 'פעיל', paused: 'בהשהיה', dating: 'בהיכרות', closed: 'סגור', archived: 'בארכיון',
+};
+const he = (map: Record<string, string>, v: string | undefined): string => (v ? map[v] ?? v : '');
+
 /** Gender must be opposite — ethical/biological, never overridable. */
 function genderRule(internal: MatchableInternal, external: MatchableExternal): BlockerReason | null {
   if (!external.gender) return null;
@@ -84,7 +96,7 @@ function genderRule(internal: MatchableInternal, external: MatchableExternal): B
       BlockerCode.SAME_GENDER,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      `Same gender (${internal.gender})`,
+      `שני הצדדים מאותו מין (${he(GENDER_HE, internal.gender)})`,
     );
   }
   return null;
@@ -99,7 +111,7 @@ function internalStatusRule(internal: MatchableInternal): BlockerReason | null {
       BlockerCode.INTERNAL_NOT_ACTIVE,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      `Internal candidate status is '${internal.status}'`,
+      `המועמד הפנימי אינו פעיל (סטטוס: ${he(CANDIDATE_STATUS_HE, internal.status)})`,
       { status: internal.status },
     );
   }
@@ -114,7 +126,7 @@ function externalStatusRule(_i: MatchableInternal, external: MatchableExternal):
       BlockerCode.EXTERNAL_NOT_ACTIVE,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      `External candidate status is '${external.status}'`,
+      `המועמד החיצוני אינו פעיל (סטטוס: ${he(CANDIDATE_STATUS_HE, external.status)})`,
       { status: external.status },
     );
   }
@@ -123,7 +135,7 @@ function externalStatusRule(_i: MatchableInternal, external: MatchableExternal):
       BlockerCode.EXTERNAL_UNAVAILABLE,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      'External candidate is marked unavailable',
+      'המועמד החיצוני מסומן כלא זמין',
     );
   }
   if (external.availabilityStatus === AvailabilityStatus.DATING) {
@@ -131,7 +143,7 @@ function externalStatusRule(_i: MatchableInternal, external: MatchableExternal):
       BlockerCode.EXTERNAL_DATING,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      'External candidate is currently dating',
+      'המועמד החיצוני נמצא כעת בהיכרות',
     );
   }
   return null;
@@ -144,7 +156,7 @@ function alreadyDatingRule(internal: MatchableInternal): BlockerReason | null {
       BlockerCode.INTERNAL_ALREADY_DATING,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      'Internal candidate is already in an active dating relationship',
+      'המועמד הפנימי כבר נמצא בקשר היכרות פעיל',
     );
   }
   return null;
@@ -162,7 +174,7 @@ function activePairRule(
       BlockerCode.ACTIVE_PAIR_DUPLICATE,
       BlockerSeverity.HARD_OVERRIDABLE,
       BlockerOverridable.WITH_REASON,
-      'An active suggestion already exists for this pair',
+      'כבר קיימת הצעה פעילה לזוג הזה',
     );
   }
   return null;
@@ -183,7 +195,7 @@ function declineCooldownRule(
       BlockerCode.RECENT_DECLINE_COOLDOWN,
       BlockerSeverity.HARD_OVERRIDABLE,
       BlockerOverridable.WITH_REASON,
-      `Pair was declined ${daysSinceDecline} days ago (cooldown: ${DECLINE_COOLDOWN_DAYS} days)`,
+      `הזוג נדחה לפני ${daysSinceDecline} ימים (תקופת צינון: ${DECLINE_COOLDOWN_DAYS} ימים)`,
       { daysSinceDecline, cooldownDays: DECLINE_COOLDOWN_DAYS },
     );
   }
@@ -212,7 +224,7 @@ function explicitConstraintsRule(
         BlockerCode.EXPLICIT_HARD_CONSTRAINT,
         BlockerSeverity.HARD_OVERRIDABLE,
         BlockerOverridable.WITH_REASON,
-        `Internal hard constraint violated: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`,
+        `הופר אילוץ קשיח של הצד הפנימי: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`,
         { side: 'internal', field: constraint.field, operator: constraint.operator, value: constraint.value },
       );
     }
@@ -225,7 +237,7 @@ function explicitConstraintsRule(
         BlockerCode.EXPLICIT_HARD_CONSTRAINT,
         BlockerSeverity.HARD_NON_OVERRIDABLE,
         BlockerOverridable.NONE,
-        `External hard constraint violated: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`,
+        `הופר אילוץ קשיח של הצד החיצוני: ${constraint.field} ${constraint.operator} ${JSON.stringify(constraint.value)}${constraint.reason ? ` (${constraint.reason})` : ''}`,
         { side: 'external', field: constraint.field, operator: constraint.operator, value: constraint.value },
       );
     }
@@ -255,7 +267,7 @@ function personalStatusCompatibilityRuleReverse(
       BlockerCode.EXTERNAL_NOT_OPEN_TO_STATUS,
       BlockerSeverity.HARD_NON_OVERRIDABLE,
       BlockerOverridable.NONE,
-      `External candidate explicitly not open to ${status} candidates`,
+      `המועמד החיצוני ציין במפורש שאינו פתוח למועמדים בסטטוס ${he(PERSONAL_STATUS_HE, status)}`,
       { status },
     );
   }
@@ -297,7 +309,7 @@ function personalStatusCompatibilityRule(
       BlockerCode.PERSONAL_STATUS_DIVORCED,
       BlockerSeverity.HARD_OVERRIDABLE,
       BlockerOverridable.WITH_REASON,
-      `Internal candidate not open to ${status} candidates`,
+      `המועמד הפנימי אינו פתוח למועמדים בסטטוס ${he(PERSONAL_STATUS_HE, status)}`,
       { status },
     );
   }
@@ -308,7 +320,7 @@ function personalStatusCompatibilityRule(
       BlockerCode.PERSONAL_STATUS_WIDOWED,
       BlockerSeverity.HARD_OVERRIDABLE,
       BlockerOverridable.WITH_REASON,
-      'Internal candidate has explicit hard constraint against widowed candidates',
+      'למועמד הפנימי אילוץ קשיח מפורש נגד מועמדים אלמנים',
     );
   }
 
@@ -318,7 +330,7 @@ function personalStatusCompatibilityRule(
       BlockerCode.CHILDREN_CONSTRAINT,
       BlockerSeverity.HARD_OVERRIDABLE,
       BlockerOverridable.WITH_REASON,
-      `Internal candidate explicitly not open to candidates with children (${status} profile flagged)`,
+      `המועמד הפנימי אינו פתוח למועמדים עם ילדים (סומן פרופיל ${he(PERSONAL_STATUS_HE, status)})`,
       { externalStatus: status },
     );
   }

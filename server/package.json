@@ -13,6 +13,7 @@
     "extraction:recover": "tsx src/scripts/extraction-recover.ts",
     "dedupe:externals": "tsx src/scripts/merge-duplicate-externals.ts",
     "extraction:reprocess-stuck": "tsx src/scripts/reprocess-stuck-extractions.ts",
+    "migrate:translate-reasons": "tsx src/scripts/translate-override-reasons.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",

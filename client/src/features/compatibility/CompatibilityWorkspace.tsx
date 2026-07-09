@@ -893,7 +893,7 @@ const CompatibilityRowItem = memo(function CompatibilityRowItem({
             {row.sectorGroup && <span>{label('sectorGroup', row.sectorGroup)}</span>}
             {row.personalStatus && <span>{label('personalStatus', row.personalStatus)}</span>}
             {row.availabilityStatus && row.availabilityStatus !== 'available' && (
-              <Badge tone="warning">{row.availabilityStatus}</Badge>
+              <Badge tone="warning">{label('availabilityStatus', row.availabilityStatus)}</Badge>
             )}
           </div>
 
@@ -1405,7 +1405,7 @@ function PairCheckDialog({
                   <div className="text-xs text-ink-muted">
                     {ext.age && <span>גיל {ext.age} · </span>}
                     {ext.city && <span>{ext.city} · </span>}
-                    {ext.sectorGroup}
+                    {ext.sectorGroup && <span>{label('sectorGroup', ext.sectorGroup)}</span>}
                   </div>
                 </button>
               </li>

@@ -29,9 +29,9 @@ export async function getSafeModeStatus(): Promise<SafeModeStatus> {
   const outboundEnabled = envEnabled && settingEnabled;
 
   let reason: string | undefined;
-  if (!envEnabled && !settingEnabled) reason = 'env + settings both disabled';
-  else if (!envEnabled) reason = 'ENABLE_OUTBOUND_MESSAGES env is false';
-  else if (!settingEnabled) reason = 'settings outbound.enabled is false';
+  if (!envEnabled && !settingEnabled) reason = 'גם משתנה הסביבה וגם ההגדרה מכובים';
+  else if (!envEnabled) reason = 'משתנה הסביבה ENABLE_OUTBOUND_MESSAGES כבוי';
+  else if (!settingEnabled) reason = 'ההגדרה outbound.enabled כבויה';
 
   return {
     outboundEnabled,

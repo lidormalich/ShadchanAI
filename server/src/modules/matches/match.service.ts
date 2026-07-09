@@ -170,8 +170,8 @@ export async function forceCreateSuggestion(
   }
 
   const overrideReasons = [
-    `forced: ${justification}`,
-    ...result.blockers.map((b) => `blocker: ${b.code} — ${b.message}`),
+    `נכפה ידנית: ${justification}`,
+    ...result.blockers.map((b) => `חסם: ${b.message}`),
   ];
 
   const doc = await MatchSuggestion.create({
@@ -238,8 +238,8 @@ async function refreshForceExisting(
     (b) => b.code !== BlockerCode.ACTIVE_PAIR_DUPLICATE,
   );
   const newReasons = [
-    `forced (refreshed existing): ${justification}`,
-    ...otherBlockers.map((b) => `blocker: ${b.code} — ${b.message}`),
+    `נכפה ידנית (רענון הצעה קיימת): ${justification}`,
+    ...otherBlockers.map((b) => `חסם: ${b.message}`),
   ];
 
   existing.forcedOverride = true;

@@ -116,12 +116,12 @@ export function scorePair(
   const overrideReasons: string[] = [];
   let flexibilityOverrideApplied = false;
   if (isSecondChapter) {
-    overrideReasons.push('Second-chapter case: relaxed age and sector scoring applied');
+    overrideReasons.push('פרק ב׳: הוחל ניקוד מקל לגיל ולמגזר');
   }
   if (isDiscovery) {
     const ageScore = dimensions.find(d => d.dimension === ScoringDimension.AGE);
     if (ageScore && ageScore.score > 0 && ageScore.score < 50) {
-      overrideReasons.push('Discovery mode: widened age range considered');
+      overrideReasons.push('מצב גילוי: נשקל טווח גילאים מורחב');
     }
   }
   // Check if flexibility dimension was actively boosted
