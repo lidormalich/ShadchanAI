@@ -99,7 +99,7 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
             <img src="/favicon.svg" alt="שדכןAI" className="h-8 w-8 rounded-lg" />
             <div>
               <div className="text-base font-bold text-ink leading-none">שדכנAI</div>
-              <div className="text-[10px] text-ink-faint mt-1 tracking-wide uppercase">Admin</div>
+              <div className="text-[10px] text-ink-faint mt-1 tracking-wide">ניהול</div>
             </div>
           </div>
         </div>

@@ -17,13 +17,14 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Copy, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, X } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Eye, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { AuthImage } from '@/components/AuthImage';
+import { ExternalCandidateDrawer } from '@/pages/candidates/ExternalCandidateDrawer';
 import { toast } from '@/components/ui/Toast';
 import {
   extractionApi,
@@ -56,6 +57,8 @@ const CARD_FIELD_OPTIONS: { value: CardLabelField; label: string }[] = [
   { value: 'ageRange', label: 'טווח גילאים' },
   { value: 'maxAge', label: 'עד גיל' },
   { value: 'phone', label: 'טלפון' },
+  { value: 'other', label: 'אחר — מידע כללי (לא משפיע על ניקוד)' },
+  { value: 'ignore', label: 'התעלם משדה זה' },
 ];
 
 // Hebrew labels for the pipeline's review reason — why a message
@@ -130,6 +133,24 @@ export function ReviewQueuePage() {
     },
     onError: (e: Error) => toast.error('ההרצה נכשלה', e.message),
   });
+  // Merge same-person cards sitting in the queue: create ONE candidate from the
+  // primary card, then link every duplicate's message to it. Reuses the same
+  // approve endpoint (create once, then approve-with-linkToCandidateId).
+  const mergeDuplicates = useMutation({
+    mutationFn: async ({ primaryId, profile, dupIds }: { primaryId: string; profile: ExtractedProfileInput; dupIds: string[] }) => {
+      const res = await extractionApi.approve(primaryId, { profile });
+      const candidateId = res.data.candidateId;
+      for (const id of dupIds) {
+        await extractionApi.approve(id, { linkToCandidateId: candidateId });
+      }
+      return { candidateId, linked: dupIds.length };
+    },
+    onSuccess: (r) => {
+      toast.success('הכפולים מוזגו', `נוצר מועמד אחד וקושרו אליו ${r.linked} כרטיסים`);
+      invalidate();
+    },
+    onError: (e: Error) => toast.error('המיזוג נכשל', e.message),
+  });
   const refreshAll = useMutation({
     mutationFn: () => extractionApi.refreshAll(),
     onSuccess: (res) => {
@@ -141,6 +162,16 @@ export function ReviewQueuePage() {
       invalidate();
     },
     onError: (e: Error) => toast.error('הרענון נכשל', e.message),
+  });
+  // Re-run extraction on all pending cards — after teaching new labels, cards
+  // whose format is now understood auto-resolve and leave the queue.
+  const reprocessPending = useMutation({
+    mutationFn: () => extractionApi.reprocessNeedsReview(),
+    onSuccess: (res) => {
+      toast.success('הממתינים נשלחו לעיבוד מחדש', `${res.data.requeued} כרטיסים — התור יתעדכן בהדרגה`);
+      setTimeout(invalidate, 2500);
+    },
+    onError: (e: Error) => toast.error('העיבוד מחדש נכשל', e.message),
   });
 
   return (
@@ -171,6 +202,15 @@ export function ReviewQueuePage() {
             title="הדבק כרטיס שידוך שלם — המערכת תלמד את התוויות שלו וכל כרטיס עתידי בפורמט הזה יפוענח לבד"
           >
             למד פורמט חדש
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => reprocessPending.mutate()}
+            disabled={reprocessPending.isPending}
+            leftIcon={<RotateCcw className="h-4 w-4" />}
+            title="מריץ מחדש חילוץ על כל הכרטיסים הממתינים — אחרי שלימדת תוויות/פורמטים, מה שהמערכת כבר מבינה יֵצא מהתור לבד"
+          >
+            {reprocessPending.isPending ? 'שולח…' : 'עבד מחדש ממתינים'}
           </Button>
           <Button
             variant="secondary"
@@ -263,10 +303,16 @@ export function ReviewQueuePage() {
               key={item.messageId}
               item={item}
               focused={focusMessageId === item.messageId}
+              findQueueItem={(mid) => rows.find((r) => r.messageId === mid)}
               onApprove={(profile) => approve.mutate({ id: item.messageId, profile })}
               onReject={() => reject.mutate(item.messageId)}
               onRerun={() => rerun.mutate(item.messageId)}
-              busy={approve.isPending || reject.isPending || rerun.isPending}
+              onMergeDuplicates={(profile) => mergeDuplicates.mutate({
+                primaryId: item.messageId,
+                profile,
+                dupIds: (item.pendingDuplicates ?? []).map((d) => d.messageId),
+              })}
+              busy={approve.isPending || reject.isPending || rerun.isPending || mergeDuplicates.isPending}
             />
           ))}
         </div>
@@ -719,16 +765,21 @@ function LearnLabelsPanel({ item, onTaught }: { item: ReviewQueueItem; onTaught:
 }
 
 function ReviewCard({
-  item, focused, onApprove, onReject, onRerun, busy,
+  item, focused, findQueueItem, onApprove, onReject, onRerun, onMergeDuplicates, busy,
 }: {
   item: ReviewQueueItem;
   focused?: boolean;
+  /** Resolves another queue item by messageId so a suspected duplicate can be
+   *  opened in full for a side-by-side comparison before merging. */
+  findQueueItem?: (messageId: string) => ReviewQueueItem | undefined;
   onApprove: (profile: ExtractedProfileInput) => void;
   onReject: () => void;
   onRerun: () => void;
+  onMergeDuplicates: (profile: ExtractedProfileInput) => void;
   busy: boolean;
 }) {
   const [fields, setFields] = useState<ExtractedProfileInput>(item.extractedFields);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Re-seed local edits if the underlying extraction record changes
@@ -756,6 +807,9 @@ function ReviewCard({
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
             <Badge tone="warning">ממתין לסקירה</Badge>
+            {!!item.pendingDuplicates?.length && (
+              <Badge tone="danger">כפול בתור ({item.pendingDuplicates.length})</Badge>
+            )}
             <span className="text-xs text-ink-muted">
               {new Date(item.createdAt).toLocaleString('he-IL')}
             </span>
@@ -778,6 +832,43 @@ function ReviewCard({
         </div>
       </CardHeader>
       <CardBody className="space-y-3">
+        {!!item.pendingDuplicates?.length && (
+          <div className="rounded-md border border-red-200 bg-red-50/50 p-3 space-y-2">
+            <div className="text-xs font-medium text-red-800">
+              נראה שאותו אדם מופיע {item.pendingDuplicates.length + 1} פעמים בתור (לפי שם/גיל/טלפון/עיר):
+            </div>
+            <ul className="text-xs text-ink space-y-1">
+              {item.pendingDuplicates.map((d) => (
+                <li key={d.messageId} className="flex items-center justify-between gap-2">
+                  <span>
+                    · {`${d.firstName ?? ''} ${d.lastName ?? ''}`.trim() || 'ללא שם'}
+                    {[d.age ? `גיל ${d.age}` : '', d.city, d.contactPhone].filter(Boolean).length
+                      ? ` — ${[d.age ? `גיל ${d.age}` : '', d.city, d.contactPhone].filter(Boolean).join(' · ')}`
+                      : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewId(d.messageId)}
+                    className="shrink-0 inline-flex items-center gap-1 text-brand-700 hover:underline"
+                    title="פתח את הכרטיס המלא של הכפול הזה להשוואה"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    פתח כרטיס מלא
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <Button
+              variant="primary"
+              disabled={busy || !canApprove}
+              leftIcon={<Copy className="h-4 w-4" />}
+              onClick={() => onMergeDuplicates(fields)}
+              title={canApprove ? 'יוצר מועמד אחד מהכרטיס הזה ומקשר אליו את שאר הכפולים' : 'חסר שם או טלפון — מלא לפני מיזוג'}
+            >
+              מזג הכל למועמד אחד
+            </Button>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Original body */}
           <div className="space-y-2">
@@ -877,7 +968,84 @@ function ReviewCard({
         </div>
       </CardBody>
     </Card>
+    <QueueItemPreviewDialog
+      open={previewId !== null}
+      onClose={() => setPreviewId(null)}
+      item={previewId ? findQueueItem?.(previewId) : undefined}
+      summary={previewId ? item.pendingDuplicates?.find((d) => d.messageId === previewId) : undefined}
+    />
     </div>
+  );
+}
+
+// ── Read-only full view of another queued card (duplicate compare) ──
+// Opened from the "same person appears N times" panel so the operator can
+// eyeball the OTHER card's full body + extracted fields before merging,
+// without leaving the queue. Falls back to the summary row if the full
+// item isn't in the loaded page (e.g. beyond the fetch limit).
+function QueueItemPreviewDialog({ open, onClose, item, summary }: {
+  open: boolean;
+  onClose: () => void;
+  item?: ReviewQueueItem;
+  summary?: NonNullable<ReviewQueueItem['pendingDuplicates']>[number];
+}) {
+  const f = item?.extractedFields;
+  const name = item
+    ? `${f?.firstName ?? ''} ${f?.lastName ?? ''}`.trim() || 'ללא שם'
+    : `${summary?.firstName ?? ''} ${summary?.lastName ?? ''}`.trim() || 'ללא שם';
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`כרטיס מלא — ${name}`}
+      secondaryAction={{ label: 'סגור', onClick: onClose }}
+    >
+      {!item ? (
+        <div className="space-y-2 text-sm">
+          <p className="text-ink-muted">הכרטיס המלא לא נטען (ייתכן שהוא מחוץ לעמוד הנוכחי). הנה מה שידוע:</p>
+          <dl className="space-y-1">
+            {summary?.age !== undefined && <CompareRow k="גיל" v={String(summary.age)} />}
+            {summary?.city && <CompareRow k="עיר" v={summary.city} />}
+            {summary?.contactPhone && <CompareRow k="טלפון" v={summary.contactPhone} />}
+          </dl>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap text-xs text-ink-muted">
+            <span>{new Date(item.createdAt).toLocaleString('he-IL')}</span>
+            <span className="text-ink-faint">מ־{item.accountDisplayName}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <div className="text-xs text-ink-muted">ההודעה המקורית</div>
+              <div className="rounded-md border border-border bg-bg-subtle/40 p-2 text-sm whitespace-pre-wrap max-h-72 overflow-y-auto">
+                {item.body || '—'}
+              </div>
+              {item.mediaUrl && <MediaThumb url={item.mediaUrl} />}
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs text-ink-muted">שדות שחולצו</div>
+              <dl className="rounded-md border border-border bg-white p-3 space-y-1">
+                {f?.age !== undefined && <CompareRow k="גיל" v={String(f.age)} />}
+                {f?.height !== undefined && <CompareRow k="גובה" v={`${f.height} ס״מ`} />}
+                {f?.city && <CompareRow k="עיר" v={f.city} />}
+                {f?.edah && <CompareRow k="עדה" v={f.edah} />}
+                {f?.sectorGroup && <CompareRow k="מגזר" v={label('sectorGroup', f.sectorGroup)} />}
+                {f?.personalStatus && <CompareRow k="סטטוס" v={label('personalStatus', f.personalStatus)} />}
+                {f?.occupation && <CompareRow k="עיסוק" v={f.occupation} />}
+                {f?.yeshiva && <CompareRow k="ישיבה/מדרשה" v={f.yeshiva} />}
+                {f?.service && <CompareRow k="שירות" v={f.service} />}
+                {f?.contactPhones && f.contactPhones.length > 0 && <CompareRow k="טלפון" v={f.contactPhones.join(', ')} />}
+                {f?.about && <CompareRow k="על עצמו" v={f.about} />}
+                {f?.whatSeeking && <CompareRow k="מה מחפש" v={f.whatSeeking} />}
+                {f?.family && <CompareRow k="משפחה" v={f.family} />}
+              </dl>
+            </div>
+          </div>
+        </div>
+      )}
+    </Dialog>
   );
 }
 
@@ -925,6 +1093,7 @@ function DuplicateCard({
   busy: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
   useEffect(() => {
     if (focused && cardRef.current) {
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -980,9 +1149,20 @@ function DuplicateCard({
             <div className="text-xs font-semibold text-amber-800 uppercase tracking-wide">המועמד הקיים במאגר</div>
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-medium">{existingName}</div>
-              <Link to={`/candidates/external/${s.id}`} className="text-xs text-brand-700 hover:underline">
-                פתח פרופיל
-              </Link>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen(true)}
+                  className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
+                  title="פתח את הכרטיס המלא של המועמד הקיים להשוואה"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  פתח כרטיס מלא
+                </button>
+                <Link to={`/candidates/external/${s.id}`} className="text-xs text-brand-700 hover:underline">
+                  פתח בעמוד
+                </Link>
+              </div>
             </div>
             <dl className="space-y-1">
               {s.age !== undefined && <CompareRow k="גיל" v={String(s.age)} />}
@@ -1009,6 +1189,7 @@ function DuplicateCard({
         </div>
       </CardBody>
     </Card>
+    <ExternalCandidateDrawer id={compareOpen ? s.id : null} onClose={() => setCompareOpen(false)} />
     </div>
   );
 }

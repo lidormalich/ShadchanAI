@@ -35,7 +35,7 @@ export function LoginPage() {
             <div className="h-10 w-10 rounded-lg bg-brand flex items-center justify-center text-white font-bold">ש</div>
             <div>
               <div className="text-lg font-bold">שדכנAI</div>
-              <div className="text-xs text-ink-faint">Admin</div>
+              <div className="text-xs text-ink-faint">ניהול</div>
             </div>
           </div>
 

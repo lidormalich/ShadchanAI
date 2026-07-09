@@ -443,9 +443,9 @@ export async function checkPair(
       forceability: 'none',
       bucket: 'blocked',
       explanation: {
-        primary: 'External candidate not found',
+        primary: 'המועמד החיצוני לא נמצא',
         positives: [],
-        negatives: ['The selected external candidate no longer exists in the database'],
+        negatives: ['המועמד החיצוני שנבחר כבר אינו קיים במאגר'],
         warnings: [],
         manualOverlay: undefined,
       },

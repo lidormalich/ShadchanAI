@@ -14,11 +14,18 @@ const LABEL_MAP: Record<string, string> = {
   candidates: 'מועמדים',
   internal: 'פנימיים',
   external: 'חיצוניים',
+  inbox: 'תיבת ההצעות',
   matches: 'הצעות שידוך',
+  'smart-matches': 'הצעה חכמה',
+  'check-candidates': 'בדיקת מועמדים',
   chats: 'שיחות',
   channels: 'ערוצים',
+  mappings: 'מיפויים',
+  pending: 'בהמתנה',
+  review: 'תור סקירת פרופילים',
   tasks: 'משימות',
   insights: 'תובנות',
+  monitoring: 'ניטור',
   settings: 'הגדרות',
 };
 

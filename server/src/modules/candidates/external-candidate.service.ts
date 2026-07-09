@@ -506,6 +506,15 @@ export async function findMatchingInternals(
     status: { $in: ['declined_side_a', 'declined_side_b'] },
   }).select('internalCandidateId externalCandidateId closedAt').lean().exec();
 
+  // Pairs (THIS external + an internal) whose suggestion the operator already
+  // ended (closed/expired). The suggestion no longer exists, so the pair must
+  // not resurface as a live match — skip those internals below.
+  const endedPairs = await MatchSuggestion.find({
+    externalCandidateId: externalId,
+    status: { $in: ['closed', 'expired'] },
+  }).select('internalCandidateId').lean().exec();
+  const endedInternalIds = new Set(endedPairs.map((s) => String(s.internalCandidateId)));
+
   // Group results per internal candidate, keyed by String(internalCandidateId).
   const activeByInternal = new Map<string, typeof activeSuggestions>();
   for (const s of activeSuggestions) {
@@ -527,6 +536,8 @@ export async function findMatchingInternals(
   for (const internal of internals) {
     // Context for this internal (active matches + recent declines)
     const internalKey = String(internal._id);
+    // Pair already closed/expired with this external → not a live match anymore.
+    if (endedInternalIds.has(internalKey)) continue;
     const active = activeByInternal.get(internalKey) ?? [];
 
     const activeMatchExternalIds = new Set<string>(active.map((s) => String(s.externalCandidateId)));

@@ -32,6 +32,23 @@ export interface NotificationItem {
 const feed: NotificationItem[] = [];
 let started = false;
 
+// Hebrew labels for match transition/status values that may tail a
+// notification title (shown verbatim in the notifications bell).
+const MATCH_TRANSITION_HE: Record<string, string> = {
+  draft: 'טיוטה',
+  pending_approval: 'ממתינה לאישור',
+  approved: 'אושרה',
+  sent: 'נשלחה',
+  response_acknowledged: 'התקבלה תגובה',
+  accepted: 'התקבלה',
+  accepted_both: 'אושרה ע״י שני הצדדים',
+  declined: 'נדחתה',
+  deferred: 'הושהתה',
+  dating: 'עברה להיכרות',
+  expired: 'פגה תוקף',
+  closed: 'נסגרה',
+};
+
 function toNotification(evt: RealtimeEvent): NotificationItem {
   const p = (evt.payload as Record<string, unknown>) ?? {};
   const key =
@@ -55,7 +72,7 @@ function toNotification(evt: RealtimeEvent): NotificationItem {
         ? 'הצעה נשלחה'
         : (p['transition'] === 'response_acknowledged')
           ? 'תגובה אושרה'
-          : `הצעה: ${p['transition'] ?? p['status']}`;
+          : `הצעה: ${MATCH_TRANSITION_HE[String(p['transition'] ?? p['status'])] ?? (p['transition'] ?? p['status'])}`;
       break;
   }
   return {

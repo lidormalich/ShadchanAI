@@ -26,9 +26,13 @@ import { pairReviewsApi } from '@/services/api/pair-reviews';
 import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { CreateSuggestionDialog } from '@/features/matching/CreateSuggestionDialog';
 import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
+import { MatchOutcomeDialog, type OutcomePayload } from '@/features/matches/MatchOutcomeDialog';
+import { TERMINAL_MATCH_STATUSES } from '@/utils/matchStatus';
 import { FullProfile, ShareCardPreview, buildExternalCardText } from './ExternalCandidateDrawer';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { PhotoTab } from '@/features/candidates/PhotoTab';
+import { ProfileCompletionTab } from '@/features/candidates/ProfileCompletionTab';
+import { missingCompletionFields } from '@/features/candidates/completion';
 import { StaleBanner } from '@/components/domain/banners';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { NotesRail } from '@/features/notes/NotesRail';
@@ -148,6 +152,13 @@ export function ExternalCandidateDetailPage() {
           <Tabs
             tabs={[
               { id: 'profile', label: 'פרופיל מלא', content: <FullProfile c={c} /> },
+              // Fast fill-the-gaps editor — only when something is still missing.
+              ...(missingCompletionFields(c).length > 0 ? [{
+                id: 'complete',
+                label: 'השלמת פרטים',
+                badge: <Badge tone="warning">{missingCompletionFields(c).length}</Badge>,
+                content: <ProfileCompletionTab c={c} />,
+              }] : []),
               {
                 id: 'photo',
                 label: 'תמונה',
@@ -176,8 +187,11 @@ export function ExternalCandidateDetailPage() {
               {
                 id: 'suggestions',
                 label: 'הצעות שידוך',
-                badge: <Badge tone="brand">{suggestionItems.length}</Badge>,
-                content: <SuggestionsList items={suggestionItems} loading={suggestions.isLoading} />,
+                // Count only LIVE suggestions — a closed/expired/declined one
+                // still shows in the list (history) but must not inflate the
+                // "active suggestions" badge.
+                badge: <Badge tone="brand">{suggestionItems.filter((s) => !TERMINAL.has(s.status)).length}</Badge>,
+                content: <SuggestionsList items={suggestionItems} loading={suggestions.isLoading} externalName={name} />,
               },
               { id: 'share', label: 'תצוגה מקדימה לשיתוף', content: <ShareCardPreview c={c} /> },
               { id: 'source', label: 'כרטיס מקורי', content: <SourceCardTab kind="external" candidateId={c._id} /> },
@@ -363,14 +377,14 @@ function MatchingInternalRow({ row, externalCandidateId }: { row: MatchingRow; e
 
 type MatchSuggestionRow = MatchSuggestion & { internalName?: string };
 
-function SuggestionsList({ items, loading }: { items: MatchSuggestionRow[]; loading: boolean }) {
+function SuggestionsList({ items, loading, externalName }: { items: MatchSuggestionRow[]; loading: boolean; externalName: string }) {
   if (loading) return <LoadingSkeleton rows={4} />;
   if (!items.length) {
     return <EmptyState title="אין הצעות שידוך" description="קבל הצעה מלשונית 'ניתוח התאמה' או צור הצעה ידנית." />;
   }
   return (
     <ul className="space-y-2">
-      {items.map((m) => <SuggestionRow key={m._id} m={m} />)}
+      {items.map((m) => <SuggestionRow key={m._id} m={m} externalName={externalName} />)}
     </ul>
   );
 }
@@ -378,11 +392,16 @@ function SuggestionsList({ items, loading }: { items: MatchSuggestionRow[]; load
 // Statuses past the operator-decision stage are driven from the full
 // match manager (/matches/:id) only — sending, response tracking, dating.
 const DECIDABLE = new Set(['draft', 'pending_approval', 'deferred']);
+// Dead-end statuses (shared): the suggestion is over. No action buttons (not
+// even "דחה") — only "נהל" to view its history. Without this, an already-closed
+// suggestion still showed an actionable "דחה" that re-closed it.
+const TERMINAL = TERMINAL_MATCH_STATUSES;
 
-function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
+function SuggestionRow({ m, externalName }: { m: MatchSuggestionRow; externalName: string }) {
   const qc = useQueryClient();
-  const [confirm, setConfirm] = useState<null | { type: 'defer' | 'close'; title: string; desc?: string }>(null);
+  const [confirm, setConfirm] = useState<null | { type: 'defer'; title: string; desc?: string }>(null);
   const [approveReasonOpen, setApproveReasonOpen] = useState(false);
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['external', m.externalCandidateId, 'suggestions'] });
@@ -405,16 +424,32 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
     onError: (e) => toast.error('הפעולה נכשלה', (e as Error).message),
   });
   const close = useMutation({
-    mutationFn: () => matchesApi.close(m._id, { reason: 'נסגר מפרופיל המועמד' }),
-    onSuccess: () => { toast.success('ההצעה נסגרה'); invalidate(); },
+    mutationFn: (body: { reason: string; closureReason?: string; sideAReason?: string; sideBReason?: string }) =>
+      matchesApi.close(m._id, body),
+    onSuccess: () => { toast.success('ההצעה נסגרה'); invalidate(); setOutcomeOpen(false); },
     onError: (e) => toast.error('הסגירה נכשלה', (e as Error).message),
   });
+  const markDating = useMutation({
+    mutationFn: (reason?: string) => matchesApi.markDating(m._id, reason ? { reason } : {}),
+    onSuccess: () => { toast.success('סומן — יוצאים 💚'); invalidate(); setOutcomeOpen(false); },
+    onError: (e) => toast.error('העדכון נכשל', (e as Error).message),
+  });
 
-  const busy = approve.isPending || defer.isPending || reopen.isPending || close.isPending;
+  // Same outcome→action routing as the full match manager (reused dialog).
+  // "לא התאים" carries the per-side reasons the candidate-learning agent reads.
+  const handleOutcome = (p: OutcomePayload) => {
+    if (p.outcome === 'dating') markDating.mutate(p.note);
+    else if (p.outcome === 'engaged') close.mutate({ reason: p.note ? `התארסו — ${p.note}` : 'התארסו 🎉', closureReason: 'engaged' });
+    else if (p.outcome === 'married') close.mutate({ reason: p.note ? `התחתנו — ${p.note}` : 'התחתנו 🎊', closureReason: 'married' });
+    else close.mutate({ reason: p.note || 'לא התאים', closureReason: 'not_interested', sideAReason: p.sideAReason, sideBReason: p.sideBReason });
+  };
+
+  const busy = approve.isPending || defer.isPending || reopen.isPending || close.isPending || markDating.isPending;
   const canDecide = DECIDABLE.has(m.status);
+  const terminal = TERMINAL.has(m.status);
 
   return (
-    <li className="rounded-md border border-border bg-white p-3 flex items-center gap-3 flex-wrap">
+    <li className={`rounded-md border border-border p-3 flex items-center gap-3 flex-wrap ${terminal ? 'bg-bg-subtle/40 opacity-70' : 'bg-white'}`}>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate">{m.internalName ?? m.internalCandidateId.slice(-8)}</div>
         <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap mt-0.5">
@@ -439,8 +474,13 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
               onClick={() => setConfirm({ type: 'defer', title: 'השהה הצעה', desc: 'ההצעה תעבור לתור המושהות. ניתן להחזיר בהמשך.' })}>השהה</Button>
           </>
         )}
-        <Button size="sm" variant="ghost" leftIcon={<XCircle className="h-3.5 w-3.5" />} loading={close.isPending} disabled={busy}
-          onClick={() => setConfirm({ type: 'close', title: 'סגור הצעה', desc: 'ההצעה תיסגר ולא תופיע כפעילה.' })}>דחה</Button>
+        {/* "דחה" (close) only while the suggestion is still live — a closed/
+            expired/declined one is already over and shows just "נהל". Opens the
+            outcome dialog so the operator records WHY per side (learning loop). */}
+        {!terminal && (
+          <Button size="sm" variant="ghost" leftIcon={<XCircle className="h-3.5 w-3.5" />} loading={close.isPending} disabled={busy}
+            onClick={() => setOutcomeOpen(true)}>דחה</Button>
+        )}
         <Link to={`/matches/${m._id}`} className="text-xs text-brand-700 hover:underline">נהל</Link>
       </div>
 
@@ -451,7 +491,6 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
         description={confirm?.desc}
         onConfirm={() => {
           if (confirm?.type === 'defer') defer.mutate();
-          if (confirm?.type === 'close') close.mutate();
           setConfirm(null);
         }}
       />
@@ -464,6 +503,16 @@ function SuggestionRow({ m }: { m: MatchSuggestionRow }) {
           setApproveReasonOpen(false);
           approve.mutate(reason);
         }}
+      />
+
+      {/* Reused close-outcome flow — per-side "why not" feeds candidate learning. */}
+      <MatchOutcomeDialog
+        open={outcomeOpen}
+        internalName={m.internalName ?? 'הצד הפנימי'}
+        externalName={externalName}
+        loading={close.isPending || markDating.isPending}
+        onClose={() => setOutcomeOpen(false)}
+        onSubmit={handleOutcome}
       />
     </li>
   );

@@ -83,7 +83,11 @@ const FIELD_GLOSS: Record<FieldKey, string> = {
   family: 'רקע משפחתי', service: 'שירות צבאי/לאומי', yeshiva: 'ישיבה/מדרשה/סמינר/השכלה',
   seeking: 'מה מחפש/ציפיות', ageRange: 'טווח גילאים מבוקש', maxAge: 'גיל מקסימלי מבוקש',
   photos: 'תמונות', phone: 'טלפון/יצירת קשר', selfIntro: '',
+  other: '', ignore: '', // operator-only targets — not offered to the AI
 };
+
+// Fields the AI may suggest — excludes generated/operator-only targets.
+const AI_SUGGESTABLE = FIELD_KEYS.filter((k) => !['selfIntro', 'other', 'ignore'].includes(k));
 
 export interface CardAnalysis {
   recognizedFields: FieldKey[];
@@ -91,7 +95,7 @@ export interface CardAnalysis {
 }
 
 function buildLabelSuggestPrompt(labels: string[], strict: boolean): ChatMessage[] {
-  const options = FIELD_KEYS.filter((k) => k !== 'selfIntro')
+  const options = AI_SUGGESTABLE
     .map((k) => `"${k}" (${FIELD_GLOSS[k]})`).join(', ');
   const system = [
     'אתה ממפה תוויות מכרטיסי שידוכים בעברית לשדות מובנים.',

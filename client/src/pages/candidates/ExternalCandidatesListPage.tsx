@@ -7,6 +7,7 @@ import { Avatar, Badge, Button, Card, CardBody, Input, Select, TBody, THead, Tab
 import { EmptyState, ErrorState, RowSkeleton } from '@/components/states/states';
 import { externalCandidatesApi } from '@/services/api/candidates';
 import { extractionApi, type ReviewQueueItem, type ReviewReason } from '@/services/api/extraction';
+import { missingFieldLabels as missingFields } from '@/features/candidates/completion';
 import { ExternalCandidateDrawer } from './ExternalCandidateDrawer';
 import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { Pagination } from '@/components/ui/Pagination';
@@ -27,20 +28,9 @@ const REVIEW_REASON_LABEL: Record<ReviewReason, string> = {
   vision_image: 'חולץ מתמונה',
 };
 
-// What the needs-details tab flags as "חסר" on each card. Gender is the
-// entry criterion for the tab; the rest give the operator the full
-// fill-in checklist at a glance.
-function missingFields(c: ExternalCandidate): string[] {
-  const missing: string[] = [];
-  if (!c.gender) missing.push('מין');
-  if (!`${c.firstName ?? ''}${c.lastName ?? ''}`.trim()) missing.push('שם');
-  if (c.age == null) missing.push('גיל');
-  if (!c.city) missing.push('עיר');
-  if (!c.sectorGroup) missing.push('מגזר');
-  if (!c.personalStatus) missing.push('סטטוס אישי');
-  if (c.availabilityStatus === 'unknown') missing.push('זמינות');
-  return missing;
-}
+// The needs-details "חסר" checklist comes from the SHARED completion rule
+// (features/candidates/completion, imported at top) so the list badge and the
+// profile's "השלמת פרטים" tab can never disagree about what's missing.
 
 export function ExternalCandidatesListPage() {
   // Deep links from the insights "מגדר חסר" KPI arrive as ?gender=missing.

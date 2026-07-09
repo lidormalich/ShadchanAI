@@ -14,6 +14,7 @@ import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList';
+import { isTerminalMatchStatus } from '@/utils/matchStatus';
 import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { CandidatePhoto } from '@/features/candidates/CandidatePhoto';
@@ -198,7 +199,9 @@ export function InternalCandidateDetailPage() {
               {
                 id: 'suggestions',
                 label: 'הצעות שידוך',
-                badge: <Badge tone="brand">{suggestions.data?.data.length ?? 0}</Badge>,
+                // Count only LIVE suggestions — closed/expired/declined ones
+                // still list as history but shouldn't inflate the badge.
+                badge: <Badge tone="brand">{(suggestions.data?.data ?? []).filter((s) => !isTerminalMatchStatus(s.status)).length}</Badge>,
                 content: <SuggestionsTable items={suggestions.data?.data ?? []} loading={suggestions.isLoading} />,
               },
               {
