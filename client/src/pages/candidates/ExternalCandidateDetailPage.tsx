@@ -212,6 +212,8 @@ export function ExternalCandidateDetailPage() {
               {c.sourceSenderName && <MetricRow label="נשלח ע״י" value={c.sourceSenderName} />}
               {c.sourceSenderPhone && <MetricRow label="טלפון השולח" value={c.sourceSenderPhone} />}
               <Divider />
+              <MetricRow label="נוצר" value={formatDate(c.createdAt)} />
+              <MetricRow label="עודכן" value={formatDate(c.updatedAt ?? c.createdAt)} />
               <MetricRow label="עודכן ממקור" value={formatDate(c.lastSourceUpdateAt)} />
             </CardBody>
           </Card>

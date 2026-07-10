@@ -241,7 +241,9 @@ export function InternalCandidateDetailPage() {
               <MetricRow label="מהימנות מידע" value={c.dataReliabilityScore ?? '—'} />
               <MetricRow label="ציון מוכנות" value={c.readinessScore ?? '—'} />
               <Divider />
-              <MetricRow label="עודכן לאחרונה" value={formatDate(c.lastActionAt)} />
+              <MetricRow label="נוצר" value={formatDate(c.createdAt)} />
+              <MetricRow label="עודכן" value={formatDate(c.updatedAt ?? c.createdAt)} />
+              <MetricRow label="פעולה אחרונה" value={formatDate(c.lastActionAt)} />
               <MetricRow label="אומת לאחרונה" value={formatDate(c.lastVerifiedAt)} />
             </CardBody>
           </Card>
