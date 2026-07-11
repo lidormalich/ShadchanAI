@@ -204,7 +204,7 @@ function ChatRow({ channelId, chat }: { channelId: string; chat: DiscoveredChat 
     chat.role === 'ignore'          ? 'neutral' : 'warning';
 
   return (
-    <li className="px-5 py-3 flex items-center justify-between gap-3">
+    <li className="px-5 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <div className="text-sm font-medium truncate">{chat.name}</div>
@@ -226,7 +226,7 @@ function ChatRow({ channelId, chat }: { channelId: string; chat: DiscoveredChat 
           {chat.lastMessageAt && ` · אחרון ${new Date(chat.lastMessageAt).toLocaleString('he-IL')}`}
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 md:shrink-0">
         {ROLE_OPTIONS.map((r) => (
           <Button
             key={r.value}

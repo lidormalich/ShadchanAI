@@ -85,12 +85,12 @@ export function ChannelsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold">ערוצים</h2>
           <p className="text-sm text-ink-muted">ערוצי WhatsApp מחולקים לפי תפקיד: מקור פרופילים ושליחת הצעות.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link to="/channels/mappings" className="text-sm text-brand-700 hover:underline">
             מיפוי שיחות לתפקיד →
           </Link>

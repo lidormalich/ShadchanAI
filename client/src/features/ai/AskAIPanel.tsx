@@ -263,6 +263,34 @@ export function MatchResultsTabs({ rows }: { rows: MatchRowLike[] }) {
 
 function MatchRowsTable({ items }: { items: MatchRowLike[] }) {
   return (
+    <>
+    {/* Mobile: stacked cards (7-column table scrolls horizontally on phones). */}
+    <ul className="md:hidden space-y-2">
+      {items.map((r) => {
+        const name = `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || r.externalCandidateId.slice(-8);
+        return (
+          <li key={r.externalCandidateId} className="rounded-lg border border-border p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Link to={`/candidates/external/${r.externalCandidateId}`} className="text-sm font-medium text-ink hover:underline truncate">{name}</Link>
+              <Link to={`/candidates/external/${r.externalCandidateId}`} className="shrink-0 text-xs text-brand-700 inline-flex items-center gap-1 hover:underline">
+                פתח <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+              {r.age != null && <span className="num">גיל {r.age}</span>}
+              {r.city && <span>{r.city}</span>}
+              {r.matchType && <Badge tone={matchTypeTone(r.matchType)}>{label('matchType', r.matchType)}</Badge>}
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="num font-semibold">ציון {r.matchScore}</span>
+              <span className="num text-ink-muted">ביטחון {r.confidenceScore ?? '—'}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+    {/* Desktop: full table */}
+    <div className="hidden md:block">
     <Table>
       <THead>
         <Tr>
@@ -304,6 +332,8 @@ function MatchRowsTable({ items }: { items: MatchRowLike[] }) {
         })}
       </TBody>
     </Table>
+    </div>
+    </>
   );
 }
 

@@ -156,6 +156,23 @@ function AiCostsReport({ report }: { report: AiUsageReport }) {
         {report.byModel.length === 0 ? (
           <div className="text-xs text-ink-muted">אין בקשות בתקופה שנבחרה.</div>
         ) : (
+          <>
+          {/* Mobile: stacked cards */}
+          <ul className="md:hidden space-y-2">
+            {report.byModel.map((m) => (
+              <li key={`${m.provider}:${m.model}`} className="rounded-lg border border-border p-3 space-y-1">
+                <div className="font-mono text-xs break-all">{m.model}</div>
+                <div className="text-xs text-ink-muted">{m.provider}</div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mt-1">
+                  <span className="num">בקשות: {nf.format(m.requests)}</span>
+                  <span className="num">טוקנים: {nf.format(m.inputTokens)} / {nf.format(m.outputTokens)}</span>
+                  <span className="num font-semibold">{formatCost(m.estCostUsd, m.requests)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {/* Desktop: full table */}
+          <div className="hidden md:block">
           <Table>
             <THead>
               <tr>
@@ -180,6 +197,8 @@ function AiCostsReport({ report }: { report: AiUsageReport }) {
               ))}
             </TBody>
           </Table>
+          </div>
+          </>
         )}
       </div>
 
