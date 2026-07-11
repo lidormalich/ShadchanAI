@@ -11,6 +11,7 @@ import { useIsMobile } from '@/hooks/useMediaQuery';
 import { OwnershipFilter, type OwnershipScope } from '@/features/ownership/OwnershipFilter';
 import { GenderBadge } from '@/components/domain/GenderBadge';
 import { label } from '@/utils/labels';
+import { formatDateTime } from '@/utils/format';
 import type { InternalCandidate } from '@/types/domain';
 
 const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani'] as const;
@@ -128,17 +129,18 @@ export function InternalCandidatesListPage() {
                 <Th>גיל</Th>
                 <Th>סטטוס</Th>
                 <Th>מוכנות</Th>
+                <Th>עודכן</Th>
                 <Th></Th>
               </Tr>
             </THead>
             <TBody>
               {query.isLoading ? (
-                <RowSkeleton cols={8} />
+                <RowSkeleton cols={9} />
               ) : query.data?.data.length ? (
                 query.data.data.map((c) => <CandidateRow key={c._id} c={c} />)
               ) : (
                 <Tr>
-                  <Td colSpan={8}>
+                  <Td colSpan={9}>
                     <EmptyState title="לא נמצאו מועמדים" description="נסה להתאים את הסינונים או להוסיף מועמד חדש." />
                   </Td>
                 </Tr>
@@ -206,6 +208,7 @@ const CandidateRow = React.memo(function CandidateRow({ c }: { c: InternalCandid
       <Td className="text-sm"><span className="num">{age}</span></Td>
       <Td><StatusBadge status={c.status} /></Td>
       <Td><CompletionBar value={c.profileCompletion} blocked={c.sendReadinessBlockers.length > 0} /></Td>
+      <Td className="text-xs text-ink-muted whitespace-nowrap" title={`נוצר: ${formatDateTime(c.createdAt)}`}>{formatDateTime(c.updatedAt ?? c.createdAt)}</Td>
       <Td className="text-end">
         <Link to={`/candidates/internal/${c._id}`} className="text-xs text-brand-700 hover:underline">פרופיל</Link>
       </Td>
@@ -232,6 +235,10 @@ const CandidateGridCard = React.memo(function CandidateGridCard({ c }: { c: Inte
         </div>
         <div className="mt-3">
           <CompletionBar value={c.profileCompletion} blocked={c.sendReadinessBlockers.length > 0} />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
+          <span>נוצר {formatDateTime(c.createdAt)}</span>
+          <span>עודכן {formatDateTime(c.updatedAt ?? c.createdAt)}</span>
         </div>
       </Card>
     </Link>

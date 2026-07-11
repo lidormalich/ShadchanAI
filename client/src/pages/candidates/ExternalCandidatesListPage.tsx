@@ -14,6 +14,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import { GenderBadge } from '@/components/domain/GenderBadge';
 import { label } from '@/utils/labels';
+import { formatDateTime } from '@/utils/format';
 import type { ExternalCandidate } from '@/types/domain';
 
 const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani'] as const;
@@ -239,11 +240,12 @@ export function ExternalCandidatesListPage() {
                 <Th>גיל</Th>
                 {needsDetails ? <Th>חסר להשלמה</Th> : <Th>זמינות</Th>}
                 {!needsDetails && <Th>כרטיס שיתוף</Th>}
+                <Th>עודכן</Th>
                 <Th></Th>
               </Tr>
             </THead>
             <TBody>
-              {list.isLoading ? <RowSkeleton cols={8} /> :
+              {list.isLoading ? <RowSkeleton cols={9} /> :
                 list.data?.data.length ? list.data.data.map((c) => (
                   <Tr key={c._id} className="cursor-pointer" onClick={() => setDrawerId(c._id)}>
                     <Td>
@@ -280,6 +282,7 @@ export function ExternalCandidatesListPage() {
                         {c.shareCard?.approvedForShare ? <Badge tone="success">כרטיס מאושר</Badge> : <Badge tone="neutral">לא מאושר</Badge>}
                       </Td>
                     )}
+                    <Td className="text-xs text-ink-muted whitespace-nowrap" title={`נוצר: ${formatDateTime(c.createdAt)}`}>{formatDateTime(c.updatedAt ?? c.createdAt)}</Td>
                     <Td className="text-end">
                       <div className="flex items-center justify-end gap-2">
                         {needsDetails && (
@@ -300,7 +303,7 @@ export function ExternalCandidatesListPage() {
                     </Td>
                   </Tr>
                 )) : (
-                  <Tr><Td colSpan={8}><EmptyState title={needsDetails ? 'אין מועמדים שממתינים להשלמת פרטים 🎉' : 'לא נמצאו פרופילים חיצוניים'} /></Td></Tr>
+                  <Tr><Td colSpan={9}><EmptyState title={needsDetails ? 'אין מועמדים שממתינים להשלמת פרטים 🎉' : 'לא נמצאו פרופילים חיצוניים'} /></Td></Tr>
                 )
               }
             </TBody>
@@ -413,6 +416,10 @@ const ExternalCard = React.memo(function ExternalCard({
             </Badge>
             <Badge tone="neutral">{label('sectorGroup', c.sectorGroup)}</Badge>
             {c.shareCard?.approvedForShare && <Badge tone="success">כרטיס מאושר</Badge>}
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
+            <span>נוצר {formatDateTime(c.createdAt)}</span>
+            <span>עודכן {formatDateTime(c.updatedAt ?? c.createdAt)}</span>
           </div>
           {needsDetails && (
             <>

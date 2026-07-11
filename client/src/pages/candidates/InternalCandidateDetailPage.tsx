@@ -28,7 +28,7 @@ import { toast } from '@/components/ui/Toast';
 import { useSetPageTitle } from '@/layouts/PageTitleContext';
 import { isNotFoundError } from '@/utils/apiError';
 import { label, matchTypeTone } from '@/utils/labels';
-import { formatDate } from '@/utils/format';
+import { formatDate, formatDateTime } from '@/utils/format';
 import type { MatchSuggestion, Conversation, InternalCandidate } from '@/types/domain';
 
 export function InternalCandidateDetailPage() {
@@ -241,7 +241,9 @@ export function InternalCandidateDetailPage() {
               <MetricRow label="מהימנות מידע" value={c.dataReliabilityScore ?? '—'} />
               <MetricRow label="ציון מוכנות" value={c.readinessScore ?? '—'} />
               <Divider />
-              <MetricRow label="עודכן לאחרונה" value={formatDate(c.lastActionAt)} />
+              <MetricRow label="נוצר" value={formatDateTime(c.createdAt)} />
+              <MetricRow label="עודכן" value={formatDateTime(c.updatedAt ?? c.createdAt)} />
+              <MetricRow label="פעולה אחרונה" value={formatDate(c.lastActionAt)} />
               <MetricRow label="אומת לאחרונה" value={formatDate(c.lastVerifiedAt)} />
             </CardBody>
           </Card>
