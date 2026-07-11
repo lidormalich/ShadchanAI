@@ -43,7 +43,7 @@ import { toast } from '@/components/ui/Toast';
 import { useSetPageTitle } from '@/layouts/PageTitleContext';
 import { isNotFoundError } from '@/utils/apiError';
 import { label } from '@/utils/labels';
-import { formatDate } from '@/utils/format';
+import { formatDate, formatDateTime } from '@/utils/format';
 import type { MatchSuggestion } from '@/types/domain';
 
 export function ExternalCandidateDetailPage() {
@@ -212,8 +212,8 @@ export function ExternalCandidateDetailPage() {
               {c.sourceSenderName && <MetricRow label="נשלח ע״י" value={c.sourceSenderName} />}
               {c.sourceSenderPhone && <MetricRow label="טלפון השולח" value={c.sourceSenderPhone} />}
               <Divider />
-              <MetricRow label="נוצר" value={formatDate(c.createdAt)} />
-              <MetricRow label="עודכן" value={formatDate(c.updatedAt ?? c.createdAt)} />
+              <MetricRow label="נוצר" value={formatDateTime(c.createdAt)} />
+              <MetricRow label="עודכן" value={formatDateTime(c.updatedAt ?? c.createdAt)} />
               <MetricRow label="עודכן ממקור" value={formatDate(c.lastSourceUpdateAt)} />
             </CardBody>
           </Card>

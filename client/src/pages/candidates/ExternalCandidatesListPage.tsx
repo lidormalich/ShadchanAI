@@ -14,7 +14,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import { GenderBadge } from '@/components/domain/GenderBadge';
 import { label } from '@/utils/labels';
-import { formatDate } from '@/utils/format';
+import { formatDateTime } from '@/utils/format';
 import type { ExternalCandidate } from '@/types/domain';
 
 const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani'] as const;
@@ -282,7 +282,7 @@ export function ExternalCandidatesListPage() {
                         {c.shareCard?.approvedForShare ? <Badge tone="success">כרטיס מאושר</Badge> : <Badge tone="neutral">לא מאושר</Badge>}
                       </Td>
                     )}
-                    <Td className="text-xs text-ink-muted whitespace-nowrap" title={`נוצר: ${formatDate(c.createdAt)}`}>{formatDate(c.updatedAt ?? c.createdAt)}</Td>
+                    <Td className="text-xs text-ink-muted whitespace-nowrap" title={`נוצר: ${formatDateTime(c.createdAt)}`}>{formatDateTime(c.updatedAt ?? c.createdAt)}</Td>
                     <Td className="text-end">
                       <div className="flex items-center justify-end gap-2">
                         {needsDetails && (
@@ -418,8 +418,8 @@ const ExternalCard = React.memo(function ExternalCard({
             {c.shareCard?.approvedForShare && <Badge tone="success">כרטיס מאושר</Badge>}
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
-            <span>נוצר {formatDate(c.createdAt)}</span>
-            <span>עודכן {formatDate(c.updatedAt ?? c.createdAt)}</span>
+            <span>נוצר {formatDateTime(c.createdAt)}</span>
+            <span>עודכן {formatDateTime(c.updatedAt ?? c.createdAt)}</span>
           </div>
           {needsDetails && (
             <>

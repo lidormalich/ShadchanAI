@@ -9,7 +9,7 @@ import { ExternalCandidateForm } from '@/features/forms/ExternalCandidateForm';
 import { CreateSuggestionDialog } from '@/features/matching/CreateSuggestionDialog';
 import { StaleBanner } from '@/components/domain/banners';
 import { label } from '@/utils/labels';
-import { formatDate } from '@/utils/format';
+import { formatDateTime } from '@/utils/format';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
@@ -55,7 +55,7 @@ export function ExternalCandidateDrawer({ id, onClose }: { id: string | null; on
       open={open}
       onClose={onClose}
       title={c ? `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'מועמד חיצוני' : 'טוען…'}
-      subtitle={c ? `מקור: ${c.sourceName ?? label('sourceType', c.sourceType)} · נוצר ${formatDate(c.createdAt)} · עודכן ${formatDate(c.updatedAt ?? c.createdAt)}` : undefined}
+      subtitle={c ? `מקור: ${c.sourceName ?? label('sourceType', c.sourceType)} · נוצר ${formatDateTime(c.createdAt)} · עודכן ${formatDateTime(c.updatedAt ?? c.createdAt)}` : undefined}
       width="xl"
       footer={
         c && (
@@ -144,8 +144,8 @@ export function FullProfile({ c }: { c: ExternalCandidate }) {
           <F label="שלב חיים" v={label('lifeStage', c.lifeStage)} />
           <F label="כיוון לימודים/עבודה" v={label('studyWorkDirection', c.studyWorkDirection)} />
           <F label="גובה" v={c.height ? `${c.height} ס״מ` : '—'} />
-          <F label="נוצר" v={formatDate(c.createdAt)} />
-          <F label="עודכן" v={formatDate(c.updatedAt ?? c.createdAt)} />
+          <F label="נוצר" v={formatDateTime(c.createdAt)} />
+          <F label="עודכן" v={formatDateTime(c.updatedAt ?? c.createdAt)} />
         </CardBody>
       </Card>
       {c.about && <Card><CardBody><div className="text-xs text-ink-muted mb-1">על עצמו</div><p className="text-sm leading-relaxed">{c.about}</p></CardBody></Card>}

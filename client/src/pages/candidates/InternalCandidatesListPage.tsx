@@ -11,7 +11,7 @@ import { useIsMobile } from '@/hooks/useMediaQuery';
 import { OwnershipFilter, type OwnershipScope } from '@/features/ownership/OwnershipFilter';
 import { GenderBadge } from '@/components/domain/GenderBadge';
 import { label } from '@/utils/labels';
-import { formatDate } from '@/utils/format';
+import { formatDateTime } from '@/utils/format';
 import type { InternalCandidate } from '@/types/domain';
 
 const SECTORS = ['dati_leumi', 'haredi', 'dati', 'masorti', 'hardal', 'torani'] as const;
@@ -208,7 +208,7 @@ const CandidateRow = React.memo(function CandidateRow({ c }: { c: InternalCandid
       <Td className="text-sm"><span className="num">{age}</span></Td>
       <Td><StatusBadge status={c.status} /></Td>
       <Td><CompletionBar value={c.profileCompletion} blocked={c.sendReadinessBlockers.length > 0} /></Td>
-      <Td className="text-xs text-ink-muted whitespace-nowrap" title={`נוצר: ${formatDate(c.createdAt)}`}>{formatDate(c.updatedAt ?? c.createdAt)}</Td>
+      <Td className="text-xs text-ink-muted whitespace-nowrap" title={`נוצר: ${formatDateTime(c.createdAt)}`}>{formatDateTime(c.updatedAt ?? c.createdAt)}</Td>
       <Td className="text-end">
         <Link to={`/candidates/internal/${c._id}`} className="text-xs text-brand-700 hover:underline">פרופיל</Link>
       </Td>
@@ -237,8 +237,8 @@ const CandidateGridCard = React.memo(function CandidateGridCard({ c }: { c: Inte
           <CompletionBar value={c.profileCompletion} blocked={c.sendReadinessBlockers.length > 0} />
         </div>
         <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
-          <span>נוצר {formatDate(c.createdAt)}</span>
-          <span>עודכן {formatDate(c.updatedAt ?? c.createdAt)}</span>
+          <span>נוצר {formatDateTime(c.createdAt)}</span>
+          <span>עודכן {formatDateTime(c.updatedAt ?? c.createdAt)}</span>
         </div>
       </Card>
     </Link>
