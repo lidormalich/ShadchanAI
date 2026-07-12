@@ -132,6 +132,30 @@ export async function rejectHandler(req: Request, res: Response, next: NextFunct
   } catch (e) { next(e); }
 }
 
+// ── Ignore a source group (block future cards; optionally purge queue) ──
+
+export async function ignoreGroupHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const body = req.body as {
+      channelId?: string;
+      chatJid?: string;
+      chatName?: string;
+      purgeQueued?: boolean;
+    } | undefined;
+    ok(res, await svc.ignoreSourceGroup(
+      String(body?.channelId ?? ''),
+      String(body?.chatJid ?? ''),
+      user.id,
+      {
+        purgeQueued: body?.purgeQueued === true,
+        chatName: typeof body?.chatName === 'string' ? body.chatName : undefined,
+      },
+    ));
+  } catch (e) { next(e); }
+}
+
 // ── Card-label dictionary (operator-taught label→field mappings) ──
 
 export async function listCardLabelsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {

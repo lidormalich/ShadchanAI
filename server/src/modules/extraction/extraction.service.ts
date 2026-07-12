@@ -30,6 +30,7 @@ import { ConflictError, NotFoundError, ValidationError, isDuplicateKeyError } fr
 import { normalizePhone } from '../../utils/phone.js';
 import { buildIdentityKey } from '../../utils/identity.js';
 import { attachPendingDuplicates, type PendingDuplicate } from '../../services/extraction/queue-duplicates.js';
+import { assignChatRole } from '../channels/channel.service.js';
 import { recordDuplicatePhone } from '../../services/monitoring/metrics.service.js';
 import { attachSourcePhotoToExternalCandidate, runExternalPhotoBackfillNow } from '../../services/storage/photo-maintenance.service.js';
 import { scheduleNewExternalCandidateAlert } from '../../services/notifications/new-match-alert.service.js';
@@ -100,11 +101,37 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
   ];
   const suspects = suspectIds.length
     ? await ExternalCandidate.find({ _id: { $in: suspectIds } })
-        .select('firstName lastName age city sectorGroup personalStatus contactPhone availabilityStatus status')
+        .select(
+          'firstName lastName hebrewName gender age height city region neighborhood ' +
+            'ethnicity sectorGroup personalStatus currentOccupation contactPhone ' +
+            'availabilityStatus status',
+        )
         .lean()
         .exec()
     : [];
   const suspectById = new Map(suspects.map((s) => [String(s._id), s]));
+
+  // Batch-resolve the human-readable WhatsApp group name for each message's
+  // chat, so the review card can show WHICH group a bad/duplicate card came
+  // from (the operator uses this to spot and unmap a group that floods junk).
+  // Keyed by channelId+chatJid — the same (unique) key ChatMapping is keyed on.
+  const chatKey = (channelId: string, chatJid: string) => `${channelId}::${chatJid}`;
+  const mappingPairs = [
+    ...new Map(
+      messages
+        .filter((m) => m.chatJid)
+        .map((m) => [chatKey(m.channelId, m.chatJid!), { channelId: m.channelId, chatJid: m.chatJid! }]),
+    ).values(),
+  ];
+  const mappings = mappingPairs.length
+    ? await ChatMapping.find({ $or: mappingPairs })
+        .select('channelId chatJid chatName')
+        .lean()
+        .exec()
+    : [];
+  const groupNameByChat = new Map(
+    mappings.map((cm) => [chatKey(cm.channelId, cm.chatJid), cm.chatName]),
+  );
 
   const rows = messages.map((m) => {
     // Caption-only profiles (image card with text caption) must review the
@@ -125,6 +152,11 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
       conversationId: String(m.conversationId),
       channelId: m.channelId,
       accountDisplayName: m.accountDisplayName,
+      // WhatsApp provenance so the operator can trace a junk card to its group.
+      sourceChatJid: m.chatJid,
+      sourceGroupName: m.chatJid ? groupNameByChat.get(chatKey(m.channelId, m.chatJid)) : undefined,
+      senderName: m.senderName,
+      senderPhone: m.senderPhone,
       body: effectiveText || m.body,
       mediaUrl: m.mediaUrl,
       createdAt: m.createdAt,
@@ -140,10 +172,17 @@ export async function listReviewQueue(limit: number): Promise<unknown[]> {
             id: String(suspect._id),
             firstName: suspect.firstName,
             lastName: suspect.lastName,
+            hebrewName: suspect.hebrewName,
+            gender: suspect.gender,
             age: suspect.age,
+            height: suspect.height,
             city: suspect.city,
+            region: suspect.region,
+            neighborhood: suspect.neighborhood,
+            ethnicity: suspect.ethnicity,
             sectorGroup: suspect.sectorGroup,
             personalStatus: suspect.personalStatus,
+            occupation: suspect.currentOccupation,
             contactPhone: suspect.contactPhone,
           }
         : undefined,
@@ -517,6 +556,49 @@ export async function rejectExtraction(
     method: ExtractionMethod.MANUAL,
   });
   return { messageId: String(message._id), status: MessageExtractionStatus.SKIPPED_NOT_PROFILE };
+}
+
+// ── Ignore a source group ────────────────────────────────
+// The operator spotted a WhatsApp group flooding junk/duplicate cards.
+// Setting its ChatMapping role to 'ignore' makes the ingestion gate drop
+// everything it sends FROM NOW ON (see message.handler resolveIngestionGate:
+// effectiveRole 'ignore' → ignored_assigned_ignore, never enqueued).
+//
+// When `purgeQueued` is set, ALSO clear what already reached the review /
+// duplicates tabs from that group: every still-pending (NEEDS_REVIEW) message
+// with this (channelId, chatJid) is marked not-a-profile in one bulk write, so
+// those cards leave the queue without minting candidates. The filter on
+// NEEDS_REVIEW guarantees we never touch an already-approved message.
+export async function ignoreSourceGroup(
+  channelId: string,
+  chatJid: string,
+  performedBy: string,
+  opts: { purgeQueued?: boolean; chatName?: string } = {},
+): Promise<{ channelId: string; chatJid: string; role: 'ignore'; purged: number }> {
+  if (!channelId?.trim() || !chatJid?.trim()) {
+    throw new ValidationError('channelId and chatJid are required');
+  }
+  // WhatsApp group JIDs end in @g.us; anything else is a private chat.
+  const chatType = chatJid.endsWith('@g.us') ? 'group' : 'private';
+  await assignChatRole(channelId, chatJid, chatType, 'ignore', performedBy, opts.chatName);
+
+  let purged = 0;
+  if (opts.purgeQueued) {
+    const res = await Message.updateMany(
+      { channelId, chatJid, 'extraction.status': MessageExtractionStatus.NEEDS_REVIEW },
+      {
+        $set: {
+          'extraction.status': MessageExtractionStatus.SKIPPED_NOT_PROFILE,
+          'extraction.method': ExtractionMethod.MANUAL,
+          'extraction.completedAt': new Date(),
+        },
+      },
+    ).exec();
+    purged = res.modifiedCount ?? 0;
+  }
+
+  log.info({ channelId, chatJid, purgeQueued: !!opts.purgeQueued, purged }, 'ignore_source_group');
+  return { channelId, chatJid, role: 'ignore', purged };
 }
 
 // ── Helpers ──────────────────────────────────────────────

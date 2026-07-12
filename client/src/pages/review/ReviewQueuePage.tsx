@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Copy, Eye, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, X } from 'lucide-react';
+import { AlertTriangle, Ban, Check, Copy, Eye, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
@@ -810,6 +810,7 @@ function ReviewCard({
             {!!item.pendingDuplicates?.length && (
               <Badge tone="danger">כפול בתור ({item.pendingDuplicates.length})</Badge>
             )}
+            <SourceGroupControl item={item} />
             <span className="text-xs text-ink-muted">
               {new Date(item.createdAt).toLocaleString('he-IL')}
             </span>
@@ -1105,6 +1106,27 @@ function DuplicateCard({
   const newName = `${f.firstName ?? ''} ${f.lastName ?? ''}`.trim() || 'ללא שם';
   const existingName = `${s.firstName ?? ''} ${s.lastName ?? ''}`.trim() || 'ללא שם';
 
+  // Identifying fields for the same-person decision. Each row carries the new
+  // value and the existing value so both panels render from one list and each
+  // cell can be tinted green (values agree — a same-person signal) or amber
+  // (values disagree — a distinguishing signal). Rows empty on a side are
+  // skipped there; rows empty on BOTH sides drop out entirely.
+  const num = (n?: number) => (n !== undefined && n !== null ? String(n) : undefined);
+  const joinPhones = (p?: string[]) => (p && p.length ? p.join(', ') : undefined);
+  const compareRows: { k: string; nv?: string; ov?: string }[] = [
+    { k: 'גיל', nv: num(f.age), ov: num(s.age) },
+    { k: 'טלפון', nv: joinPhones(f.contactPhones), ov: s.contactPhone || undefined },
+    { k: 'עיר', nv: f.city, ov: s.city },
+    { k: 'אזור', ov: s.region ? label('region', s.region) : undefined },
+    { k: 'שכונה', ov: s.neighborhood },
+    { k: 'גובה', nv: num(f.height), ov: num(s.height) },
+    { k: 'עדה', nv: f.edah, ov: s.ethnicity },
+    { k: 'מין', nv: f.gender ? label('gender', f.gender) : undefined, ov: s.gender ? label('gender', s.gender) : undefined },
+    { k: 'מגזר', nv: f.sectorGroup ? label('sectorGroup', f.sectorGroup) : undefined, ov: s.sectorGroup ? label('sectorGroup', s.sectorGroup) : undefined },
+    { k: 'סטטוס', nv: f.personalStatus ? label('personalStatus', f.personalStatus) : undefined, ov: s.personalStatus ? label('personalStatus', s.personalStatus) : undefined },
+    { k: 'עיסוק', nv: f.occupation, ov: s.occupation },
+  ];
+
   return (
     <div ref={cardRef} className={focused ? 'ring-2 ring-brand-400 rounded-lg' : undefined}>
     <Card>
@@ -1114,6 +1136,7 @@ function DuplicateCard({
             <Badge tone="warning">
               {item.reviewReason ? REVIEW_REASON_LABEL[item.reviewReason] ?? item.reviewReason : REVIEW_REASON_LABEL.suspected_duplicate}
             </Badge>
+            <SourceGroupControl item={item} />
             <span className="text-xs text-ink-muted">{new Date(item.createdAt).toLocaleString('he-IL')}</span>
             <span className="text-xs text-ink-faint">מ־{item.accountDisplayName}</span>
           </div>
@@ -1129,12 +1152,11 @@ function DuplicateCard({
             <div className="text-xs font-semibold text-brand-700 uppercase tracking-wide">הפרופיל החדש שחולץ</div>
             <div className="text-sm font-medium">{newName}</div>
             <dl className="space-y-1">
-              {f.age !== undefined && <CompareRow k="גיל" v={String(f.age)} />}
-              {f.city && <CompareRow k="עיר" v={f.city} />}
-              {f.sectorGroup && <CompareRow k="מגזר" v={label('sectorGroup', f.sectorGroup)} />}
-              {f.personalStatus && <CompareRow k="סטטוס" v={label('personalStatus', f.personalStatus)} />}
-              {f.contactPhones && f.contactPhones.length > 0 && <CompareRow k="טלפון" v={f.contactPhones.join(', ')} />}
-              {f.occupation && <CompareRow k="עיסוק" v={f.occupation} />}
+              {compareRows
+                .filter((r) => r.nv)
+                .map((r) => (
+                  <CompareRow key={r.k} k={r.k} v={r.nv!} tone={cmpTone(r.nv, r.ov)} />
+                ))}
             </dl>
             {item.mediaUrl && <MediaThumb url={item.mediaUrl} />}
             {item.body && (
@@ -1165,11 +1187,11 @@ function DuplicateCard({
               </div>
             </div>
             <dl className="space-y-1">
-              {s.age !== undefined && <CompareRow k="גיל" v={String(s.age)} />}
-              {s.city && <CompareRow k="עיר" v={s.city} />}
-              {s.sectorGroup && <CompareRow k="מגזר" v={label('sectorGroup', s.sectorGroup)} />}
-              {s.personalStatus && <CompareRow k="סטטוס" v={label('personalStatus', s.personalStatus)} />}
-              {s.contactPhone && <CompareRow k="טלפון" v={s.contactPhone} />}
+              {compareRows
+                .filter((r) => r.ov)
+                .map((r) => (
+                  <CompareRow key={r.k} k={r.k} v={r.ov!} tone={cmpTone(r.nv, r.ov)} />
+                ))}
             </dl>
           </div>
         </div>
@@ -1194,11 +1216,130 @@ function DuplicateCard({
   );
 }
 
-function CompareRow({ k, v }: { k: string; v: string }) {
+// Same-person signal: does a field agree across the two profiles?
+// 'match'  → both sides present and equal (strong same-person signal → green)
+// 'diff'   → both sides present and differ (distinguishing signal → amber)
+// undefined → only one side has the value; nothing to compare.
+function cmpTone(nv?: string, ov?: string): 'match' | 'diff' | undefined {
+  if (!nv || !ov) return undefined;
+  const norm = (x: string) => x.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+  return norm(nv) === norm(ov) ? 'match' : 'diff';
+}
+
+// Which WhatsApp group this card came from + who posted it, as a compact chip
+// for the card's header row. Lets the operator trace a stream of junk/duplicate
+// cards back to its source group and decide to unmap it. Text truncates so a
+// long group name never breaks the header layout on mobile; the whole chip
+// wraps to its own line when the header runs out of room. Hidden when there's
+// no provenance (legacy/private-chat messages).
+function SourceGroupChip({ item }: { item: ReviewQueueItem }) {
+  const group = item.sourceGroupName?.trim();
+  const sender = item.senderName?.trim() || item.senderPhone?.trim();
+  if (!group && !sender) return null;
+  const text = [group || 'קבוצה לא ממופה', sender && `פורסם ע״י ${sender}`]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-800">
+      <Users className="h-3.5 w-3.5 shrink-0 text-brand-600" />
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
+
+// Header control: the source-group chip + a "block this group" action. Opens a
+// modal offering (a) ignore future cards only, or (b) ignore + purge the cards
+// this group already has waiting in the queue. Both write the group's chat role
+// to 'ignore' (ingestion gate then drops its future messages). Self-contained —
+// owns its modal state and refetches the queue on success. The block action
+// only shows when we know the chat JID to act on.
+function SourceGroupControl({ item }: { item: ReviewQueueItem }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const chatJid = item.sourceChatJid?.trim();
+  const groupLabel = item.sourceGroupName?.trim() || 'קבוצה זו';
+
+  const ignore = useMutation({
+    mutationFn: (purgeQueued: boolean) =>
+      extractionApi.ignoreGroup({
+        channelId: item.channelId,
+        chatJid: chatJid!,
+        chatName: item.sourceGroupName,
+        purgeQueued,
+      }),
+    onSuccess: (res) => {
+      const { purged } = res.data;
+      toast.success(
+        'הקבוצה סומנה להתעלמות',
+        purged > 0
+          ? `כרטיסים עתידיים ייחסמו · ${purged} כרטיסים הוסרו מהתור`
+          : 'כרטיסים עתידיים מהקבוצה לא ייקלטו',
+      );
+      qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error('סימון הקבוצה נכשל', e.message),
+  });
+
+  const closeIfIdle = () => { if (!ignore.isPending) setOpen(false); };
+
+  return (
+    <>
+      <SourceGroupChip item={item} />
+      {chatJid && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-red-700 hover:bg-red-50"
+          title="חסום קבוצה זו — כרטיסים ממנה לא ייקלטו למאגר"
+        >
+          <Ban className="h-3.5 w-3.5 shrink-0" />
+          התעלם מקבוצה
+        </button>
+      )}
+      <Dialog
+        open={open}
+        onClose={closeIfIdle}
+        title="התעלם מקבוצה זו"
+        description={`${groupLabel} — כרטיסים מקבוצה זו יסוננו בשער הקליטה ולא ייקלטו למאגר.`}
+        secondaryAction={{ label: 'ביטול', onClick: closeIfIdle }}
+      >
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            disabled={ignore.isPending}
+            onClick={() => ignore.mutate(false)}
+            className="rounded-lg border border-border p-3 text-start hover:border-brand-400 hover:bg-brand-50/40 disabled:opacity-50"
+          >
+            <div className="text-sm font-medium text-ink">התעלם מעכשיו והלאה</div>
+            <div className="text-xs text-ink-muted">רק כרטיסים חדשים שיגיעו מהקבוצה ייחסמו. מה שכבר בתור יישאר.</div>
+          </button>
+          <button
+            type="button"
+            disabled={ignore.isPending}
+            onClick={() => ignore.mutate(true)}
+            className="rounded-lg border border-red-200 p-3 text-start hover:border-red-400 hover:bg-red-50/50 disabled:opacity-50"
+          >
+            <div className="text-sm font-medium text-red-800">התעלם, והסר גם את מה שבתור</div>
+            <div className="text-xs text-ink-muted">חוסם כרטיסים עתידיים, ובנוסף מסיר מהתור את כל הכרטיסים מקבוצה זו שממתינים לסקירה/כפולים (יסומנו כלא-פרופיל).</div>
+          </button>
+        </div>
+      </Dialog>
+    </>
+  );
+}
+
+function CompareRow({ k, v, tone }: { k: string; v: string; tone?: 'match' | 'diff' }) {
+  const valueClass =
+    tone === 'match'
+      ? 'text-emerald-700 font-medium'
+      : tone === 'diff'
+        ? 'text-amber-700'
+        : 'text-ink';
   return (
     <div className="flex gap-2 text-xs">
       <dt className="text-ink-faint min-w-[3.5rem]">{k}</dt>
-      <dd className="text-ink flex-1">{v}</dd>
+      <dd className={`${valueClass} flex-1`}>{v}</dd>
     </div>
   );
 }

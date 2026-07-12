@@ -37,8 +37,11 @@ const cardLabelSchema = new Schema<ICardLabel>(
 // One mapping per normalized label — teaching the same label twice updates it.
 cardLabelSchema.index({ labelNormalized: 1 }, { unique: true });
 
-// Keep the normalized form in sync with the raw label on every save.
-cardLabelSchema.pre('save', function (next) {
+// Keep the normalized form in sync with the raw label. MUST run on
+// 'validate' (not 'save'): Mongoose validates BEFORE pre('save') hooks,
+// so computing this in pre('save') left labelNormalized undefined at
+// validation time → "Path `labelNormalized` is required" on every write.
+cardLabelSchema.pre('validate', function (next) {
   this.labelNormalized = normalizeLabel(this.label);
   next();
 });

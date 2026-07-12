@@ -21,10 +21,17 @@ export interface SuspectedCandidate {
   id: string;
   firstName?: string;
   lastName?: string;
+  hebrewName?: string;
+  gender?: string;
   age?: number;
+  height?: number;
   city?: string;
+  region?: string;
+  neighborhood?: string;
+  ethnicity?: string;
   sectorGroup?: string;
   personalStatus?: string;
+  occupation?: string;
   contactPhone?: string;
 }
 
@@ -33,6 +40,11 @@ export interface ReviewQueueItem {
   conversationId: string;
   channelId: string;
   accountDisplayName: string;
+  // WhatsApp provenance: which group the card was posted in + who posted it.
+  sourceChatJid?: string;
+  sourceGroupName?: string;
+  senderName?: string;
+  senderPhone?: string;
   body?: string;
   mediaUrl?: string;
   createdAt: string;
@@ -166,6 +178,14 @@ export const extractionApi = {
     ),
   reject: (messageId: string) =>
     api.post<{ messageId: string; status: string }>(`/extraction/messages/${messageId}/reject`),
+  // Block a source WhatsApp group: sets its chat role to "ignore" so future
+  // cards from it never reach the queue. purgeQueued also clears the group's
+  // cards already waiting in review/duplicates.
+  ignoreGroup: (payload: { channelId: string; chatJid: string; chatName?: string; purgeQueued?: boolean }) =>
+    api.post<{ channelId: string; chatJid: string; role: 'ignore'; purged: number }>(
+      '/extraction/ignore-group',
+      payload,
+    ),
   refreshAll: () =>
     api.post<{ photosScanned: number; photosAttached: number; semanticStarted: boolean }>(
       '/extraction/refresh-all',
