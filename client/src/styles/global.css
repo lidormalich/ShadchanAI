@@ -12,6 +12,11 @@ html, body, #root {
   height: 100%;
 }
 
+/* Light-only app. Without this, a dark-mode OS makes Chrome paint scrollbars
+   and native controls in the system's DARK theme on our light pages — which is
+   what rendered the review message-preview scrollbar as a solid black bar. */
+:root { color-scheme: light; }
+
 body {
   @apply bg-bg text-ink antialiased;
   font-family: 'Assistant', 'Inter', system-ui, sans-serif;
@@ -24,8 +29,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Scrollbar polish */
+/* Scrollbar polish.
+   Defining a custom width switches Chrome/Windows to the CLASSIC scrollbar,
+   which draws default (dark) up/down arrow BUTTONS unless we suppress them —
+   those buttons were the "black bar" showing up on long, scrolling pages. */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 8px; }
 ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
