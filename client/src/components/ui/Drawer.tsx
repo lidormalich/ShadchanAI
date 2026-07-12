@@ -36,13 +36,19 @@ export function Drawer({ open, onClose, title, subtitle, width = 'lg', footer, c
           open ? 'opacity-100' : 'opacity-0 pointer-events-none',
         )}
       />
-      {/* Panel — slides from the inline-start edge (LTR: left, RTL: right) */}
+      {/* Panel — slides from the inline-start edge (LTR: left, RTL: right).
+          When closed it must be `invisible`, not just translated off-screen:
+          a hidden-but-painted panel still leaks its box-shadow back into the
+          viewport edge, and pages that mount a Drawer per list item (e.g. the
+          review duplicates tab) stack dozens of those shadows into a dark bar.
+          visibility transitions discretely at the END of the transform, so the
+          slide-out animation still plays before the panel stops painting. */}
       <aside
         className={clsx(
           'fixed top-0 bottom-0 start-0 z-50 bg-bg-card border-e border-border shadow-rise',
-          'flex flex-col transition-transform',
+          'flex flex-col transition-[transform,visibility]',
           widthClass[width],
-          open ? 'translate-x-0' : 'rtl:translate-x-full ltr:-translate-x-full',
+          open ? 'translate-x-0' : 'rtl:translate-x-full ltr:-translate-x-full invisible',
         )}
         role="dialog"
         aria-modal="true"
