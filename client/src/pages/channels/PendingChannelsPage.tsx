@@ -207,7 +207,7 @@ function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredCh
   });
 
   return (
-    <li className="px-5 py-3 flex items-center justify-between gap-3">
+    <li className="px-5 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           {hasMessages ? (
@@ -238,7 +238,7 @@ function PendingRow({ channelId, chat }: { channelId: string; chat: DiscoveredCh
           {chat.lastPendingAt && ` · אחרון ${new Date(chat.lastPendingAt).toLocaleString('he-IL')}`}
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 md:shrink-0">
         <Button size="sm" variant="primary" onClick={() => setApproveOpen(true)}>
           אשר כמקור פרופילים
         </Button>

@@ -226,7 +226,25 @@ function SystemHealth({ sessions }: { sessions: MonitoringOverview['whatsappSess
         {sessions.length === 0 ? (
           <EmptyState title="אין ערוצים רשומים" description="הוסף ערוץ ב-/channels." />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Mobile: stacked cards (the table's channel JIDs force horizontal scroll on phones). */}
+          <ul className="md:hidden space-y-2">
+            {sessions.map((s) => (
+              <li key={s.channelId} className="rounded-lg border border-border p-3 space-y-2">
+                <div className="font-mono text-xs break-all">{s.channelId}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">{s.role}</Badge>
+                  <Badge tone={statusTone(s.status)}>{s.status}</Badge>
+                  <Badge tone={s.connectionHealth === 'healthy' ? 'success' : s.connectionHealth === 'degraded' ? 'warning' : 'danger'}>
+                    {s.connectionHealth}
+                  </Badge>
+                </div>
+                <div className="text-xs text-ink-muted">פעילות אחרונה: {formatDateTime(s.lastActivityAt)}</div>
+              </li>
+            ))}
+          </ul>
+          {/* Desktop: full table */}
+          <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-ink-muted">
@@ -258,6 +276,7 @@ function SystemHealth({ sessions }: { sessions: MonitoringOverview['whatsappSess
             </tbody>
           </table>
           </div>
+          </>
         )}
       </CardBody>
     </Card>

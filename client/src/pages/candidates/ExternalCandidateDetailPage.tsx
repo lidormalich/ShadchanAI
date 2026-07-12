@@ -451,8 +451,8 @@ function SuggestionRow({ m, externalName }: { m: MatchSuggestionRow; externalNam
   const terminal = TERMINAL.has(m.status);
 
   return (
-    <li className={`rounded-md border border-border p-3 flex items-center gap-3 flex-wrap ${terminal ? 'bg-bg-subtle/40 opacity-70' : 'bg-white'}`}>
-      <div className="min-w-0 flex-1">
+    <li className={`rounded-md border border-border p-3 flex flex-col sm:flex-row sm:items-center gap-3 ${terminal ? 'bg-bg-subtle/40 opacity-70' : 'bg-white'}`}>
+      <div className="min-w-0 sm:flex-1">
         <div className="text-sm font-medium truncate">{m.internalName ?? m.internalCandidateId.slice(-8)}</div>
         <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap mt-0.5">
           <Badge tone={m.matchType === 'safe' ? 'success' : m.matchType === 'balanced' ? 'brand' : 'warning'}>
@@ -461,11 +461,12 @@ function SuggestionRow({ m, externalName }: { m: MatchSuggestionRow; externalNam
           <Badge tone={m.isDeferred ? 'warning' : 'neutral'}>{label('matchStatus', m.status)}</Badge>
         </div>
       </div>
+      <div className="flex items-center justify-between gap-3 flex-wrap sm:justify-end">
       <div className="text-end shrink-0 w-14">
         <div className="text-lg font-semibold num text-brand-700">{m.matchScore}</div>
         <div className="text-[11px] text-ink-faint num">ביטחון {m.confidenceScore}</div>
       </div>
-      <div className="shrink-0 flex items-center gap-1.5">
+      <div className="shrink-0 flex items-center gap-1.5 flex-wrap">
         {m.status === 'deferred' ? (
           <Button size="sm" variant="secondary" loading={reopen.isPending} disabled={busy} onClick={() => reopen.mutate()}>החזר לתור</Button>
         ) : canDecide && (
@@ -484,6 +485,7 @@ function SuggestionRow({ m, externalName }: { m: MatchSuggestionRow; externalNam
             onClick={() => setOutcomeOpen(true)}>דחה</Button>
         )}
         <Link to={`/matches/${m._id}`} className="text-xs text-brand-700 hover:underline">נהל</Link>
+      </div>
       </div>
 
       <ConfirmActionModal

@@ -396,8 +396,8 @@ function FindMatchesDialog({
           ) : (
             <ul className="space-y-2">
               {allMatches.slice(0, visibleCount).map((m: FindMatchItem) => (
-                <li key={m.externalCandidateId} className="rounded-md border border-border bg-white p-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
+                <li key={m.externalCandidateId} className="rounded-md border border-border bg-white p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="min-w-0 sm:flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="text-sm font-medium truncate">
                         {`${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || 'ללא שם'}
@@ -413,15 +413,17 @@ function FindMatchesDialog({
                       {m.age && <span className="num">גיל {m.age}</span>}
                     </div>
                   </div>
-                  <div className="text-end shrink-0">
-                    <div className="text-lg font-semibold num text-brand-700">{m.matchScore}</div>
-                    <div className="text-xs text-ink-muted num">ביטחון {m.confidenceScore}</div>
-                  </div>
-                  <div className="flex flex-col gap-1 shrink-0">
-                    <Link to={`/candidates/external/${m.externalCandidateId}`} className="text-xs text-brand-700 hover:underline text-center">פרופיל</Link>
-                    <Button size="sm" variant="secondary" loading={createSuggestion.isPending} onClick={() => createSuggestion.mutate(m.externalCandidateId)}>
-                      צור הצעה
-                    </Button>
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <div className="text-end shrink-0">
+                      <div className="text-lg font-semibold num text-brand-700">{m.matchScore}</div>
+                      <div className="text-xs text-ink-muted num">ביטחון {m.confidenceScore}</div>
+                    </div>
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <Link to={`/candidates/external/${m.externalCandidateId}`} className="text-xs text-brand-700 hover:underline text-center">פרופיל</Link>
+                      <Button size="sm" variant="secondary" loading={createSuggestion.isPending} onClick={() => createSuggestion.mutate(m.externalCandidateId)}>
+                        צור הצעה
+                      </Button>
+                    </div>
                   </div>
                 </li>
               ))}
