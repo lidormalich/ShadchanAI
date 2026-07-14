@@ -39,6 +39,31 @@ export interface ChatDiscoveryResult {
   chats: DiscoveredChat[];
 }
 
+// ── Downtime coverage reports (post-reconnect verification) ──
+
+export interface CoverageChatEntry {
+  chatJid: string;
+  chatName?: string;
+  windowCount: number;
+  baselineCount: number;
+  baselinePerDay: number;
+  expectedInWindow: number;
+  suspect: boolean;
+}
+
+export interface CoverageReportView {
+  id: string;
+  channelId: string;
+  accountDisplayName?: string;
+  offlineFrom: string;
+  offlineTo: string;
+  offlineMs: number;
+  messagesInWindow: number;
+  chats: CoverageChatEntry[];
+  suspectCount: number;
+  createdAt: string;
+}
+
 // ── Multi-account admin: sessions overview + lock administration ──
 
 export interface AdminSessionView {
@@ -138,6 +163,9 @@ export const channelsApi = {
     ),
   deleteChannel: (channelId: string) =>
     api.post<void>(`/channels/${channelId}/delete`, { confirmChannelId: channelId }),
+  // ── Downtime coverage reports ───────────────────────────
+  coverageReports: (days = 7, limit = 10) =>
+    api.get<CoverageReportView[]>('/channels/coverage/reports', { days, limit }),
   // ── Multi-account admin ─────────────────────────────────
   adminSessions: () =>
     api.get<AdminSessionsResponse>('/channels/sessions/admin'),

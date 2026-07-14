@@ -101,6 +101,7 @@ export async function handleInboundMessage(
       mediaMimeType: msg.media?.mimeType,
       externalMessageId: msg.externalMessageId,
       providerSessionId: msg.providerSessionId,
+      messageTimestamp: msg.timestamp,
       deliveryStatus: MessageDeliveryStatus.DELIVERED, // inbound arrived
       rawPayload: msg.rawPayload,
     });

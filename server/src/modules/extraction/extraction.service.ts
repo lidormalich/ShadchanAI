@@ -27,7 +27,7 @@ import { processMessageExtraction } from '../../services/extraction/orchestrator
 import { enqueueExtraction } from '../../services/extraction/queue.js';
 import { extractProfileFromText, type ExtractedProfile } from '../../services/extraction/regex.extractor.js';
 import { ConflictError, NotFoundError, ValidationError, isDuplicateKeyError } from '../../utils/errors.js';
-import { normalizePhone } from '../../utils/phone.js';
+import { normalizePhone, mergePhoneEntries } from '../../utils/phone.js';
 import { buildIdentityKey } from '../../utils/identity.js';
 import { attachPendingDuplicates, type PendingDuplicate } from '../../services/extraction/queue-duplicates.js';
 import { assignChatRole } from '../channels/channel.service.js';
@@ -403,6 +403,28 @@ async function approveClaimed(
       ];
     }
     candidate.lastSourceUpdateAt = message.createdAt;
+    // Union the merged card's phones into the candidate instead of dropping
+    // them — a repost often carries a DIFFERENT inquiry number, and losing it
+    // on merge was the whole complaint. The candidate's own contactPhone is
+    // seeded first so legacy cards (no phones array yet) keep their primary.
+    const linkedProfile =
+      (message.extraction?.extractedProfile as ExtractedProfile | undefined)
+      ?? extractProfileFromText(message.body?.trim() || message.mediaCaption?.trim() || '').profile;
+    const incomingPhones = linkedProfile.contactPhones ?? [];
+    if (incomingPhones.length || candidate.contactPhone) {
+      candidate.phones = mergePhoneEntries(
+        mergePhoneEntries(
+          candidate.phones,
+          candidate.contactPhone ? [{ number: candidate.contactPhone, source: 'card' }] : [],
+        ),
+        incomingPhones.map((p) => ({ number: p, source: 'merged_card' })),
+      );
+    }
+    // A candidate that never had a primary phone adopts the merged card's.
+    if (!candidate.contactPhone && incomingPhones[0]) {
+      candidate.contactPhone = incomingPhones[0];
+      candidate.contactPhoneNormalized = normalizePhone(incomingPhones[0]) ?? undefined;
+    }
     await candidate.save();
     await updateMessageExtraction(message, {
       status: MessageExtractionStatus.MATCHED_EXISTING,
@@ -465,6 +487,11 @@ async function approveClaimed(
       lastSourceUpdateAt: message.createdAt,
       contactPhone: primaryPhone,
       contactPhoneNormalized: normalizedPhone ?? undefined,
+      // Keep EVERY extracted phone, not just the primary — cards often list
+      // several inquiry numbers (mother / father / shadchanit).
+      phones: profile.contactPhones?.length
+        ? mergePhoneEntries([], profile.contactPhones.map((p) => ({ number: p, source: 'card' })))
+        : undefined,
       sourceMessageIds: [message._id],
       firstName: profile.firstName,
       lastName: profile.lastName,

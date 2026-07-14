@@ -11,6 +11,7 @@ import {
   ChatMessagesQuerySchema,
   DeleteChannelSchema,
   ForceReleaseLockSchema,
+  CoverageReportsQuerySchema,
 } from './channel.validator.js';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
@@ -23,6 +24,9 @@ channelRouter.get('/health', ctrl.healthHandler);
 // Multi-account admin overview: per-channel session + lock state.
 // Operators use this to diagnose channel_skipped_lock_held situations.
 channelRouter.get('/sessions/admin', ctrl.adminSessionsHandler);
+// Downtime coverage reports (post-reconnect verification banner).
+// Registered BEFORE /:channelId so 'coverage' isn't captured as an id.
+channelRouter.get('/coverage/reports', validate({ query: CoverageReportsQuerySchema }), ctrl.coverageReportsHandler);
 channelRouter.get('/:channelId', validate({ params: ChannelIdParamSchema }), ctrl.getHandler);
 channelRouter.get('/:channelId/chain', validate({ params: ChannelIdParamSchema }), ctrl.chainHandler);
 

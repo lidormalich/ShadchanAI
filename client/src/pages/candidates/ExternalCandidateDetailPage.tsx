@@ -30,6 +30,7 @@ import { MatchOutcomeDialog, type OutcomePayload } from '@/features/matches/Matc
 import { TERMINAL_MATCH_STATUSES } from '@/utils/matchStatus';
 import { FullProfile, ShareCardPreview, buildExternalCardText } from './ExternalCandidateDrawer';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
+import { PhonesCard } from '@/features/candidates/PhonesCard';
 import { PhotoTab } from '@/features/candidates/PhotoTab';
 import { ProfileCompletionTab } from '@/features/candidates/ProfileCompletionTab';
 import { missingCompletionFields } from '@/features/candidates/completion';
@@ -202,6 +203,9 @@ export function ExternalCandidateDetailPage() {
 
         {/* Right rail */}
         <aside className="space-y-4">
+          {/* Every phone known for this candidate (incl. numbers unioned
+              in from merged duplicate cards) with a "who is this" label. */}
+          <PhonesCard c={c} />
           <Card>
             <CardHeader><h3 className="text-sm font-semibold">פרטי מקור</h3></CardHeader>
             <CardBody className="space-y-2 text-sm">

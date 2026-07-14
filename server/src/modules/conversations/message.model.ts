@@ -45,6 +45,12 @@ export interface IMessage extends Document {
   externalMessageId?: string;
   providerSessionId?: string;
 
+  // Original WhatsApp send time (msg.messageTimestamp), as opposed to
+  // createdAt = when WE ingested it. The two diverge exactly when the
+  // server was offline and WhatsApp delivered queued messages on
+  // reconnect — the coverage report measures downtime windows by this.
+  messageTimestamp?: Date;
+
   // delivery tracking (outbound only)
   deliveryStatus: MessageDeliveryStatus;
   sentAt?: Date;
@@ -209,6 +215,9 @@ const messageSchema = new Schema<IMessage>(
     externalMessageId: { type: String },
     providerSessionId: { type: String },
 
+    // ── Original WhatsApp send time ───────────────────────
+    messageTimestamp: { type: Date },
+
     // ── Delivery tracking ─────────────────────────────────
     deliveryStatus: {
       type: String,
@@ -258,6 +267,10 @@ messageSchema.index(
 
 // Recent messages globally
 messageSchema.index({ createdAt: -1 });
+
+// Coverage report: count inbound messages whose ORIGINAL send time falls
+// inside an offline window, per channel (and filtered by chatJid).
+messageSchema.index({ channelId: 1, messageTimestamp: -1 }, { sparse: true });
 
 // Extraction queue / reconciler: find pending-or-failed profile messages
 // on profiles_source channels quickly. Sparse because only inbound

@@ -45,3 +45,21 @@ export const BAILEYS = {
   /** How many older messages to request per on-demand history sync. */
   HISTORY_FETCH_COUNT: 50,
 } as const;
+
+/** Post-reconnect downtime coverage report (coverage.service). */
+export const COVERAGE = {
+  /** Offline windows shorter than this are routine churn — no report. */
+  MIN_GAP_MS: 10 * 60_000,
+
+  /** How long after reconnect to wait before counting, so WhatsApp's
+   *  offline queue has time to flush through ingestion. */
+  SETTLE_MS: 5 * 60_000,
+
+  /** Baseline period (before the window) used to estimate a chat's
+   *  normal traffic rate. */
+  BASELINE_DAYS: 7,
+
+  /** A zero-message chat is only suspect if its baseline rate predicts
+   *  at least this many messages inside the window. */
+  SUSPECT_MIN_EXPECTED: 1,
+} as const;

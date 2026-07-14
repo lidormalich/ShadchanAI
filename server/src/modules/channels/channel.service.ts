@@ -13,12 +13,12 @@ import { audit } from '../../services/audit.service.js';
 import { NotFoundError, BusinessRuleError } from '../../utils/errors.js';
 import { publishRealtimeEvent } from '../../services/realtime/realtime.service.js';
 import { discoverChats, type DiscoveryResult } from '../../services/whatsapp/chat-discovery.service.js';
-import { ChatMapping, Conversation, Message } from '../../models/index.js';
+import { ChatMapping, Conversation, Message, CoverageReport, type ICoverageChatEntry } from '../../models/index.js';
 import { enqueueExtraction } from '../../services/extraction/queue.js';
 import { Types } from 'mongoose';
 import { ChannelStatus } from '@shadchanai/shared';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
-import type { ListChannelsQuery } from './channel.validator.js';
+import type { ListChannelsQuery, CoverageReportsQuery } from './channel.validator.js';
 import type { ConnectChannelInput } from '../../services/whatsapp/whatsapp.types.js';
 
 /** Public, secret-stripped channel shape */
@@ -806,4 +806,50 @@ export async function adminForceReleaseLock(
   });
 
   return { ...result, lock: after };
+}
+
+// ═══════════════════════════════════════════════════════════
+// Downtime coverage reports (post-reconnect verification)
+// ═══════════════════════════════════════════════════════════
+
+export interface CoverageReportView {
+  id: string;
+  channelId: string;
+  accountDisplayName?: string;
+  offlineFrom: Date;
+  offlineTo: Date;
+  offlineMs: number;
+  messagesInWindow: number;
+  chats: ICoverageChatEntry[];
+  suspectCount: number;
+  createdAt: Date;
+}
+
+/** Recent downtime coverage reports, newest first — feeds the operator
+ *  banner on the channels page. */
+export async function listCoverageReports(
+  query: CoverageReportsQuery,
+): Promise<CoverageReportView[]> {
+  const days = query.days ?? 7;
+  const limit = query.limit ?? 10;
+  const since = new Date(Date.now() - days * 86_400_000);
+
+  const docs = await CoverageReport.find({ createdAt: { $gte: since } })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean()
+    .exec();
+
+  return docs.map((d) => ({
+    id: String(d._id),
+    channelId: d.channelId,
+    accountDisplayName: d.accountDisplayName,
+    offlineFrom: d.offlineFrom,
+    offlineTo: d.offlineTo,
+    offlineMs: d.offlineMs,
+    messagesInWindow: d.messagesInWindow,
+    chats: d.chats ?? [],
+    suspectCount: d.suspectCount,
+    createdAt: d.createdAt,
+  }));
 }

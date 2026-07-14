@@ -118,6 +118,12 @@ export interface IExternalCandidate extends Document {
   // Canonical E.164-shape phone ("+972501234567") derived at write time.
   // This is the authoritative lookup key for duplicate detection.
   contactPhoneNormalized?: string;
+  // EVERY phone number known for this candidate — the card's primary
+  // phone plus numbers arriving from merged duplicate cards and manual
+  // additions. Merges union into this list instead of discarding the
+  // losing card's differing number. Each entry may carry a label
+  // ("אמא", "שדכנית"...) and a source tag; deduped by normalized form.
+  phones?: Array<{ number: string; normalized?: string; label?: string; source?: string }>;
   // Every Message._id that contributed to this candidate (first import
   // + re-posts). Enables the "view source messages" action on a candidate.
   sourceMessageIds?: Types.ObjectId[];
@@ -331,6 +337,15 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
     lastSourceUpdateAt: { type: Date },
     contactPhone: { type: String, trim: true },
     contactPhoneNormalized: { type: String, trim: true, index: true, sparse: true },
+    phones: {
+      type: [new Schema({
+        number: { type: String, required: true, trim: true },
+        normalized: { type: String, trim: true },
+        label: { type: String, trim: true, maxlength: 120 },
+        source: { type: String, trim: true, maxlength: 40 },
+      }, { _id: false })],
+      default: undefined,
+    },
     sourceMessageIds: [{ type: Schema.Types.ObjectId, ref: 'Message' }],
 
     // ── Profile data (may be partial) — mirrors internal profile ──

@@ -30,6 +30,7 @@ import { BAILEYS } from '../../whatsapp.constants.js';
 import { logWhatsApp } from '../../whatsapp.logger.js';
 import { loadAuth, purgeSession } from './baileys.session.store.js';
 import { wireEvents, classifyDisconnect } from './baileys.events.js';
+import { noteChannelReconnected, cancelPendingCoverageCheck } from '../../coverage.service.js';
 import type {
   BaileysSessionState,
   BaileysChannelStatus,
@@ -130,10 +131,22 @@ export class BaileysClient {
     this.shouldRun = false;
     this.clearReconnectTimer();
     this.clearHeartbeatTimer();
+    cancelPendingCoverageCheck(this.channel.channelId);
+    // Stamp the moment we STOPPED LISTENING (only when we actually were).
+    // The post-reconnect coverage report windows from this timestamp, so a
+    // planned shutdown → restart days later knows exactly what period to
+    // verify. Stale non-connected clients (boot cleanup, heartbeat loss
+    // before open) must NOT overwrite the real disconnect moment.
+    const wasListening = this.state === 'connected';
     const s = this.sock;
     this.sock = null;
     this.setState('disconnected');
     try { s?.end(undefined); } catch { /* ignore */ }
+    if (wasListening) {
+      try {
+        await updateChannelStatus(this.channel.channelId, { lastDisconnectAt: new Date() });
+      } catch { /* best-effort */ }
+    }
     try { await releaseChannelLock(this.channel.channelId); } catch { /* best-effort */ }
   }
 
@@ -171,6 +184,8 @@ export class BaileysClient {
     this.shouldRun = false;
     this.clearReconnectTimer();
     this.clearHeartbeatTimer();
+    cancelPendingCoverageCheck(this.channel.channelId);
+    const wasListening = this.state === 'connected';
     try { await this.sock?.logout(); } catch { /* best-effort */ }
     this.sock = null;
     try { await releaseChannelLock(this.channel.channelId); } catch { /* best-effort */ }
@@ -180,6 +195,7 @@ export class BaileysClient {
       status: ChannelStatus.SUSPENDED,
       connectionHealth: 'down',
       webhookStatus: WebhookStatus.PENDING,
+      ...(wasListening ? { lastDisconnectAt: new Date() } : {}),
     });
     logWhatsApp({
       event: 'channel_disconnected',
@@ -444,6 +460,13 @@ export class BaileysClient {
       this.setState('connected');
       this.startHeartbeatTimer();
 
+      // Downtime coverage: if we were offline for a meaningful window,
+      // schedule a post-settle check that verifies WhatsApp's offline
+      // queue actually delivered the window's messages. Fire-and-forget —
+      // it reads lastDisconnectAt (which the open patch below never
+      // touches) and must never block or fail the connection handler.
+      void noteChannelReconnected(this.channel.channelId, this.lastConnectedAt);
+
       // On first successful connection, backfill phoneNumber from the JID
       const user = this.sock?.user;
       const jidLocal = user?.id?.split('@')[0]?.split(':')[0];
@@ -467,6 +490,12 @@ export class BaileysClient {
 
     if (update.connection === 'close') {
       this.clearHeartbeatTimer();
+      // Were we actually listening until this close? Only a close that
+      // transitions FROM 'connected' marks the real stopped-listening
+      // moment — later closes during reconnect churn must not advance
+      // lastDisconnectAt or the coverage window would shrink to nothing.
+      const wasListening = this.state === 'connected';
+      const disconnectedAt = new Date();
       // A close that arrives while we're still showing the QR means the
       // operator just scanned: Baileys tears down the unauthenticated
       // socket and immediately restarts it (status 515 / restartRequired)
@@ -495,6 +524,7 @@ export class BaileysClient {
         await updateChannelStatus(this.channel.channelId, {
           status: ChannelStatus.REPLACED,
           connectionHealth: 'down',
+          ...(wasListening ? { lastDisconnectAt: disconnectedAt } : {}),
         });
         this.setState('disconnected');
         this.shouldRun = false;
@@ -509,6 +539,7 @@ export class BaileysClient {
         await updateChannelStatus(this.channel.channelId, {
           status: ChannelStatus.SUSPENDED,
           connectionHealth: 'down',
+          ...(wasListening ? { lastDisconnectAt: disconnectedAt } : {}),
         });
         this.setState('disconnected');
         this.shouldRun = false;
@@ -529,6 +560,7 @@ export class BaileysClient {
         await updateChannelStatus(this.channel.channelId, {
           // A post-scan restart is healthy progress, not degradation.
           connectionHealth: wasPairing ? 'healthy' : 'degraded',
+          ...(wasListening ? { lastDisconnectAt: disconnectedAt } : {}),
         });
       } else {
         this.setState('disconnected');

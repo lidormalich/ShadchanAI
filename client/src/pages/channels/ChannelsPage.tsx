@@ -5,7 +5,7 @@ import {
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { channelsApi, type AdminSessionView } from '@/services/api/channels';
+import { channelsApi, type AdminSessionView, type CoverageReportView } from '@/services/api/channels';
 import {
   Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Spinner,
 } from '@/components/ui/primitives';
@@ -117,6 +117,9 @@ export function ChannelsPage() {
           ) : null}
         </CardBody>
       </Card>
+
+      {/* Downtime coverage: did WhatsApp deliver the messages from offline windows? */}
+      <CoverageReportsPanel />
 
       {/* Multi-account admin: per-channel session + lock state */}
       <SessionsAdminPanel />
@@ -677,6 +680,86 @@ function ChainModal({ open, onClose, channelId }: { open: boolean; onClose: () =
         </ul>
       )}
     </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Downtime coverage reports: after a channel reconnects from a
+// meaningful offline window, the server verifies (a few minutes
+// later) that WhatsApp's offline queue actually delivered the
+// window's messages. This panel surfaces the last week's verdicts;
+// hidden entirely when there were no downtime windows.
+// ─────────────────────────────────────────────────────────────
+
+function formatOfflineDuration(ms: number): string {
+  const hours = ms / 3_600_000;
+  if (hours < 1) return `${Math.round(ms / 60_000)} דקות`;
+  if (hours < 48) return `${Math.round(hours)} שעות`;
+  return `${Math.round(hours / 24)} ימים`;
+}
+
+function CoverageReportsPanel() {
+  const q = useQuery({
+    queryKey: ['channels', 'coverage', 'reports'],
+    queryFn: () => channelsApi.coverageReports(7, 10),
+    staleTime: 60_000,
+  });
+
+  const reports = q.data?.data ?? [];
+  if (q.isLoading || q.isError || reports.length === 0) return null;
+
+  const anySuspect = reports.some((r) => r.suspectCount > 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-semibold inline-flex items-center gap-2">
+          <Shield className="h-4 w-4" /> כיסוי הודעות אחרי ניתוקים
+        </h3>
+        <p className="text-xs text-ink-muted">
+          אחרי כל חיבור מחדש מניתוק משמעותי, המערכת בודקת שההודעות שנשלחו בזמן הניתוק אכן התקבלו.
+          {anySuspect ? ' נמצאו קבוצות פעילות ללא הודעות בחלון — מומלץ לבדוק ידנית.' : ''}
+        </p>
+      </CardHeader>
+      <CardBody className="space-y-2">
+        {reports.map((r) => (
+          <CoverageReportRow key={r.id} report={r} />
+        ))}
+      </CardBody>
+    </Card>
+  );
+}
+
+function CoverageReportRow({ report }: { report: CoverageReportView }) {
+  const suspects = report.chats.filter((c) => c.suspect);
+  const ok = suspects.length === 0;
+  return (
+    <div
+      className={`rounded-md border px-3 py-2 text-xs ${
+        ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+           : 'border-amber-200 bg-amber-50 text-amber-900'
+      }`}
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        {ok
+          ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+          : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+        <span className="font-medium">{report.accountDisplayName ?? report.channelId}</span>
+        <span>
+          היה מנותק {formatOfflineDuration(report.offlineMs)} (עד {formatDateTime(report.offlineTo)}) ·
+          התקבלו {report.messagesInWindow} הודעות מחלון הניתוק
+        </span>
+      </div>
+      {!ok && (
+        <div className="mt-1 ps-5">
+          קבוצות פעילות ללא אף הודעה בחלון ({suspects.length}):{' '}
+          {suspects.map((c) => c.chatName ?? c.chatJid).join(', ')}
+          <span className="block text-[11px] opacity-80 mt-0.5">
+            ייתכן שהודעות מהן אבדו בתור של WhatsApp — כדאי להשוות מול הקבוצה בטלפון.
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 

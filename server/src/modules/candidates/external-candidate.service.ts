@@ -22,7 +22,7 @@ import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
 import { assertOwnership } from '../../utils/ownership.assert.js';
 import type { AuthUser } from '../../middleware/auth.middleware.js';
-import { normalizePhone } from '../../utils/phone.js';
+import { normalizePhone, mergePhoneEntries } from '../../utils/phone.js';
 import { isStorageEnabled } from '../../services/storage/storage.service.js';
 import {
   syncCandidatePhoto,
@@ -261,6 +261,14 @@ export async function createExternalCandidate(
     doc = await ExternalCandidate.create({
       ...input,
       contactPhoneNormalized: normalizedPhone ?? undefined,
+      // Seed the labeled multi-phone list (normalized + deduped server-side);
+      // the primary contactPhone is folded in so it's never absent from it.
+      phones: (input.phones?.length || input.contactPhone)
+        ? mergePhoneEntries(undefined, [
+            ...(input.phones ?? []),
+            ...(input.contactPhone ? [{ number: input.contactPhone, source: 'card' }] : []),
+          ])
+        : undefined,
       sourceImportedAt: new Date(),
       importedBy: new Types.ObjectId(performedBy),
       ownerUserId: new Types.ObjectId(performedBy),
@@ -317,10 +325,25 @@ export async function updateExternalCandidate(
   if (doc.archivedAt) throw new BusinessRuleError('External candidate is archived');
 
   const before = doc.toObject();
+  // Snapshot the pre-edit primary phone: if the edit REPLACES it with a
+  // different number, the old one is preserved in the phones list rather
+  // than silently lost (multi-phone policy: never drop a known number).
+  const prevContactPhone = doc.contactPhone;
   Object.assign(doc, input);
   // Keep contactPhoneNormalized in sync with contactPhone edits.
   if (input.contactPhone !== undefined) {
     doc.contactPhoneNormalized = normalizePhone(input.contactPhone) ?? undefined;
+  }
+  // An explicit phones list from the UI is authoritative (relabel/remove),
+  // but is re-normalized and deduped server-side.
+  if (input.phones !== undefined) {
+    doc.phones = input.phones.length ? mergePhoneEntries(undefined, input.phones) : undefined;
+  }
+  if (input.contactPhone && input.phones === undefined) {
+    doc.phones = mergePhoneEntries(doc.phones, [
+      ...(prevContactPhone ? [{ number: prevContactPhone, source: 'card' }] : []),
+      { number: input.contactPhone, source: 'card' },
+    ]);
   }
   doc.lastSourceUpdateAt = new Date();
   try {

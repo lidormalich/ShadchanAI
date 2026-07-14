@@ -68,3 +68,6 @@ export type { IFailedInboundMessage, FailedInboundStatus } from '../modules/conv
 
 export { CandidateInsight } from '../modules/candidates/candidate-insight.model.js';
 export type { ICandidateInsight } from '../modules/candidates/candidate-insight.model.js';
+
+export { CoverageReport } from '../modules/channels/coverage-report.model.js';
+export type { ICoverageReport, ICoverageChatEntry } from '../modules/channels/coverage-report.model.js';

@@ -51,3 +51,54 @@ export function normalizePhones(raw: Array<string | undefined | null> | undefine
   }
   return [...out];
 }
+
+// ── Labeled phone entries (multi-phone per candidate) ──────
+//
+// A candidate accumulates numbers over time: the card's inquiry line,
+// numbers arriving from merged duplicate cards, a reference phone, and
+// manual additions. Each entry keeps an optional label ("אמא", "שדכנית")
+// and a source tag. Dedup key is the normalized E.164 form; when a raw
+// value can't be canonicalized we fall back to its digit string so two
+// visually-different spellings of the same number still converge.
+
+export interface PhoneEntry {
+  number: string;
+  normalized?: string;
+  label?: string;
+  source?: string;
+}
+
+function phoneKey(number: string, normalized?: string | null): string {
+  return normalized ?? String(number).replace(/[^\d]/g, '');
+}
+
+/**
+ * Merge additional phones into an existing entry list without ever
+ * dropping a number. Duplicates (by normalized form) collapse into the
+ * existing entry; a label fills in only when the existing entry has none,
+ * so an operator-written label is never overwritten by a merge.
+ */
+export function mergePhoneEntries(
+  existing: PhoneEntry[] | undefined,
+  additions: Array<{ number?: string | null; label?: string; source?: string }>,
+): PhoneEntry[] {
+  const out: PhoneEntry[] = [];
+  const byKey = new Map<string, PhoneEntry>();
+  const push = (a: { number?: string | null; label?: string; source?: string; normalized?: string }): void => {
+    const number = a.number ? String(a.number).trim() : '';
+    if (!number) return;
+    const normalized = a.normalized ?? normalizePhone(number) ?? undefined;
+    const key = phoneKey(number, normalized);
+    const cur = byKey.get(key);
+    if (cur) {
+      if (!cur.label && a.label) cur.label = a.label;
+      return;
+    }
+    const entry: PhoneEntry = { number, normalized, label: a.label || undefined, source: a.source || undefined };
+    out.push(entry);
+    byKey.set(key, entry);
+  };
+  for (const e of existing ?? []) push(e);
+  for (const a of additions) push(a);
+  return out;
+}

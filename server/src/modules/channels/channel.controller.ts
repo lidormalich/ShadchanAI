@@ -3,7 +3,7 @@ import * as svc from './channel.service.js';
 import { getValidatedQuery, getValidatedParams } from '../../middleware/validate.middleware.js';
 import { ok, created } from '../../utils/response.js';
 import { ensureUser, canManageChannels } from '../../middleware/permissions.js';
-import type { ListChannelsQuery } from './channel.validator.js';
+import type { ListChannelsQuery, CoverageReportsQuery } from './channel.validator.js';
 import type { ConnectChannelInput } from '../../services/whatsapp/whatsapp.types.js';
 
 export async function listHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -73,6 +73,14 @@ export async function healthHandler(req: Request, res: Response, next: NextFunct
   try {
     ensureUser(req.user);
     ok(res, await svc.healthSummary());
+  } catch (e) { next(e); }
+}
+
+export async function coverageReportsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const q = getValidatedQuery<CoverageReportsQuery>(req);
+    ok(res, await svc.listCoverageReports(q));
   } catch (e) { next(e); }
 }
 

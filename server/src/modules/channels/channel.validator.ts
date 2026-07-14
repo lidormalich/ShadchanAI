@@ -67,3 +67,10 @@ export const DeleteChannelSchema = z.object({
 export const ForceReleaseLockSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 });
+
+// Query for the downtime coverage reports feed (operator banner).
+export const CoverageReportsQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(30).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+});
+export type CoverageReportsQuery = z.infer<typeof CoverageReportsQuerySchema>;

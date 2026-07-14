@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
     updateOne: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })),
     updateMany: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(undefined) })),
   },
+  CoverageReport: { find: vi.fn() },
   enqueueExtraction: vi.fn().mockResolvedValue(undefined),
   auditMock: vi.fn().mockResolvedValue(undefined),
   publishMock: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('../../models/index.js', () => ({
   ChatMapping: h.ChatMapping,
   Conversation: h.Conversation,
   Message: h.Message,
+  CoverageReport: h.CoverageReport,
 }));
 vi.mock('../../services/extraction/queue.js', () => ({
   enqueueExtraction: (...a: unknown[]) => h.enqueueExtraction(...a),

@@ -155,6 +155,16 @@ export interface InternalCandidate {
 }
 
 // ── External Candidate ───────────────────────────────────
+// One entry in the candidate's accumulated phone list — every number the
+// system has ever seen for them (card, merged duplicates, manual adds),
+// each with an optional "who is this" label.
+export interface CandidatePhone {
+  number: string;
+  normalized?: string;
+  label?: string;
+  source?: string;
+}
+
 export interface ExternalCandidate {
   _id: string;
   sourceType: ExternalSourceType;
@@ -168,6 +178,8 @@ export interface ExternalCandidate {
   sourceSenderPhone?: string;
   sourceImportedAt: string;
   lastSourceUpdateAt?: string;
+  contactPhone?: string;
+  phones?: CandidatePhone[];
   firstName?: string;
   lastName?: string;
   hebrewName?: string;

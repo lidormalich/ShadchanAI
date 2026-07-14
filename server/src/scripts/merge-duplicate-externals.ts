@@ -42,6 +42,7 @@ import {
 } from '../models/index.js';
 import { buildIdentityKey, normalizeNamePart } from '../utils/identity.js';
 import { isDuplicateKeyError } from '../utils/errors.js';
+import { mergePhoneEntries, type PhoneEntry } from '../utils/phone.js';
 
 const APPLY = process.env['APPLY'] === 'true';
 // Opt-in: also merge single-first-name cards (no surname) that share the exact
@@ -127,8 +128,18 @@ async function mergeGroup(group: IExternalCandidate[]): Promise<void> {
   // Union source messages + backfill empty scalar fields from losers.
   const msgIds = new Set((survivor.sourceMessageIds ?? []).map(String));
   const surRec = survivor as unknown as Record<string, unknown>;
+  // Every phone from every card in the group survives the merge — the
+  // survivor keeps its primary contactPhone, but losers' DIFFERENT numbers
+  // land in the labeled phones list instead of being discarded.
+  const phonesOf = (c: IExternalCandidate, source: string): Array<{ number?: string | null; label?: string; source?: string }> => [
+    ...(c.phones ?? []),
+    ...(c.contactPhone ? [{ number: c.contactPhone, source }] : []),
+    ...(c.referencePhone ? [{ number: c.referencePhone, label: c.referenceName || 'ממליץ/ה', source: 'reference' }] : []),
+  ];
+  let phones: PhoneEntry[] = mergePhoneEntries(undefined, phonesOf(survivor, 'card'));
   for (const loser of losers) {
     console.error(`  loser:    ${loser._id} (richness ${richness(loser)})`);
+    phones = mergePhoneEntries(phones, phonesOf(loser, 'merged_card'));
     for (const id of loser.sourceMessageIds ?? []) msgIds.add(String(id));
     for (const f of BACKFILL_FIELDS) {
       const cur = surRec[f];
@@ -144,6 +155,7 @@ async function mergeGroup(group: IExternalCandidate[]): Promise<void> {
     if (Object.keys(refs).length) console.error(`    refs:   ${JSON.stringify(refs)}`);
   }
   survivor.sourceMessageIds = [...msgIds].map((s) => new mongoose.Types.ObjectId(s));
+  if (phones.length) survivor.phones = phones;
 
   if (APPLY) {
     // Archive losers FIRST so the survivor's save (which sets identityKey via

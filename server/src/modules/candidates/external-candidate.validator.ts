@@ -81,6 +81,13 @@ export const CreateExternalCandidateSchema = z.object({
   motherName: z.string().max(100).optional(),
   email: z.string().email().max(200).optional(),
   contactPhone: z.string().max(50).optional(),
+  // Full replacement of the labeled phone list (add / relabel from the UI).
+  // `normalized` is server-derived and ignored if sent.
+  phones: z.array(z.object({
+    number: z.string().min(3).max(50),
+    label: z.string().max(120).optional(),
+    source: z.string().max(40).optional(),
+  })).max(30).optional(),
   gender: z.nativeEnum(Gender).optional(),
   age: z.number().int().min(16).max(120).optional(),
 
