@@ -12,13 +12,15 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Search, Sparkles, X } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Badge, Button, Input, Select, Textarea } from '@/components/ui/primitives';
+import { Badge, Button, Select, Textarea } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
-import { EmptyState, LoadingSkeleton } from '@/components/states/states';
+import { CandidatePicker } from '@/components/ui/CandidatePicker';
+import { LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { label } from '@/utils/labels';
+import { internalToOption, externalToOption } from '@/features/candidates/candidateOptions';
 import { internalCandidatesApi, externalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi } from '@/services/api/matches';
 import { pairReviewsApi } from '@/services/api/pair-reviews';
@@ -169,23 +171,8 @@ export function CreateSuggestionDialog({
           </Select>
         </div>
 
-        <CandidatePicker
-          title="מועמד פנימי"
-          selected={internal ? `${internal.firstName ?? ''} ${internal.lastName ?? ''}`.trim() || 'ללא שם' : null}
-          onClear={() => setInternal(null)}
-          renderResults={(search) => (
-            <InternalResults search={search} onPick={setInternal} />
-          )}
-        />
-
-        <CandidatePicker
-          title="מועמד חיצוני"
-          selected={external ? `${external.firstName ?? ''} ${external.lastName ?? ''}`.trim() || 'ללא שם' : null}
-          onClear={() => setExternal(null)}
-          renderResults={(search) => (
-            <ExternalResults search={search} onPick={setExternal} />
-          )}
-        />
+        <InternalPickerField value={internal} onPick={setInternal} />
+        <ExternalPickerField value={external} onPick={setExternal} />
 
         {internal && external && (
           <div className="rounded-md border border-border bg-bg-subtle p-3 text-sm">
@@ -276,91 +263,77 @@ export function CreateSuggestionDialog({
   );
 }
 
-// ── Generic picker shell: shows selected chip or a search box ──
+// ── Picker fields: server-searched CandidatePicker per side ──
+// Empty query → a browsable first page; typing (2+ chars) → server
+// search by name/phone/source. The picked FULL candidate object is
+// what the dialog needs (the engine preview reads both ids), so we
+// resolve the chosen id back to the fetched item.
 
-function CandidatePicker({
-  title, selected, onClear, renderResults,
+function InternalPickerField({
+  value, onPick,
 }: {
-  title: string;
-  selected: string | null;
-  onClear: () => void;
-  renderResults: (search: string) => React.ReactNode;
+  value: InternalCandidate | null;
+  onPick: (c: InternalCandidate | null) => void;
 }) {
-  const [search, setSearch] = useState('');
-
+  const [q, setQ] = useState('');
+  const list = useQuery({
+    queryKey: ['internal-picker', q],
+    queryFn: () => internalCandidatesApi.list({
+      search: q.length >= 2 ? q : undefined,
+      limit: 50,
+      status: 'active',
+      sort: 'firstName',
+      order: 'asc',
+    }),
+  });
+  const items = list.data?.data ?? [];
   return (
     <div>
-      <label className="text-xs font-medium text-ink-muted block mb-1">{title}</label>
-      {selected ? (
-        <div className="flex items-center justify-between rounded-md border border-border bg-white px-3 py-2">
-          <span className="text-sm font-medium truncate">{selected}</span>
-          <button type="button" onClick={onClear} className="text-ink-faint hover:text-ink shrink-0">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <div className="relative">
-            <Search className="h-3.5 w-3.5 absolute top-1/2 -translate-y-1/2 start-2.5 text-ink-faint" />
-            <Input
-              className="ps-8"
-              placeholder="חיפוש לפי שם (לפחות 2 תווים)..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          {search.trim().length >= 2 && renderResults(search)}
-        </div>
-      )}
+      <label className="text-xs font-medium text-ink-muted block mb-1">מועמד פנימי</label>
+      <CandidatePicker
+        options={items.map(internalToOption)}
+        value={value?._id ?? ''}
+        selectedOption={value ? internalToOption(value) : undefined}
+        onChange={(id) => onPick(items.find((c) => c._id === id) ?? null)}
+        onQueryChange={setQ}
+        loading={list.isFetching}
+        placeholder="בחר מועמד פנימי"
+      />
     </div>
   );
 }
 
-function InternalResults({ search, onPick }: { search: string; onPick: (c: InternalCandidate) => void }) {
-  const q = useQuery({
-    queryKey: ['internal-search', search],
-    queryFn: () => internalCandidatesApi.list({ search, limit: 15, status: 'active' }),
-    enabled: search.trim().length >= 2,
-  });
-  return <ResultsList loading={q.isLoading} items={q.data?.data ?? []} onPick={onPick} />;
-}
-
-function ExternalResults({ search, onPick }: { search: string; onPick: (c: ExternalCandidate) => void }) {
-  const q = useQuery({
-    queryKey: ['external-search', search],
-    queryFn: () => externalCandidatesApi.list({ search, limit: 15, status: 'active' }),
-    enabled: search.trim().length >= 2,
-  });
-  return <ResultsList loading={q.isLoading} items={q.data?.data ?? []} onPick={onPick} />;
-}
-
-function ResultsList<T extends { _id: string; firstName?: string; lastName?: string; city?: string; age?: number; sectorGroup?: string }>({
-  loading, items, onPick,
+function ExternalPickerField({
+  value, onPick,
 }: {
-  loading: boolean;
-  items: T[];
-  onPick: (c: T) => void;
+  value: ExternalCandidate | null;
+  onPick: (c: ExternalCandidate | null) => void;
 }) {
-  if (loading) return <LoadingSkeleton rows={2} />;
-  if (items.length === 0) return <EmptyState title="לא נמצאו מועמדים" />;
+  const [q, setQ] = useState('');
+  const list = useQuery({
+    queryKey: ['external-picker', q],
+    queryFn: () => externalCandidatesApi.list({
+      search: q.length >= 2 ? q : undefined,
+      limit: 50,
+      status: 'active',
+      sort: 'firstName',
+      order: 'asc',
+    }),
+  });
+  const items = list.data?.data ?? [];
   return (
-    <ul className="border border-border rounded-md max-h-44 overflow-y-auto divide-y divide-border bg-white">
-      {items.map((c) => (
-        <li key={c._id}>
-          <button
-            type="button"
-            className="w-full text-start px-3 py-2 hover:bg-bg-hover text-sm"
-            onClick={() => onPick(c)}
-          >
-            <div className="font-medium">{`${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם'}</div>
-            <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap">
-              {typeof c.age === 'number' && <span className="num">גיל {c.age}</span>}
-              {c.city && <span>{c.city}</span>}
-              {c.sectorGroup && <span>{label('sectorGroup', c.sectorGroup)}</span>}
-            </div>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <label className="text-xs font-medium text-ink-muted block mb-1">מועמד חיצוני</label>
+      <CandidatePicker
+        options={items.map(externalToOption)}
+        value={value?._id ?? ''}
+        selectedOption={value ? externalToOption(value) : undefined}
+        onChange={(id) => onPick(items.find((c) => c._id === id) ?? null)}
+        onQueryChange={setQ}
+        loading={list.isFetching}
+        placeholder="בחר מועמד חיצוני"
+        searchPlaceholder="חיפוש לפי שם, טלפון או מקור…"
+      />
+    </div>
   );
 }

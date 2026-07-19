@@ -82,6 +82,11 @@ export interface IMessage extends Document {
     candidateId?: Types.ObjectId;
     confidence?: number;
     failureReason?: string;
+    // A deterministic failure (e.g. a schema-validation error) that will
+    // fail identically on every retry. Marks the message as needing MANUAL
+    // entry — it surfaces on the "failed candidates" page (never requeued),
+    // as opposed to a transient failure that the reconciler retries.
+    permanentFailure?: boolean;
     matchedFields?: string[];
     // Number of failed extraction attempts. The reconciler stops
     // auto-retrying once this hits the cap; manual /run still works.
@@ -143,6 +148,7 @@ const extractionSchema = new Schema(
     candidateId: { type: Schema.Types.ObjectId, ref: 'ExternalCandidate' },
     confidence: { type: Number, min: 0, max: 1 },
     failureReason: { type: String },
+    permanentFailure: { type: Boolean },
     matchedFields: [{ type: String }],
     retryCount: { type: Number, default: 0 },
     extractedProfile: { type: Schema.Types.Mixed },

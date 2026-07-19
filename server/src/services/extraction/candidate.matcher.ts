@@ -36,6 +36,16 @@ export interface MatchResult {
 }
 
 export async function findExistingCandidate(profile: ExtractedProfile): Promise<MatchResult> {
+  // A "degenerate" name — firstName === lastName — is a mis-extraction (the
+  // surname was dropped into BOTH fields; see the "בוחניק בוחניק" fusion). Such
+  // a name carries no real identity, so it must NEVER drive a match: every
+  // person that shadchan posts would collapse into one card. Skip all
+  // name-based tiers → treated as a new person (a duplicate is cheaper to merge
+  // later than two people silently fused into one).
+  if (isDegenerateName(profile.firstName, profile.lastName)) {
+    return { strength: 'none', reason: 'degenerate name (first === last) — not used for matching' };
+  }
+
   // ── Tier 1: firstName + lastName + phone (all three) ──
   // Phone corroborates a NAME match — it is never used alone (it is the
   // shadchan's shared inquiries line, not the candidate's identity).
@@ -52,7 +62,13 @@ export async function findExistingCandidate(profile: ExtractedProfile): Promise<
       $or: phoneOr,
       status: { $ne: 'archived' },
     }).exec();
-    if (hit) {
+    // Tier 1 is the ONLY tier that AUTO-MERGES (the orchestrator links it
+    // silently). Since the phone is the shadchan's SHARED line, a name+phone
+    // hit across a large age gap is two different people who share a surname,
+    // not the same person — require the ages to be compatible before merging.
+    // Incompatible → fall through to the age/name tiers, which route to the
+    // duplicates review tab for a human decision instead of auto-linking.
+    if (hit && agesCompatible(profile.age, hit.age)) {
       return {
         strength: 'exact',
         candidate: hit,
@@ -119,4 +135,23 @@ export async function findExistingCandidate(profile: ExtractedProfile): Promise<
   }
 
   return { strength: 'none', reason: 'no candidate matched' };
+}
+
+/** True when the given name and surname are the same token — a mis-extraction
+ *  (surname dropped into both fields), not a real identity. Exported so the
+ *  merge-guard contract is unit-tested directly. */
+export function isDegenerateName(first?: string, last?: string): boolean {
+  if (!first || !last) return false;
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  return norm(first) === norm(last);
+}
+
+/** Ages are "compatible" for an auto-merge when either is unknown, or they are
+ *  within a few years (posts get re-shared over time and a birthday may tick).
+ *  A wide gap (e.g. 27 vs 35) means two different people who happen to share a
+ *  surname + the shadchan's phone — never the same person. Exported so the
+ *  merge-guard contract is unit-tested directly. */
+export function agesCompatible(a?: number, b?: number): boolean {
+  if (!a || !b) return true;
+  return Math.abs(a - b) <= 2;
 }

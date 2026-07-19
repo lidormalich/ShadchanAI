@@ -11,10 +11,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Avatar, Card, CardBody, Select } from '@/components/ui/primitives';
+import { Avatar, Card, CardBody } from '@/components/ui/primitives';
+import { CandidatePicker } from '@/components/ui/CandidatePicker';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { SemanticMatchesSection } from '@/features/compatibility/CompatibilityWorkspace';
+import { internalToOption } from '@/features/candidates/candidateOptions';
 
 export function SmartMatchesPage() {
   const [params, setParams] = useSearchParams();
@@ -44,22 +46,13 @@ export function SmartMatchesPage() {
               דירוג מועמדים לפי דמיון וקטורי בטקסטים החופשיים — בחר מועמד/ת פנימי/ת כדי להתחיל
             </div>
           </div>
-          <Select
+          <CandidatePicker
+            className="w-72"
             value={selectedId}
-            onChange={(e) => {
-              const id = e.target.value;
-              setParams(id ? { candidate: id } : {}, { replace: true });
-            }}
-            className="w-64"
+            onChange={(id) => setParams(id ? { candidate: id } : {}, { replace: true })}
             disabled={candidates.isLoading}
-          >
-            <option value="">— בחר מועמד/ת —</option>
-            {items.map((c) => (
-              <option key={c._id} value={c._id}>
-                {`${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || c._id}
-              </option>
-            ))}
-          </Select>
+            options={items.map(internalToOption)}
+          />
         </CardBody>
       </Card>
 

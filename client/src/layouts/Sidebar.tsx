@@ -1,6 +1,7 @@
 import { clsx } from 'clsx';
 import { useQuery } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   BarChart3,
   ClipboardCheck,
   ClipboardList,
@@ -19,11 +20,12 @@ import {
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { matchesApi } from '@/services/api/matches';
+import { extractionApi } from '@/services/api/extraction';
 import { Badge } from '@/components/ui/primitives';
 
 interface NavGroup {
   title?: string;
-  items: Array<{ to: string; label: string; icon: ReactNode; end?: boolean; badge?: 'inbox' }>;
+  items: Array<{ to: string; label: string; icon: ReactNode; end?: boolean; badge?: 'inbox' | 'failed' }>;
 }
 
 const NAV: NavGroup[] = [
@@ -37,6 +39,7 @@ const NAV: NavGroup[] = [
     items: [
       { to: '/candidates/internal', label: 'מועמדים פנימיים', icon: <UserCircle className="h-4 w-4" /> },
       { to: '/candidates/external', label: 'מועמדים חיצוניים', icon: <Users className="h-4 w-4" /> },
+      { to: '/candidates/failed', label: 'מועמדים שנכשלו', icon: <AlertTriangle className="h-4 w-4" />, badge: 'failed' },
     ],
   },
   {
@@ -72,6 +75,19 @@ function InboxCountBadge() {
   const count = data?.data.length ?? 0;
   if (count === 0) return null;
   return <Badge tone="brand">{count}</Badge>;
+}
+
+// Count of extraction casualties that failed permanently and need manual
+// entry — shown beside "מועמדים שנכשלו" so the backlog is visible from
+// anywhere. (Transient failures live in the review page's "נפלו" tab.)
+function FailedCountBadge() {
+  const { data } = useQuery({
+    queryKey: ['extraction', 'failed-queue'],
+    queryFn: () => extractionApi.failedQueue(200),
+  });
+  const count = (data?.data ?? []).filter((f) => f.permanent).length;
+  if (count === 0) return null;
+  return <Badge tone="danger">{count}</Badge>;
 }
 
 export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void } = {}) {
@@ -130,6 +146,7 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
                       {item.icon}
                       <span className="flex-1">{item.label}</span>
                       {item.badge === 'inbox' && <InboxCountBadge />}
+                      {item.badge === 'failed' && <FailedCountBadge />}
                     </NavLink>
                   </li>
                 ))}

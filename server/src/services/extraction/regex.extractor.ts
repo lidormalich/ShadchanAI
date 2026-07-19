@@ -22,6 +22,7 @@ import {
   parseAgeRange,
   parsePhones,
   parseName,
+  parseLastName,
   inferGender,
   stripDecorations,
   type FieldKey,
@@ -143,9 +144,20 @@ export function extractProfileFromText(rawText: string): RegexExtractionResult {
 function applyField(profile: ExtractedProfile, field: FieldKey, value: string): void {
   switch (field) {
     case 'name': {
+      // "שם"/"שם מלא"/"שם פרטי" line. Only FILL — never overwrite a name part
+      // an earlier line already set, so a second name-ish line can't clobber
+      // the given name (the root of the "בוחניק בוחניק" fusion). A dedicated
+      // 'lastName' line below is authoritative and overrides.
       const { firstName, lastName } = parseName(value);
-      if (firstName) profile.firstName = firstName;
-      if (lastName) profile.lastName = lastName;
+      if (firstName && !profile.firstName) profile.firstName = firstName;
+      if (lastName && !profile.lastName) profile.lastName = lastName;
+      return;
+    }
+    case 'lastName': {
+      // Explicit "שם משפחה" line — authoritative for the surname (wins over a
+      // last name inferred from a full-name 'name' line, regardless of order).
+      const last = parseLastName(value);
+      if (last) profile.lastName = last;
       return;
     }
     case 'age': {

@@ -14,6 +14,7 @@
     "dedupe:externals": "tsx src/scripts/merge-duplicate-externals.ts",
     "backfill:phones": "tsx src/scripts/backfill-candidate-phones.ts",
     "extraction:reprocess-stuck": "tsx src/scripts/reprocess-stuck-extractions.ts",
+    "repair:degenerate-names": "tsx src/scripts/repair-degenerate-names.ts",
     "migrate:translate-reasons": "tsx src/scripts/translate-override-reasons.ts",
     "build": "tsc",
     "start": "node dist/server.js",

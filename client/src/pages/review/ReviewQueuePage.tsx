@@ -17,11 +17,11 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Ban, Check, Copy, Eye, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, UserPlus, Users, X } from 'lucide-react';
+import { AlertTriangle, Ban, Check, Copy, Eye, Filter, GraduationCap, Inbox, Link2, RefreshCw, RotateCcw, Sparkles, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, CardBody, CardHeader, Divider, Input, Select, Textarea } from '@/components/ui/primitives';
-import { Dialog } from '@/components/ui/Dialog';
+import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { AuthImage } from '@/components/AuthImage';
 import { ExternalCandidateDrawer } from '@/pages/candidates/ExternalCandidateDrawer';
@@ -100,7 +100,9 @@ export function ReviewQueuePage() {
   const rows = queue.data?.data ?? [];
   const pendingRows = rows.filter((r) => !r.suspectedCandidate);
   const duplicateRows = rows.filter((r) => r.suspectedCandidate);
-  const failedCount = failed.data?.data.length ?? 0;
+  // Only transient (retryable) failures belong in this tab; PERMANENT ones
+  // need manual entry and live on the "מועמדים שנכשלו" page.
+  const failedCount = (failed.data?.data ?? []).filter((f) => !f.permanent).length;
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['extraction', 'review-queue'] });
@@ -494,7 +496,11 @@ function FailedMessagesSection() {
     queryKey: ['extraction', 'failed-queue'],
     queryFn: () => extractionApi.failedQueue(100),
   });
-  const rows = failed.data?.data ?? [];
+  const all = failed.data?.data ?? [];
+  // Requeuable failures only (transient — usually rate-limit). PERMANENT ones
+  // moved to the dedicated manual-entry page.
+  const rows = all.filter((f) => !f.permanent);
+  const permanentCount = all.length - rows.length;
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['extraction', 'failed-queue'] });
@@ -506,6 +512,11 @@ function FailedMessagesSection() {
     onSuccess: () => { toast.success('הוחזר לתור', 'יעובד מחדש בקצב מבוקר'); invalidate(); },
     onError: (e: Error) => toast.error('ההחזרה לתור נכשלה', e.message),
   });
+  const del = useMutation({
+    mutationFn: (id: string) => extractionApi.deleteMessage(id),
+    onSuccess: () => { toast.success('ההודעה נמחקה'); invalidate(); },
+    onError: (e: Error) => toast.error('המחיקה נכשלה', e.message),
+  });
   const requeueAll = useMutation({
     mutationFn: () => extractionApi.requeueAllFailed(),
     onSuccess: (res) => { toast.success('כל הנפולים הוחזרו לתור', `${res.data.requeued} הודעות`); invalidate(); },
@@ -514,10 +525,16 @@ function FailedMessagesSection() {
 
   return (
     <div className="space-y-3">
+      {permanentCount > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {permanentCount} כרטיסים נכשלו לצמיתות ומחכים להזנה ידנית ב־
+          <Link to="/candidates/failed" className="underline font-medium">מועמדים שנכשלו</Link>.
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-sm text-ink-muted">
           {rows.length > 0
-            ? `${rows.length} הודעות נפלו בחילוץ. החזר לתור — הן יעובדו מחדש בקצב שלא יפוצץ שוב את מגבלת ה-AI.`
+            ? `${rows.length} הודעות נפלו בחילוץ (זמני — בד"כ מגבלת קצב). החזר לתור — הן יעובדו מחדש בקצב מבוקר.`
             : ''}
         </p>
         <div className="flex items-center gap-2">
@@ -554,7 +571,8 @@ function FailedMessagesSection() {
               key={item.messageId}
               item={item}
               onRequeue={() => requeue.mutate(item.messageId)}
-              busy={requeue.isPending || requeueAll.isPending}
+              onDelete={() => del.mutate(item.messageId)}
+              busy={requeue.isPending || requeueAll.isPending || del.isPending}
             />
           ))}
         </div>
@@ -563,11 +581,13 @@ function FailedMessagesSection() {
   );
 }
 
-function FailedCard({ item, onRequeue, busy }: {
+function FailedCard({ item, onRequeue, onDelete, busy }: {
   item: FailedQueueItem;
   onRequeue: () => void;
+  onDelete: () => void;
   busy: boolean;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const reason = humanizeFailure(item.failureReason);
   const when = item.completedAt ?? item.createdAt;
   return (
@@ -584,6 +604,9 @@ function FailedCard({ item, onRequeue, busy }: {
             <Link to={`/chats?conversation=${item.conversationId}`} className="text-xs underline text-brand">
               פתח שיחה
             </Link>
+            <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={busy} leftIcon={<Trash2 className="h-4 w-4" />}>
+              מחק
+            </Button>
             <Button variant="primary" onClick={onRequeue} disabled={busy} leftIcon={<RotateCcw className="h-4 w-4" />}>
               החזר לתור
             </Button>
@@ -595,6 +618,16 @@ function FailedCard({ item, onRequeue, busy }: {
           </div>
         )}
       </CardBody>
+      <ConfirmActionModal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="מחיקת הודעה"
+        description="ההודעה תימחק לצמיתות ותיעלם מכל התורים. פעולה זו אינה הפיכה."
+        variant="danger"
+        confirmLabel="מחק"
+        loading={busy}
+        onConfirm={() => { onDelete(); setConfirmDelete(false); }}
+      />
     </Card>
   );
 }

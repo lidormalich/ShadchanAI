@@ -10,6 +10,7 @@ import { ChannelRole, MessageDirection, MessageExtractionStatus, MessageIngestio
 import { ExternalCandidate, Message } from '../../models/index.js';
 import { registerJob } from './job.scheduler.js';
 import { enqueueExtraction } from '../extraction/queue.js';
+import { MAX_EXTRACTION_RETRIES } from '../extraction/orchestrator.js';
 import { runScanNow } from '../matching/match-scan.service.js';
 import { replayFailedInboundMessages } from '../whatsapp/message.handler.js';
 import { downloadInboundMedia } from '../whatsapp/media.service.js';
@@ -75,9 +76,9 @@ registerJob({
 //     message younger than 24h (hook miss during deploy / hotfix)
 // Also re-enqueues status=failed messages once per hour, but only up to
 // MAX_EXTRACTION_RETRIES attempts. Beyond the cap they stay failed for
-// manual inspection (operators can still force a retry via POST /run),
-// so a permanently-failing body can't loop on the AI provider forever.
-const MAX_EXTRACTION_RETRIES = 3;
+// manual inspection (they surface in the "failed candidates" manual-entry
+// queue), so a permanently-failing body can't loop on the AI forever.
+// The cap lives in the orchestrator (single source of truth).
 
 registerJob({
   name: 'extraction-reconciler',

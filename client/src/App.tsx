@@ -48,6 +48,9 @@ const PendingChannelsPage = lazy(() =>
 const ReviewQueuePage = lazy(() =>
   import('./pages/review/ReviewQueuePage').then((m) => ({ default: m.ReviewQueuePage })),
 );
+const FailedCandidatesPage = lazy(() =>
+  import('./pages/candidates/FailedCandidatesPage').then((m) => ({ default: m.FailedCandidatesPage })),
+);
 const TasksPage = lazy(() => import('./pages/tasks/TasksPage').then((m) => ({ default: m.TasksPage })));
 const InsightsPage = lazy(() => import('./pages/insights/InsightsPage').then((m) => ({ default: m.InsightsPage })));
 const MonitoringPage = lazy(() =>
@@ -103,6 +106,7 @@ const appChildren = [
   { path: 'candidates/internal/:id', element: lazyPage(<InternalCandidateDetailPage />) },
   { path: 'candidates/external', element: lazyPage(<ExternalCandidatesListPage />) },
   { path: 'candidates/external/:id', element: lazyPage(<ExternalCandidateDetailPage />) },
+  { path: 'candidates/failed', element: lazyPage(<FailedCandidatesPage />) },
   { path: 'inbox', element: lazyPage(<ProposalInboxPage />) },
   { path: 'matches', element: lazyPage(<MatchesPipelinePage />) },
   { path: 'matches/:id', element: lazyPage(<MatchDetailPage />) },

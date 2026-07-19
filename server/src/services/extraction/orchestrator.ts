@@ -85,6 +85,40 @@ export interface ExtractionOutcome {
   reviewReason?: string;
   /** Existing candidate this profile may duplicate (name+age hit). */
   suspectedCandidateId?: string;
+  /** Terminal failure — the reconciler must NOT retry it (a deterministic
+   *  error like a schema-validation violation will fail identically forever).
+   *  finalize() stamps retryCount to the cap so it lands straight in the
+   *  manual-entry queue instead of looping on the AI. */
+  permanent?: boolean;
+}
+
+/** Max automatic extraction attempts before a FAILED message is left for
+ *  manual handling. Single source of truth — the reconciler imports this so
+ *  the retry cap and the "exhausted → manual queue" boundary never drift. */
+export const MAX_EXTRACTION_RETRIES = 3;
+
+/** A Mongoose schema-validation failure (e.g. a field exceeding maxlength).
+ *  Deterministic: retrying re-runs the SAME extraction and fails identically,
+ *  so these must go terminal immediately rather than burn AI calls looping. */
+function isValidationError(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { name?: string }).name === 'ValidationError';
+}
+
+/**
+ * The retry counter a finalize should persist:
+ *   - non-FAILED outcome        → unchanged (a success/skip never counts).
+ *   - permanent FAILED          → jump to the cap (reconciler stops retrying;
+ *                                 lands in the manual-entry queue at once).
+ *   - transient FAILED          → +1 (retried until the cap, then manual).
+ * Exported (pure) so the retry/exhaustion contract is unit-tested directly.
+ */
+export function nextRetryCount(
+  status: MessageExtractionStatus,
+  priorRetries: number,
+  permanent?: boolean,
+): number {
+  if (status !== MessageExtractionStatus.FAILED) return priorRetries;
+  return permanent ? MAX_EXTRACTION_RETRIES : priorRetries + 1;
 }
 
 /**
@@ -362,7 +396,29 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
         matchResult: 'exact',
       });
     }
-    throw err;
+    // A non-duplicate create failure (most often a schema-validation error —
+    // e.g. the AI bled free text into a length-capped field). Previously this
+    // re-threw and ESCAPED finalize(), so the message stayed 'pending', the
+    // reconciler re-enqueued it every 5 min, and it looped on the AI forever.
+    // Instead: persist a FAILED outcome carrying the extracted fields, and for
+    // deterministic validation errors mark it PERMANENT so it goes straight to
+    // the manual-entry queue (no wasted retries) for the operator to fix by hand.
+    const permanent = isValidationError(err);
+    flow.warn(
+      { messageId, error: (err as Error).message, permanent },
+      permanent
+        ? 'flow_stop: failed (permanent — invalid field, needs manual entry)'
+        : 'flow_stop: failed (create error — will retry via reconciler)',
+    );
+    return finalize(message, {
+      status: MessageExtractionStatus.FAILED,
+      method,
+      confidence: combinedConfidence,
+      matchedFields: Object.keys(profile),
+      failureReason: (err as Error).message,
+      extractedProfile: profile,
+      permanent,
+    });
   }
   flow.info({ messageId, candidateId: String(created._id), confidence: combinedConfidence }, 'flow_stop: created_new (profile created)');
   return finalize(message, {
@@ -615,8 +671,7 @@ async function finalize(
   // one malformed body). A non-failure outcome preserves the count but
   // does not increment it.
   const priorRetries = message.extraction?.retryCount ?? 0;
-  const retryCount =
-    outcome.status === MessageExtractionStatus.FAILED ? priorRetries + 1 : priorRetries;
+  const retryCount = nextRetryCount(outcome.status, priorRetries, outcome.permanent);
 
   message.extraction = {
     status: outcome.status,
@@ -626,6 +681,9 @@ async function finalize(
     candidateId: outcome.candidateId ? new Types.ObjectId(outcome.candidateId) : undefined,
     confidence: outcome.confidence,
     failureReason: outcome.failureReason,
+    // Persist the permanent marker so the failed queue can route this to
+    // manual entry (never requeue). Only meaningful on a FAILED outcome.
+    permanentFailure: outcome.status === MessageExtractionStatus.FAILED ? !!outcome.permanent : undefined,
     matchedFields: outcome.matchedFields,
     retryCount,
     extractedProfile: outcome.extractedProfile as Record<string, unknown> | undefined,

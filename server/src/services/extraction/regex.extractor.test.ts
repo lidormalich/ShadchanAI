@@ -647,3 +647,59 @@ describe('regex.extractor — real samples', () => {
     expect(r.profile.contactPhones).toContain('0527976000');
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// Separate "שם" (first) + "שם משפחה" (last) lines. The n.m.a card
+// family writes the given name and surname on TWO labeled lines. This
+// used to fuse people: "שם משפחה" prefix-matched the 'שם' label and its
+// value overwrote the given name, so every card of the same surname
+// collapsed to "<surname> <surname>" (the "בוחניק בוחניק" incident).
+// ═══════════════════════════════════════════════════════════
+describe('regex.extractor — split first-name / last-name lines', () => {
+  const RINA = `כרטיס שידוך n.m.a ❤
+
+😊שם : רינה
+
+🌹שם משפחה : בוחניק
+
+🎂גיל: 27
+
+🌱גובה: 157
+
+🖥עיסוק : מורה למוסיקה חינוך מיוחד
+
+🏡 אזור מגורים: ירושלים`;
+
+  it('keeps the given name and surname separate (does NOT clobber שם with שם משפחה)', () => {
+    const r = extractProfileFromText(RINA);
+    expect(r.profile.firstName).toBe('רינה');
+    expect(r.profile.lastName).toBe('בוחניק');
+    expect(r.profile.age).toBe(27);
+    expect(r.profile.city).toBe('ירושלים');
+  });
+
+  it('a different first name under the same surname stays distinct', () => {
+    const r = extractProfileFromText('😊שם: יעל\n🌹שם משפחה: בוחניק\n🎂גיל: 35');
+    expect(r.profile.firstName).toBe('יעל');
+    expect(r.profile.lastName).toBe('בוחניק');
+    expect(r.profile.age).toBe(35);
+  });
+
+  it('surname-only line yields a lastName with no first name', () => {
+    const r = extractProfileFromText('שם משפחה: כהן\nגיל: 30');
+    expect(r.profile.firstName).toBeUndefined();
+    expect(r.profile.lastName).toBe('כהן');
+  });
+
+  it('a dedicated שם משפחה line overrides a surname inferred from a full-name line', () => {
+    const r = extractProfileFromText('שם: רינה כהן\nשם משפחה: בוחניק');
+    expect(r.profile.firstName).toBe('רינה');
+    expect(r.profile.lastName).toBe('בוחניק');
+  });
+
+  it('multi-token surname stays whole', () => {
+    const r = extractProfileFromText('שם: דוד\nשם משפחה: בן דוד');
+    expect(r.profile.firstName).toBe('דוד');
+    expect(r.profile.lastName).toBe('בן דוד');
+  });
+});

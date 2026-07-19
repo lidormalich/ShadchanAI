@@ -22,6 +22,7 @@ import { Gender, PersonalStatus, SectorGroup } from '@shadchanai/shared';
 
 export type FieldKey =
   | 'name'
+  | 'lastName'
   | 'age'
   | 'height'
   | 'city'
@@ -52,6 +53,12 @@ export type FieldKey =
 
 export const LABEL_SYNONYMS: Record<FieldKey, string[]> = {
   name: ['שם', 'שמי', 'שם מלא', 'שם פרטי', 'שם המועמד', 'שם המועמדת'],
+  // Surname gets its OWN field so a "שם משפחה: בוחניק" line no longer
+  // prefix-matches the 'שם' (first-name) label and OVERWRITES the given name
+  // with the surname (which fused two people who share a surname + the
+  // shadchan's phone into one card — the "בוחניק בוחניק" incident). Matched
+  // exactly (pass 1), so it always beats the 'שם' prefix.
+  lastName: ['שם משפחה', 'שם המשפחה', 'שם משפ'],
   // 'גיל מדוייק' resolves via prefix; birth-year labels (ילידת/יליד/נולד)
   // are converted to age by parseAge below.
   age: ['גיל', 'הגיל', 'גילי', 'גיל מדוייק', 'ילידת', 'יליד', 'נולד', 'נולדה', 'שנת לידה', 'תאריך לידה', 'שנתון'],
@@ -410,6 +417,19 @@ export function parseName(raw: string): { firstName?: string; lastName?: string 
   if (parts.length === 0) return {};
   if (parts.length === 1) return { firstName: parts[0] };
   return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+/** Clean a DEDICATED "שם משפחה" label value. Unlike parseName it keeps a
+ *  multi-token surname ("בן דוד", "בר לב") whole instead of splitting the
+ *  first token off as a given name. */
+export function parseLastName(raw: string): string | undefined {
+  const cleaned = raw
+    .replace(EMOJI_RE, ' ')
+    .replace(/[*_~`״"׳']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const parts = cleaned.split(' ').filter((p) => /\p{L}/u.test(p));
+  return parts.length ? parts.join(' ') : undefined;
 }
 
 // ── Gender inference ─────────────────────────────────────

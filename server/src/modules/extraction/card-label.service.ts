@@ -77,7 +77,7 @@ const LabelSuggestionSchema = z.object({
 
 // Field keys with a short Hebrew gloss, for the AI mapping prompt.
 const FIELD_GLOSS: Record<FieldKey, string> = {
-  name: 'שם פרטי/מלא', age: 'גיל', height: 'גובה', city: 'עיר/אזור מגורים',
+  name: 'שם פרטי/מלא', lastName: 'שם משפחה', age: 'גיל', height: 'גובה', city: 'עיר/אזור מגורים',
   edah: 'עדה/מוצא', sector: 'רמה דתית/מגזר/השקפה', status: 'מצב משפחתי',
   occupation: 'עיסוק/מקצוע/לימודים', about: 'תיאור אישי/אופי/תחביבים/מראה',
   family: 'רקע משפחתי', service: 'שירות צבאי/לאומי', yeshiva: 'ישיבה/מדרשה/סמינר/השכלה',

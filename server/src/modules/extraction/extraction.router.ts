@@ -15,6 +15,8 @@ extractionRouter.post('/messages/:messageId/run', ctrl.runHandler);
 extractionRouter.post('/messages/:messageId/requeue', ctrl.requeueHandler);
 extractionRouter.post('/messages/:messageId/approve', ctrl.approveHandler);
 extractionRouter.post('/messages/:messageId/reject', ctrl.rejectHandler);
+extractionRouter.post('/messages/:messageId/link-manual', ctrl.linkManualHandler);
+extractionRouter.post('/messages/:messageId/delete', ctrl.deleteMessageHandler);
 extractionRouter.post('/ignore-group', ctrl.ignoreGroupHandler);
 
 // Card-label dictionary (Feature C — teach the parser new formats)

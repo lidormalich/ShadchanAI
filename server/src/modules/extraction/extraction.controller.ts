@@ -132,6 +132,32 @@ export async function rejectHandler(req: Request, res: Response, next: NextFunct
   } catch (e) { next(e); }
 }
 
+// ── Link a manually-created candidate to a permanently-failed card ──
+// The operator built the candidate through the normal external-candidate
+// flow; this attaches the original card as its source and clears the message
+// out of the failed queue.
+
+export async function linkManualHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const messageId = String(req.params['messageId'] ?? '');
+    const body = req.body as { candidateId?: string } | undefined;
+    ok(res, await svc.resolveFailedManually(messageId, String(body?.candidateId ?? '')));
+  } catch (e) { next(e); }
+}
+
+// ── Delete a queued message (junk removal) ───────────────
+
+export async function deleteMessageHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canManageChannels(user);
+    const messageId = String(req.params['messageId'] ?? '');
+    ok(res, await svc.deleteQueuedMessage(messageId));
+  } catch (e) { next(e); }
+}
+
 // ── Ignore a source group (block future cards; optionally purge queue) ──
 
 export async function ignoreGroupHandler(req: Request, res: Response, next: NextFunction): Promise<void> {

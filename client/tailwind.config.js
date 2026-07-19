@@ -40,6 +40,15 @@ export default {
         card: '0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.02)',
         rise: '0 8px 24px rgba(0,0,0,0.08)',
       },
+      keyframes: {
+        'dropdown-in': {
+          from: { opacity: '0', transform: 'translateY(-6px) scale(0.98)' },
+          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+      },
+      animation: {
+        'dropdown-in': 'dropdown-in 150ms cubic-bezier(0.16, 1, 0.3, 1)',
+      },
     },
   },
   plugins: [],

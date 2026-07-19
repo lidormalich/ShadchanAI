@@ -41,6 +41,8 @@ import {
   Textarea,
 } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/Dialog';
+import { CandidatePicker } from '@/components/ui/CandidatePicker';
+import { externalToOption } from '@/features/candidates/candidateOptions';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
 import { label } from '@/utils/labels';
@@ -1352,21 +1354,20 @@ function PairCheckDialog({
   internalCandidateId: string;
   onClose: () => void;
 }) {
+  // The picker debounces typing itself and reports the settled query.
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selected, setSelected] = useState<ExternalCandidate | null>(null);
 
-  // Debounce the term so we fire one request after typing settles, not per keystroke.
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 200);
-    return () => clearTimeout(t);
-  }, [search]);
-
   const externals = useQuery({
-    queryKey: ['external-search', debouncedSearch],
-    queryFn: () => externalCandidatesApi.list({ search: debouncedSearch, limit: 25 }),
-    enabled: debouncedSearch.trim().length >= 2,
+    queryKey: ['external-search', search],
+    queryFn: () => externalCandidatesApi.list({
+      search: search.length >= 2 ? search : undefined,
+      limit: 50,
+      sort: 'firstName',
+      order: 'asc',
+    }),
   });
+  const items = externals.data?.data ?? [];
 
   const result = useQuery({
     queryKey: ['pair-check', internalCandidateId, selected?._id],
@@ -1386,35 +1387,16 @@ function PairCheckDialog({
       secondaryAction={{ label: 'סגור', onClick: onClose }}
     >
       <div className="space-y-3 max-h-[70vh] overflow-y-auto -mx-1 px-1">
-        <Input
-          placeholder="חיפוש לפי שם, טלפון או מקור (לפחות 2 תווים)..."
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setSelected(null); }}
+        <CandidatePicker
+          options={items.map(externalToOption)}
+          value={selected?._id ?? ''}
+          selectedOption={selected ? externalToOption(selected) : undefined}
+          onChange={(id) => setSelected(items.find((c) => c._id === id) ?? null)}
+          onQueryChange={setSearch}
+          loading={externals.isFetching}
+          placeholder="בחר מועמד חיצוני לבדיקה"
+          searchPlaceholder="חיפוש לפי שם, טלפון או מקור…"
         />
-        {externals.isLoading && search.length >= 2 && <LoadingSkeleton rows={3} />}
-        {externals.data && externals.data.data.length > 0 && !selected && (
-          <ul className="border border-border rounded-md max-h-48 overflow-y-auto divide-y divide-border bg-white">
-            {externals.data.data.map((ext) => (
-              <li key={ext._id}>
-                <button
-                  type="button"
-                  className="w-full text-start px-3 py-2 hover:bg-bg-hover text-sm"
-                  onClick={() => setSelected(ext)}
-                >
-                  <div className="font-medium">{ext.firstName ?? ''} {ext.lastName ?? ''}</div>
-                  <div className="text-xs text-ink-muted">
-                    {ext.age && <span>גיל {ext.age} · </span>}
-                    {ext.city && <span>{ext.city} · </span>}
-                    {ext.sectorGroup && <span>{label('sectorGroup', ext.sectorGroup)}</span>}
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {externals.data && externals.data.data.length === 0 && search.length >= 2 && (
-          <EmptyState title="לא נמצאו מועמדים תואמים לחיפוש" />
-        )}
         {selected && (
           <Card>
             <CardHeader>

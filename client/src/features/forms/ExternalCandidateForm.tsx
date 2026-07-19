@@ -39,11 +39,14 @@ type Values = Partial<ExternalCandidate> & {
 };
 
 export function ExternalCandidateForm({
-  open, onClose, initial,
+  open, onClose, initial, onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   initial?: ExternalCandidate;
+  /** Fired after a NEW candidate is created (not on edit). Lets a caller run a
+   *  follow-up — e.g. the failed-candidates page links the source card to it. */
+  onCreated?: (candidate: ExternalCandidate) => void;
 }) {
   const qc = useQueryClient();
   const [v, setV] = useState<Values>({});
@@ -62,10 +65,11 @@ export function ExternalCandidateForm({
     mutationFn: async () => initial?._id
       ? externalCandidatesApi.update(initial._id, v)
       : externalCandidatesApi.create(v),
-    onSuccess: () => {
+    onSuccess: (res) => {
       toast.success(initial ? 'הפרופיל עודכן' : 'הפרופיל נוצר');
       qc.invalidateQueries({ queryKey: ['externals'] });
       if (initial?._id) qc.invalidateQueries({ queryKey: ['external', initial._id] });
+      else if (res?.data) onCreated?.(res.data);
       onClose();
     },
     onError: (err) => toast.error('השמירה נכשלה', describeApiError(err)),

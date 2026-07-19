@@ -134,7 +134,15 @@ export interface FailedQueueItem {
   createdAt: string;
   /** How many times the extraction fell before giving up. */
   retryCount: number;
+  /** True once the retry cap is hit — automatic retries are over. */
+  exhausted: boolean;
+  /** True when the failure is deterministic (e.g. a bad/over-long field) and
+   *  will fail identically on every retry. These need MANUAL entry and are
+   *  never requeued — they drive the "failed candidates" page. */
+  permanent: boolean;
   failureReason?: string;
+  /** Fields the pipeline managed to extract — pre-fills the manual-entry form. */
+  extractedFields: ExtractedProfileInput;
   attemptedAt?: string;
   completedAt?: string;
 }
@@ -178,6 +186,16 @@ export const extractionApi = {
     ),
   reject: (messageId: string) =>
     api.post<{ messageId: string; status: string }>(`/extraction/messages/${messageId}/reject`),
+  // Attach a manually-created external candidate to a permanently-failed card
+  // (keeps the card as the candidate's source and clears it from the queue).
+  linkManual: (messageId: string, candidateId: string) =>
+    api.post<{ messageId: string; candidateId: string }>(
+      `/extraction/messages/${messageId}/link-manual`, { candidateId },
+    ),
+  // Hard-delete a queued message (junk / spam broadcasts) — removes it from
+  // every queue. Refused if it already produced a candidate.
+  deleteMessage: (messageId: string) =>
+    api.post<{ deleted: boolean }>(`/extraction/messages/${messageId}/delete`),
   // Block a source WhatsApp group: sets its chat role to "ignore" so future
   // cards from it never reach the queue. purgeQueued also clears the group's
   // cards already waiting in review/duplicates.

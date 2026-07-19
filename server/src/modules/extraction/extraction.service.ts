@@ -23,7 +23,7 @@ import {
   SectorGroup,
 } from '@shadchanai/shared';
 import { Message, ExternalCandidate, ChatMapping, type IMessage } from '../../models/index.js';
-import { processMessageExtraction } from '../../services/extraction/orchestrator.js';
+import { processMessageExtraction, MAX_EXTRACTION_RETRIES } from '../../services/extraction/orchestrator.js';
 import { enqueueExtraction } from '../../services/extraction/queue.js';
 import { extractProfileFromText, type ExtractedProfile } from '../../services/extraction/regex.extractor.js';
 import { ConflictError, NotFoundError, ValidationError, isDuplicateKeyError } from '../../utils/errors.js';
@@ -208,6 +208,23 @@ const FAILED_SCOPE = {
   'extraction.status': MessageExtractionStatus.FAILED,
 } as const;
 
+// A failure reason that describes a DETERMINISTIC problem (bad/over-long
+// field, wrong enum, cast error) — it will fail identically on every retry,
+// so the card needs manual entry. Used as a fallback classifier for records
+// that predate the persisted `permanentFailure` flag (e.g. a message that
+// already failed before this flag existed) so they still route correctly.
+export function isPermanentFailureReason(reason?: string): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return (
+    r.includes('validation failed') ||
+    r.includes('longer than the maximum allowed length') ||
+    r.includes('is not a valid enum value') ||
+    r.includes('cast to ') ||
+    r.includes('is required')
+  );
+}
+
 export async function listFailedQueue(limit: number): Promise<unknown[]> {
   const capped = Math.min(limit || 50, 200);
   const messages = await Message.find(FAILED_SCOPE)
@@ -219,6 +236,13 @@ export async function listFailedQueue(limit: number): Promise<unknown[]> {
 
   return messages.map((m) => {
     const effectiveText = m.body?.trim() || m.mediaCaption?.trim() || '';
+    const retryCount = m.extraction?.retryCount ?? 0;
+    // Pre-fill the manual-entry form: prefer the pipeline's last merged
+    // profile (the enrichment we already paid for), else a fresh regex read
+    // of the body. Lets the operator fix the offending field and create the
+    // candidate by hand instead of re-typing the whole card.
+    const persisted = m.extraction?.extractedProfile as ExtractedProfile | undefined;
+    const extractedFields = persisted ?? extractProfileFromText(effectiveText).profile ?? {};
     return {
       messageId: String(m._id),
       conversationId: String(m.conversationId),
@@ -227,12 +251,106 @@ export async function listFailedQueue(limit: number): Promise<unknown[]> {
       body: effectiveText || m.body,
       mediaUrl: m.mediaUrl,
       createdAt: m.createdAt,
-      retryCount: m.extraction?.retryCount ?? 0,
+      retryCount,
+      // Exhausted = hit the retry cap → automatic retries are over.
+      exhausted: retryCount >= MAX_EXTRACTION_RETRIES,
+      // Permanent = a deterministic error (schema-validation etc.) that will
+      // fail identically forever. These NEED manual entry and must never be
+      // requeued — they drive the dedicated "failed candidates" page. A
+      // transient failure (rate-limit / timeout) stays in the requeue tab.
+      // Falls back to classifying by the reason text so records that failed
+      // BEFORE the persisted flag existed still route to manual entry.
+      permanent: !!m.extraction?.permanentFailure || isPermanentFailureReason(m.extraction?.failureReason),
       failureReason: m.extraction?.failureReason,
+      extractedFields,
       attemptedAt: m.extraction?.attemptedAt,
       completedAt: m.extraction?.completedAt,
     };
   });
+}
+
+// ── Manual resolution of a permanently-failed card ───────
+// The operator created a candidate by hand through the NORMAL external-
+// candidate flow (nothing imported from this card). We then attach the
+// original message to that candidate as its source — so the card is
+// preserved and traceable — and move the message out of FAILED so it
+// leaves the manual-entry queue.
+
+export async function resolveFailedManually(
+  messageId: string,
+  candidateId: string,
+): Promise<{ messageId: string; candidateId: string }> {
+  if (!messageId || !Types.ObjectId.isValid(messageId)) {
+    throw new ValidationError('Invalid messageId');
+  }
+  if (!candidateId || !Types.ObjectId.isValid(candidateId)) {
+    throw new ValidationError('Invalid candidateId');
+  }
+
+  const message = await Message.findById(messageId).exec();
+  if (!message) throw new NotFoundError('Message', messageId);
+  if (message.extraction?.status !== MessageExtractionStatus.FAILED) {
+    throw new ValidationError(
+      `Message is not in a failed state (current: ${message.extraction?.status ?? 'none'})`,
+    );
+  }
+
+  const candidate = await ExternalCandidate.findById(candidateId).exec();
+  if (!candidate) throw new NotFoundError('ExternalCandidate', candidateId);
+
+  // Attach the source card (deduped) so the manually-created candidate keeps
+  // the original WhatsApp message as provenance.
+  const ids = new Set((candidate.sourceMessageIds ?? []).map(String));
+  if (!ids.has(String(message._id))) {
+    candidate.sourceMessageIds = [...(candidate.sourceMessageIds ?? []), message._id as Types.ObjectId];
+    candidate.lastSourceUpdateAt = message.createdAt;
+    if (!candidate.sourceChannelId) candidate.sourceChannelId = message.channelId;
+    if (!candidate.sourceChatJid && message.chatJid) candidate.sourceChatJid = message.chatJid;
+    await candidate.save();
+  }
+
+  // Move the message out of FAILED so it leaves the manual-entry queue,
+  // recording that it was resolved by a manual candidate creation.
+  await updateMessageExtraction(message, {
+    status: MessageExtractionStatus.MATCHED_EXISTING,
+    method: ExtractionMethod.MANUAL,
+    candidateId: candidate._id as Types.ObjectId,
+  });
+
+  log.info({ messageId, candidateId }, 'failed_card_resolved_manually');
+  return { messageId: String(message._id), candidateId: String(candidate._id) };
+}
+
+// ── Delete a queued message (junk removal) ───────────────
+// Hard-removes a message from the DB so it disappears from every queue —
+// for spam / broadcasts / non-profiles the operator never wants to see
+// again. Refused when the message already produced a candidate (that would
+// orphan the candidate's source); those must be handled via the candidate
+// instead. Defensively detaches from any candidate that referenced it.
+
+export async function deleteQueuedMessage(messageId: string): Promise<{ deleted: boolean }> {
+  if (!messageId || !Types.ObjectId.isValid(messageId)) {
+    throw new ValidationError('Invalid messageId');
+  }
+  const message = await Message.findById(messageId).select('_id extraction.status').lean().exec();
+  if (!message) throw new NotFoundError('Message', messageId);
+
+  const status = message.extraction?.status;
+  if (status === MessageExtractionStatus.CREATED_NEW || status === MessageExtractionStatus.MATCHED_EXISTING) {
+    throw new ValidationError(
+      'This message already produced a candidate — delete or edit the candidate instead of the message.',
+    );
+  }
+
+  // Defensive: never leave a dangling source pointer behind.
+  await ExternalCandidate.updateMany(
+    { sourceMessageIds: message._id },
+    { $pull: { sourceMessageIds: message._id } },
+  ).exec();
+  await Message.deleteOne({ _id: message._id }).exec();
+
+  log.info({ messageId }, 'queued_message_deleted');
+  return { deleted: true };
 }
 
 /**
@@ -352,10 +470,15 @@ export async function approveExtraction(
   // Atomic claim: only the FIRST approve request flips reviewClaimedAt.
   // A double-click or a second operator gets a clean conflict error
   // instead of creating a twin candidate.
+  //
+  // Accept BOTH needs_review (the normal human-gate path) and failed (the
+  // manual-entry queue): a message whose automatic extraction gave up after
+  // the retry cap is created by hand from the same approve path, with the
+  // operator's edited fields.
   const message = await Message.findOneAndUpdate(
     {
       _id: messageId,
-      'extraction.status': MessageExtractionStatus.NEEDS_REVIEW,
+      'extraction.status': { $in: [MessageExtractionStatus.NEEDS_REVIEW, MessageExtractionStatus.FAILED] },
       'extraction.reviewClaimedAt': { $exists: false },
     },
     { $set: { 'extraction.reviewClaimedAt': new Date() } },
@@ -444,7 +567,13 @@ async function approveClaimed(
   const base =
     (message.extraction?.extractedProfile as ExtractedProfile | undefined)
     ?? extractProfileFromText(effectiveText).profile;
-  const profile = bodyProfile ? mergeOverride(base, sanitizeProfileOverride(bodyProfile)) : base;
+  // Clamp the final profile to schema caps regardless of source — covers the
+  // manual-entry case where the operator left an over-long AI-bled field
+  // (e.g. occupation) untouched: without this the create would fail with the
+  // very validation error that sent the card to the failed queue.
+  const profile = clampProfileFields(
+    bodyProfile ? mergeOverride(base, sanitizeProfileOverride(bodyProfile)) : base,
+  );
 
   if (!profile.firstName && !profile.contactPhones?.length) {
     throw new ValidationError('No name or phone extracted — cannot create candidate. Reject instead.');
@@ -651,11 +780,40 @@ const GENDER_VALUES = Object.values(Gender) as string[];
 const SECTOR_VALUES = Object.values(SectorGroup) as string[];
 const STATUS_VALUES = Object.values(PersonalStatus) as string[];
 
+// Candidate-schema string caps for the fields a profile can fill. Manual
+// approval clamps to these so an operator's create never hard-fails on a
+// maxlength violation — the same class of error that sends a card to the
+// failed queue in the first place. Occupation is the tight one (200); the
+// free-text fields are generous (2000).
+const FIELD_MAX_LEN: Partial<Record<keyof ExtractedProfile, number>> = {
+  occupation: 200,
+  family: 2000,
+  about: 2000,
+  whatSeeking: 2000,
+  religiousLevelText: 2000,
+};
+
+/** Trim every length-capped string field of a profile to its schema max, so
+ *  a create/save can't fail on a maxlength violation. */
+function clampProfileFields(profile: ExtractedProfile): ExtractedProfile {
+  const out = { ...profile } as Record<string, unknown>;
+  for (const [field, max] of Object.entries(FIELD_MAX_LEN)) {
+    const v = out[field];
+    if (typeof v === 'string' && v.length > max) out[field] = v.slice(0, max);
+  }
+  return out as ExtractedProfile;
+}
+
 function sanitizeProfileOverride(raw: Record<string, unknown>): ExtractedProfile {
-  const str = (v: unknown): string | undefined => {
+  const clamp = (v: string, field: keyof ExtractedProfile): string => {
+    const max = FIELD_MAX_LEN[field];
+    return max && v.length > max ? v.slice(0, max) : v;
+  };
+  const str = (v: unknown, field?: keyof ExtractedProfile): string | undefined => {
     if (typeof v !== 'string') return undefined;
     const t = v.trim();
-    return t.length > 0 ? t : undefined;
+    if (t.length === 0) return undefined;
+    return field ? clamp(t, field) : t;
   };
   const num = (v: unknown): number | undefined => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -679,14 +837,14 @@ function sanitizeProfileOverride(raw: Record<string, unknown>): ExtractedProfile
     city: str(raw['city']),
     edah: str(raw['edah']),
     sectorGroup: enumVal<NonNullable<ExtractedProfile['sectorGroup']>>(raw['sectorGroup'], SECTOR_VALUES),
-    religiousLevelText: str(raw['religiousLevelText']),
+    religiousLevelText: str(raw['religiousLevelText'], 'religiousLevelText'),
     personalStatus: enumVal<NonNullable<ExtractedProfile['personalStatus']>>(raw['personalStatus'], STATUS_VALUES),
-    occupation: str(raw['occupation']),
-    family: str(raw['family']),
+    occupation: str(raw['occupation'], 'occupation'),
+    family: str(raw['family'], 'family'),
     service: str(raw['service']),
     yeshiva: str(raw['yeshiva']),
-    about: str(raw['about']),
-    whatSeeking: str(raw['whatSeeking']),
+    about: str(raw['about'], 'about'),
+    whatSeeking: str(raw['whatSeeking'], 'whatSeeking'),
     seekingAgeMin: num(raw['seekingAgeMin']),
     seekingAgeMax: num(raw['seekingAgeMax']),
     contactPhones: phones && phones.length > 0 ? phones : undefined,
