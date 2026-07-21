@@ -329,6 +329,24 @@ const AGE_CONFIDENCE: Record<string, string> = {
   unknown: 'לא ידוע',
 };
 
+// Hard-blocker codes → short operator-facing reason. Keep in sync with
+// shared/types/enums.ts BlockerCode and the messages in matching.rules.ts.
+const BLOCKER_REASON: Record<string, string> = {
+  same_gender: 'שני הצדדים מאותו מין',
+  internal_not_active: 'המועמד הפנימי אינו פעיל',
+  internal_already_dating: 'המועמד הפנימי כבר בקשר היכרות',
+  external_not_active: 'המועמד אינו פעיל',
+  external_unavailable: 'המועמד מסומן כלא זמין',
+  external_dating: 'המועמד כבר בהיכרות',
+  active_pair_duplicate: 'כבר קיימת הצעה פעילה לזוג הזה',
+  recent_decline_cooldown: 'הזוג נדחה לאחרונה (תקופת צינון)',
+  explicit_hard_constraint: 'הופר אילוץ קשיח שהוגדר',
+  personal_status_divorced_not_open: 'לא פתוח למועמדים בסטטוס גרוש/פרוד',
+  personal_status_widowed_explicit_block: 'לא פתוח למועמדים בסטטוס אלמן/ה',
+  children_constraint: 'לא פתוח למועמדים עם ילדים',
+  external_not_open_to_status: 'הצד החיצוני אינו פתוח לסטטוס של המועמד הפנימי',
+};
+
 const LOOKUPS: Record<string, Record<string, string>> = {
   matchType: MATCH_TYPE,
   riskLevel: RISK_LEVEL,
@@ -370,6 +388,11 @@ const LOOKUPS: Record<string, Record<string, string>> = {
 export function label(kind: keyof typeof LOOKUPS, value: string | undefined | null): string {
   if (!value) return '—';
   return LOOKUPS[kind]?.[value] ?? value;
+}
+
+/** Hard-blocker code → short Hebrew reason (falls back to the raw code). */
+export function blockerReason(code: string): string {
+  return BLOCKER_REASON[code] ?? code;
 }
 
 // ═══════════════════════════════════════════════════════════

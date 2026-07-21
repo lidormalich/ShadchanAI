@@ -63,6 +63,11 @@ export interface ScanResultItem {
   ageOutOfRange?: boolean;
   // Operator reason recorded when held (review_later) or rejected (not_suitable).
   reviewReason?: string;
+  // Set only on the 'closed' tab: the pair already became a suggestion that
+  // reached a terminal status. `closeStatus` is that status; `closeReason` is
+  // why it ended. matchSuggestionId links into the closed suggestion.
+  closeStatus?: 'closed' | 'expired';
+  closeReason?: string;
 }
 
 export interface MatchExplanationDTO {

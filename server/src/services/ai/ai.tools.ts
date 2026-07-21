@@ -585,10 +585,10 @@ function toMatchableInternal(doc: Record<string, unknown>): MatchableInternal {
     softPreferences: (doc['softPreferences'] as MatchableInternal['softPreferences']) ?? [],
     agePreferences: doc['agePreferences'] as MatchableInternal['agePreferences'],
     locationPreferences: doc['locationPreferences'] as MatchableInternal['locationPreferences'],
+    // openToDivorced omitted (tri-state): missing openness = unknown, not "not open".
     openness: (doc['openness'] as MatchableInternal['openness']) ?? {
       openToOtherSectors: false,
       openToConverts: false,
-      openToDivorced: false,
       openToWithChildren: false,
       openToAgeDifference: false,
       openToLongDistance: false,

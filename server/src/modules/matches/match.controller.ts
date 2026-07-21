@@ -145,8 +145,8 @@ export async function scanResultsHandler(req: Request, res: Response, next: Next
       bucket: q['bucket'] as PairScoreBucket | undefined,
       minScore: q['minScore'] !== undefined ? Number(q['minScore']) : undefined,
       limit: q['limit'] !== undefined ? Number(q['limit']) : undefined,
-      view: ['all', 'review_later', 'rejected'].includes(q['view'] as string)
-        ? (q['view'] as 'all' | 'review_later' | 'rejected')
+      view: ['all', 'review_later', 'rejected', 'closed'].includes(q['view'] as string)
+        ? (q['view'] as 'all' | 'review_later' | 'rejected' | 'closed')
         : 'inbox',
     });
     ok(res, items);

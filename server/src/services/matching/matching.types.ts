@@ -196,7 +196,13 @@ export interface LocationPreference {
 export interface OpennessFlags {
   openToOtherSectors: boolean;
   openToConverts: boolean;
-  openToDivorced: boolean;
+  /**
+   * Tri-state: `true` = explicitly open, `false` = explicitly NOT open
+   * (hard-blocks divorced/separated), `undefined` = unknown (no block, soft
+   * penalty for singles). Intentionally NOT defaulted in the DB so the
+   * operator's "לא" is distinguishable from "never set".
+   */
+  openToDivorced?: boolean;
   openToWithChildren: boolean;
   openToAgeDifference: boolean;
   openToLongDistance: boolean;
@@ -251,6 +257,8 @@ export interface Penalties {
   stalePenalty: number;
   timingPenalty: number;
   loadPenalty: number;
+  /** Single ↔ second-chapter (divorced/widowed/separated) status mismatch. */
+  statusPenalty: number;
   totalPenalty: number;
 }
 

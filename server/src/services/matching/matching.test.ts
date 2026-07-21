@@ -43,7 +43,8 @@ function makeInternal(overrides: Partial<MatchableInternal> = {}): MatchableInte
     openness: {
       openToOtherSectors: false,
       openToConverts: false,
-      openToDivorced: false,
+      // openToDivorced left unset (tri-state "unknown") — the neutral default.
+      // Tests that exercise the block/penalty set it to true/false explicitly.
       openToWithChildren: false,
       openToAgeDifference: false,
       openToLongDistance: false,
@@ -164,7 +165,18 @@ describe('Hard Rules', () => {
     expect(result.eligible).toBe(true);
   });
 
-  it('blocks divorced external when internal not open', () => {
+  it('does NOT block a divorced external when openness is unknown (undefined)', () => {
+    // Absence of data must never hard-block — it only sinks the score via a
+    // soft penalty. A single internal with an unset flag + divorced external
+    // stays eligible.
+    const internal = makeInternal(); // openToDivorced unset (unknown)
+    const external = makeExternal({ personalStatus: 'divorced' });
+    const result = evaluateHardRules(internal, external, makeContext());
+    expect(result.eligible).toBe(true);
+  });
+
+  it('blocks a divorced external when internal explicitly set openToDivorced=false', () => {
+    // The operator clicked "לא" → an explicit refusal hard-blocks (overridable).
     const internal = makeInternal({ openness: { ...makeInternal().openness, openToDivorced: false } });
     const external = makeExternal({ personalStatus: 'divorced' });
     const result = evaluateHardRules(internal, external, makeContext());
@@ -176,6 +188,24 @@ describe('Hard Rules', () => {
     const external = makeExternal({ personalStatus: 'divorced' });
     const result = evaluateHardRules(internal, external, makeContext());
     expect(result.eligible).toBe(true);
+  });
+
+  it('does NOT block a divorced internal from a divorcee when flag is unknown', () => {
+    // The exact false-negative this fix targets: a divorced candidate with an
+    // unset openToDivorced must still be matchable with a divorcee.
+    const internal = makeInternal({ personalStatus: 'divorced' }); // flag unset
+    const external = makeExternal({ personalStatus: 'divorced' });
+    const result = evaluateHardRules(internal, external, makeContext());
+    expect(result.eligible).toBe(true);
+  });
+
+  it('blocks a divorced external via an explicit personalStatus constraint', () => {
+    const internal = makeInternal({
+      hardConstraints: [{ field: 'personalStatus', operator: 'eq', value: 'divorced' }],
+    });
+    const external = makeExternal({ personalStatus: 'divorced' });
+    const result = evaluateHardRules(internal, external, makeContext());
+    expect(result.eligible).toBe(false);
   });
 
   it('blocks via explicit hard constraint (sector eq)', () => {
@@ -958,6 +988,74 @@ describe('Pattern-based Penalties', () => {
     }));
     expect(result.historyPenalty).toBe(0);
     expect(result.timingPenalty).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 15b. PERSONAL-STATUS PENALTY (single ↔ second-chapter)
+// ══════════════════════════════════════════════════════════
+
+describe('Personal-status penalty', () => {
+  it('single ↔ single: no status penalty', () => {
+    const p = computePenalties(
+      makeInternal({ personalStatus: 'single' }),
+      makeExternal({ personalStatus: 'single' }),
+      makeContext(),
+    );
+    expect(p.statusPenalty).toBe(0);
+  });
+
+  it('divorced ↔ divorced: no status penalty', () => {
+    const p = computePenalties(
+      makeInternal({ personalStatus: 'divorced' }),
+      makeExternal({ personalStatus: 'divorced' }),
+      makeContext(),
+    );
+    expect(p.statusPenalty).toBe(0);
+  });
+
+  it('single internal ↔ divorced external (flag unknown): penalised (sinks to bottom)', () => {
+    // Unknown flag → eligible but low-scored. (An explicit false would block
+    // instead — covered in the hard-rules suite.)
+    const p = computePenalties(
+      makeInternal({ personalStatus: 'single' }), // openToDivorced unset
+      makeExternal({ personalStatus: 'divorced' }),
+      makeContext(),
+    );
+    expect(p.statusPenalty).toBeGreaterThan(0);
+  });
+
+  it('single internal explicitly open to divorced: no penalty', () => {
+    const p = computePenalties(
+      makeInternal({ personalStatus: 'single', openness: { ...makeInternal().openness, openToDivorced: true } }),
+      makeExternal({ personalStatus: 'divorced' }),
+      makeContext(),
+    );
+    expect(p.statusPenalty).toBe(0);
+  });
+
+  it('divorced internal ↔ single external: penalised (single side prefers single)', () => {
+    const p = computePenalties(
+      makeInternal({ personalStatus: 'divorced' }),
+      makeExternal({ personalStatus: 'single' }),
+      makeContext(),
+    );
+    expect(p.statusPenalty).toBeGreaterThan(0);
+  });
+
+  it('a divorced pair scores higher than a single↔divorced pair, all else equal', () => {
+    const divorcedExternal = makeExternal({ personalStatus: 'divorced', openness: { openToDivorced: true } });
+    const singleInternal = evaluatePair(
+      makeInternal({ personalStatus: 'single' }),
+      divorcedExternal,
+      makeContext(),
+    );
+    const divorcedInternal = evaluatePair(
+      makeInternal({ personalStatus: 'divorced', openness: { ...makeInternal().openness, openToDivorced: true } }),
+      divorcedExternal,
+      makeContext(),
+    );
+    expect(divorcedInternal.matchScore).toBeGreaterThan(singleInternal.matchScore);
   });
 });
 

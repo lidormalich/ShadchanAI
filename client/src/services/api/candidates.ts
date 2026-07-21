@@ -83,6 +83,34 @@ export type CandidateInsightRebuildResult =
   | CandidateInsight
   | { rebuilt: false; reason: string };
 
+// ── External candidate learnings ("מה למדנו") ────────────
+// No AI here — a deterministic roll-up of the "why not" reasons recorded on
+// this external's closed suggestions. Empty items ⇒ nothing learned yet.
+export interface ExternalLearningItem {
+  matchSuggestionId: string;
+  partnerId: string;
+  partnerName: string;
+  status: string;
+  closedAt?: string;
+  aboutExternal?: string; // why it didn't fit for THIS candidate
+  aboutPartner?: string;  // why it didn't fit for the internal partner
+  note?: string;          // operator's general closing note
+}
+
+export interface ManualLearningItem {
+  id: string;
+  text: string;
+  createdAt: string;
+  createdBy?: string;
+}
+
+export interface ExternalLearnings {
+  externalCandidateId: string;
+  total: number;
+  items: ExternalLearningItem[];
+  manual: ManualLearningItem[];
+}
+
 // ── Internal candidates ──────────────────────────────────
 
 export const internalCandidatesApi = {
@@ -141,4 +169,10 @@ export const externalCandidatesApi = {
     api.post<PhotoShareLink>(`/candidates/external/${id}/photo/share-link`),
   setDetailsCompleted: (id: string, completed = true) =>
     api.post<ExternalCandidate>(`/candidates/external/${id}/details-completed`, { completed }),
+  learnings: (id: string) =>
+    api.get<ExternalLearnings>(`/candidates/external/${id}/learnings`),
+  addLearning: (id: string, text: string) =>
+    api.post<ExternalCandidate>(`/candidates/external/${id}/learnings`, { text }),
+  removeLearning: (id: string, learningId: string) =>
+    api.del<ExternalCandidate>(`/candidates/external/${id}/learnings/${learningId}`),
 };

@@ -106,6 +106,12 @@ export const PENALTY = {
   INTERNAL_FATIGUE_THRESHOLD: 4,
   INTERNAL_FATIGUE_PER_EXTRA: 2,
   INTERNAL_FATIGUE_MAX: 8,
+
+  /** Personal-status mismatch: exactly one side is "second chapter"
+   *  (divorced / separated / widowed) and the other is single. NOT a block —
+   *  the pair stays eligible but sinks toward the bottom so a single sees
+   *  singles first. Waived when the single side is explicitly open to divorced. */
+  STATUS_MISMATCH: 25,
 } as const;
 
 // ── Confidence scoring weights ────────────────────────────

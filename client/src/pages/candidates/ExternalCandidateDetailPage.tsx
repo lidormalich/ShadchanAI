@@ -33,6 +33,7 @@ import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { PhonesCard } from '@/features/candidates/PhonesCard';
 import { PhotoTab } from '@/features/candidates/PhotoTab';
 import { ProfileCompletionTab } from '@/features/candidates/ProfileCompletionTab';
+import { ExternalLearningsTab } from '@/features/candidates/ExternalLearningsTab';
 import { missingCompletionFields } from '@/features/candidates/completion';
 import { StaleBanner } from '@/components/domain/banners';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
@@ -194,6 +195,7 @@ export function ExternalCandidateDetailPage() {
                 badge: <Badge tone="brand">{suggestionItems.filter((s) => !TERMINAL.has(s.status)).length}</Badge>,
                 content: <SuggestionsList items={suggestionItems} loading={suggestions.isLoading} externalName={name} />,
               },
+              { id: 'learnings', label: 'מה למדנו', content: <ExternalLearningsTab candidateId={c._id} /> },
               { id: 'share', label: 'תצוגה מקדימה לשיתוף', content: <ShareCardPreview c={c} /> },
               { id: 'source', label: 'כרטיס מקורי', content: <SourceCardTab kind="external" candidateId={c._id} /> },
               { id: 'history', label: 'היסטוריה', content: <EntityTimeline entityType="external_candidate" entityId={c._id} title="יומן פעילות" asCard={false} /> },

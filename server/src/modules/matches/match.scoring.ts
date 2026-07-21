@@ -77,18 +77,18 @@ export async function previewSendReadiness(id: string): Promise<{
   const externalAvailable = external.status === 'active'
     && external.availabilityStatus !== 'unavailable'
     && external.availabilityStatus !== 'dating';
-  if (!externalAvailable) blockers.push(`External candidate not available (${external.availabilityStatus})`);
+  if (!externalAvailable) blockers.push(`המועמד החיצוני אינו זמין (${external.availabilityStatus})`);
 
   if (external.shareCard && !external.shareCard.approvedForShare) {
-    blockers.push('External share card not approved');
+    blockers.push('כרטיס השיתוף החיצוני לא אושר');
   }
 
   if (match.status === 'closed' || match.status === 'expired') {
-    blockers.push(`Match in terminal status: ${match.status}`);
+    blockers.push(`ההתאמה בסטטוס סופי: ${match.status}`);
   }
 
   if (match.isDeferred) {
-    blockers.push('Match is currently deferred');
+    blockers.push('ההתאמה נדחתה כרגע');
   }
 
   const canSend = blockers.length === 0;

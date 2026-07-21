@@ -248,6 +248,8 @@ export interface SemanticMatchRow {
   highlights?: string[];
   matchScore?: number;
   engineEligible?: boolean;
+  /** Hard-blocker codes — present only when engineEligible is false. */
+  blockerCodes?: string[];
 }
 
 export interface SemanticMatchesResult {

@@ -206,3 +206,13 @@ export const FindMatchingInternalsQuerySchema = PaginationQuerySchema.extend({
 });
 
 export const IdParamSchema = z.object({ id: ObjectIdString });
+
+// Manual "מה למדנו" learning — operator-authored free text.
+export const AddLearningSchema = z.object({
+  text: z.string().trim().min(1, 'נדרש טקסט').max(2000),
+});
+
+export const LearningParamSchema = z.object({
+  id: ObjectIdString,
+  learningId: ObjectIdString,
+});

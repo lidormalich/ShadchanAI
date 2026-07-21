@@ -174,7 +174,9 @@ export interface ScanStateView {
  * PairScore rows keep scores computed by the OLD engine indefinitely
  * (the candidate-field hash alone can't see code changes).
  */
-const ENGINE_VERSION = 'v2';
+// v3: divorced-status no longer hard-blocks on the default openToDivorced
+// flag — single↔second-chapter is now a soft priority penalty instead.
+const ENGINE_VERSION = 'v3';
 
 /**
  * Time-based penalties (stale externals, internal timing) and context
@@ -704,6 +706,12 @@ export interface ScanResultItem {
   // The operator's reason recorded when this pair was held (review_later)
   // or dismissed (not_suitable). Empty for pending proposals.
   reviewReason?: string;
+  // Set only on the 'closed' tab: the pair already became a suggestion that
+  // reached a terminal status. `closeStatus` is the terminal status ('closed'
+  // or 'expired') and `closeReason` is the recorded close reason (if any), so
+  // the UI can show why it ended and link into the closed suggestion.
+  closeStatus?: 'closed' | 'expired';
+  closeReason?: string;
 }
 
 export interface ScanResultsQuery {
@@ -719,8 +727,10 @@ export interface ScanResultsQuery {
   //      (dismissed), or were parked as review_later (on hold).
   //   'review_later': only pairs parked on hold (manualStatus review_later).
   //   'rejected': only pairs dismissed (manualStatus not_suitable).
+  //   'closed': pairs whose suggestion reached a terminal status
+  //      (closed/expired) — already decided, so kept out of 'inbox'.
   //   'all': every scored pair, undecorated.
-  view?: 'inbox' | 'review_later' | 'rejected' | 'all';
+  view?: 'inbox' | 'review_later' | 'rejected' | 'closed' | 'all';
 }
 
 export async function listScanResults(query: ScanResultsQuery): Promise<ScanResultItem[]> {
@@ -755,27 +765,50 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
   const keyOf = (x: { internalCandidateId: unknown; externalCandidateId: unknown }) =>
     `${String(x.internalCandidateId)}:${String(x.externalCandidateId)}`;
   let reviewReasons = new Map<string, string>();
+  let closedInfo = new Map<string, { status: 'closed' | 'expired'; reason: string; suggestionId: string }>();
   let visible = rows;
   if (view !== 'all') {
     const key = keyOf;
     const internalIds = [...new Set(rows.map((r) => String(r.internalCandidateId)))].map((id) => new Types.ObjectId(id));
-    const [accepted, reviews] = await Promise.all([
+    const [accepted, closedSugs, reviews] = await Promise.all([
       MatchSuggestion.find({ internalCandidateId: { $in: internalIds }, status: { $nin: ['closed', 'expired'] } })
         .select('internalCandidateId externalCandidateId').lean().exec(),
+      // Terminal suggestions: a pair that already became a suggestion and was
+      // closed/expired. Kept out of 'inbox' (already decided) and surfaced in
+      // its own 'closed' tab. Newest close first so the map keeps the latest.
+      MatchSuggestion.find({ internalCandidateId: { $in: internalIds }, status: { $in: ['closed', 'expired'] } })
+        .select('internalCandidateId externalCandidateId status closeReason closedAt')
+        .sort({ closedAt: -1 }).lean().exec(),
       PairReview.find({ internalCandidateId: { $in: internalIds }, manualStatus: { $in: ['not_suitable', 'review_later'] } })
         .select('internalCandidateId externalCandidateId manualStatus operatorReason').lean().exec(),
     ]);
     const acceptedSet = new Set(accepted.map((s) => key(s)));
     const reviewStatus = new Map(reviews.map((r) => [key(r), r.manualStatus]));
     reviewReasons = new Map(reviews.map((r) => [key(r), r.operatorReason ?? '']));
+    for (const s of closedSugs) {
+      const k = key(s);
+      if (!closedInfo.has(k)) {
+        closedInfo.set(k, {
+          status: (s.status as 'closed' | 'expired'),
+          reason: (s as { closeReason?: string }).closeReason ?? '',
+          suggestionId: String(s._id),
+        });
+      }
+    }
 
     if (view === 'inbox') {
-      // Awaiting a decision: not accepted, not held, not dismissed.
-      visible = rows.filter((r) => !acceptedSet.has(key(r)) && !reviewStatus.has(key(r)));
+      // Awaiting a decision: not accepted, not held, not dismissed, and not
+      // already closed/expired (a decided suggestion must never re-surface here).
+      visible = rows.filter((r) => !acceptedSet.has(key(r)) && !reviewStatus.has(key(r)) && !closedInfo.has(key(r)));
     } else if (view === 'review_later') {
       visible = rows.filter((r) => reviewStatus.get(key(r)) === 'review_later');
+    } else if (view === 'closed') {
+      // Pairs with a terminal suggestion — unless a fresh live suggestion was
+      // re-created since (acceptedSet wins, it belongs in the pipeline).
+      visible = rows.filter((r) => !acceptedSet.has(key(r)) && closedInfo.has(key(r)));
     } else {
-      visible = rows.filter((r) => reviewStatus.get(key(r)) === 'not_suitable');
+      // rejected — pairs dismissed via review; closed pairs live in their own tab.
+      visible = rows.filter((r) => reviewStatus.get(key(r)) === 'not_suitable' && !closedInfo.has(key(r)));
     }
   }
   visible = visible.slice(0, want);
@@ -803,27 +836,34 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
   const internalNames = new Map(internals.map((c) => [String(c._id), nameOf(c)]));
   const externalNames = new Map(externals.map((c) => [String(c._id), nameOf(c)]));
 
-  return visible.map((r) => ({
-    internalCandidateId: String(r.internalCandidateId),
-    externalCandidateId: String(r.externalCandidateId),
-    internalName: internalNames.get(String(r.internalCandidateId)) ?? 'ללא שם',
-    externalName: externalNames.get(String(r.externalCandidateId)) ?? 'ללא שם',
-    matchScore: r.matchScore,
-    ...(r.previousScore !== undefined ? { previousScore: r.previousScore } : {}),
-    scoreDelta: r.scoreDelta,
-    scoreDirection: r.scoreDirection,
-    confidenceScore: r.confidenceScore,
-    matchType: r.matchType,
-    eligible: r.eligible,
-    bucket: r.bucket,
-    ...(r.matchSuggestionId ? { matchSuggestionId: String(r.matchSuggestionId) } : {}),
-    autoCreated: r.autoCreated,
-    scoredAt: r.scoredAt.toISOString(),
-    strengths: r.strengths ?? [],
-    attentionPoints: r.attentionPoints ?? [],
-    ageOutOfRange: r.ageOutOfRange ?? false,
-    ...(reviewReasons.get(keyOf(r)) ? { reviewReason: reviewReasons.get(keyOf(r)) } : {}),
-  }));
+  return visible.map((r) => {
+    const closed = closedInfo.get(keyOf(r));
+    // Prefer the terminal suggestion's own id so the 'closed' tab links to the
+    // actual closed suggestion, falling back to the pair's cached id.
+    const suggestionId = closed?.suggestionId ?? (r.matchSuggestionId ? String(r.matchSuggestionId) : undefined);
+    return {
+      internalCandidateId: String(r.internalCandidateId),
+      externalCandidateId: String(r.externalCandidateId),
+      internalName: internalNames.get(String(r.internalCandidateId)) ?? 'ללא שם',
+      externalName: externalNames.get(String(r.externalCandidateId)) ?? 'ללא שם',
+      matchScore: r.matchScore,
+      ...(r.previousScore !== undefined ? { previousScore: r.previousScore } : {}),
+      scoreDelta: r.scoreDelta,
+      scoreDirection: r.scoreDirection,
+      confidenceScore: r.confidenceScore,
+      matchType: r.matchType,
+      eligible: r.eligible,
+      bucket: r.bucket,
+      ...(suggestionId ? { matchSuggestionId: suggestionId } : {}),
+      autoCreated: r.autoCreated,
+      scoredAt: r.scoredAt.toISOString(),
+      strengths: r.strengths ?? [],
+      attentionPoints: r.attentionPoints ?? [],
+      ageOutOfRange: r.ageOutOfRange ?? false,
+      ...(reviewReasons.get(keyOf(r)) ? { reviewReason: reviewReasons.get(keyOf(r)) } : {}),
+      ...(closed ? { closeStatus: closed.status, closeReason: closed.reason } : {}),
+    };
+  });
 }
 
 /**

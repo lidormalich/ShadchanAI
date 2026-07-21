@@ -302,14 +302,22 @@ function personalStatusCompatibilityRule(
   const isSecondChapter = isDivorcedOrSeparated || isWidowed;
 
   // ── Divorced / separated: internal-side openness ──────
-  // Overridable with reason — reflects the internal's stated preference
-  // which may have evolved since onboarding.
-  if (isDivorcedOrSeparated && !internal.openness.openToDivorced) {
+  // Blocks ONLY on an EXPLICIT signal — never on absence of data. openToDivorced
+  // is tri-state (see OpennessFlags): `false` = the operator clicked "לא"
+  // (hard-block), `undefined` = unknown (NO block — the single↔second-chapter
+  // case is handled as a soft priority penalty in computeStatusPenalty),
+  // `true` = affirmative "כן" (short-circuits any block). An explicit
+  // personalStatus hardConstraint is honoured as an equivalent "לא".
+  // This is why a default-`false` (pre-tri-state) can't wrongly block a
+  // divorced candidate from a divorcee — the DB no longer defaults the flag.
+  const explicitlyNotOpen =
+    internal.openness.openToDivorced === false || hasExplicitStatusBlocker(internal, status);
+  if (isDivorcedOrSeparated && internal.openness.openToDivorced !== true && explicitlyNotOpen) {
     return block(
       BlockerCode.PERSONAL_STATUS_DIVORCED,
       BlockerSeverity.HARD_OVERRIDABLE,
       BlockerOverridable.WITH_REASON,
-      `המועמד הפנימי אינו פתוח למועמדים בסטטוס ${he(PERSONAL_STATUS_HE, status)}`,
+      `המועמד הפנימי ציין במפורש שאינו פתוח למועמדים בסטטוס ${he(PERSONAL_STATUS_HE, status)}`,
       { status },
     );
   }

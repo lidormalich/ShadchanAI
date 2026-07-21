@@ -310,6 +310,9 @@ export interface MatchSuggestion {
   datingStartedAt?: string;
   closedAt?: string;
   closeReason?: string;
+  // When each side's proposal was actually sent (undefined = never sent).
+  sentSideAAt?: string;
+  sentSideBAt?: string;
   sideAResponse?: { status: string; respondedAt?: string; declineReason?: string; notes?: string; acknowledgedAt?: string; acknowledgedBy?: string };
   sideBResponse?: { status: string; respondedAt?: string; declineReason?: string; notes?: string; acknowledgedAt?: string; acknowledgedBy?: string };
   aiExplanation?: {

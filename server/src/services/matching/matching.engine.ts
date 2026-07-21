@@ -548,7 +548,7 @@ function makeBlockedResult(
     recommendedAction: 'skip',
     sendStrategy: 'side_a_first',
     sourceMode: context.mode,
-    penalties: { historyPenalty: 0, stalePenalty: 0, timingPenalty: 0, loadPenalty: 0, totalPenalty: 0 },
+    penalties: { historyPenalty: 0, stalePenalty: 0, timingPenalty: 0, loadPenalty: 0, statusPenalty: 0, totalPenalty: 0 },
   };
 }
 

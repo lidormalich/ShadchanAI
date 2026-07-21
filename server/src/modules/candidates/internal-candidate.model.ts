@@ -73,7 +73,10 @@ const opennessSchema = new Schema(
   {
     openToOtherSectors: { type: Boolean, default: false },
     openToConverts: { type: Boolean, default: false },
-    openToDivorced: { type: Boolean, default: false },
+    // Tri-state, NOT defaulted: undefined = unknown, false = explicit "לא"
+    // (hard-blocks divorced), true = explicit "כן". A default here would
+    // erase the operator's intent and wrongly block divorced pairs.
+    openToDivorced: { type: Boolean },
     openToWithChildren: { type: Boolean, default: false },
     openToAgeDifference: { type: Boolean, default: false },
     openToLongDistance: { type: Boolean, default: false },
@@ -228,7 +231,8 @@ export interface IInternalCandidate extends Document {
   openness: {
     openToOtherSectors: boolean;
     openToConverts: boolean;
-    openToDivorced: boolean;
+    /** Tri-state: true/false explicit, undefined = unknown. See opennessSchema. */
+    openToDivorced?: boolean;
     openToWithChildren: boolean;
     openToAgeDifference: boolean;
     openToLongDistance: boolean;

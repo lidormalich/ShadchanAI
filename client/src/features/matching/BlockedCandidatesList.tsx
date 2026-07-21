@@ -128,7 +128,7 @@ const BlockedRow = memo(function BlockedRow({
         </div>
         <div className="flex flex-col gap-1 shrink-0">
           <Link
-            to={`/candidates/external?id=${row.externalCandidateId}`}
+            to={`/candidates/external/${row.externalCandidateId}`}
             className="text-xs text-brand-700 hover:underline text-center"
           >
             פרופיל

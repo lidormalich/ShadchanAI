@@ -45,7 +45,7 @@ import { CandidatePicker } from '@/components/ui/CandidatePicker';
 import { externalToOption } from '@/features/candidates/candidateOptions';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { toast } from '@/components/ui/Toast';
-import { label } from '@/utils/labels';
+import { label, blockerReason } from '@/utils/labels';
 import {
   compatibilityApi,
   pairReviewsApi,
@@ -756,6 +756,11 @@ const SemanticRowItem = memo(function SemanticRowItem({
   const name = `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim() || 'ללא שם';
   const pct = Math.round(row.similarity * 100);
 
+  // The engine already scored this pair as ineligible (hard-blocked) →
+  // don't offer "צור הצעה"; the server would reject it. Explain why instead.
+  const blocked = row.engineEligible === false;
+  const blockReasons = (row.blockerCodes ?? []).map(blockerReason);
+
   return (
     <li className="px-5 py-3.5">
       <div className="flex items-center justify-between gap-4">
@@ -798,15 +803,22 @@ const SemanticRowItem = memo(function SemanticRowItem({
           </div>
         </div>
 
-        <div className="shrink-0 flex flex-col items-end gap-1.5 w-32">
+        <div className="shrink-0 flex flex-col items-end gap-1.5 w-40 text-end">
           <div className="text-2xl font-semibold num text-purple-600">{pct}%</div>
           <Button
             size="sm"
             onClick={() => createSuggestion.mutate()}
             loading={createSuggestion.isPending}
+            disabled={blocked}
           >
             צור הצעה
           </Button>
+          {blocked && (
+            <div className="text-[11px] leading-snug text-danger">
+              {`${name} — `}
+              {blockReasons.length ? blockReasons.join(' · ') : 'הזוג חסום ליצירת הצעה'}
+            </div>
+          )}
         </div>
       </div>
     </li>

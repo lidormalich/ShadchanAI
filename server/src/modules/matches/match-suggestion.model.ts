@@ -32,6 +32,7 @@ const penaltiesSchema = new Schema(
     stalePenalty: { type: Number, default: 0 },
     timingPenalty: { type: Number, default: 0 },
     loadPenalty: { type: Number, default: 0 },
+    statusPenalty: { type: Number, default: 0 },
     totalPenalty: { type: Number, default: 0 },
   },
   { _id: false },
@@ -201,6 +202,7 @@ export interface IMatchSuggestion extends Document {
     stalePenalty: number;
     timingPenalty: number;
     loadPenalty: number;
+    statusPenalty: number;
     totalPenalty: number;
   };
 

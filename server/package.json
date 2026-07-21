@@ -16,6 +16,8 @@
     "extraction:reprocess-stuck": "tsx src/scripts/reprocess-stuck-extractions.ts",
     "repair:degenerate-names": "tsx src/scripts/repair-degenerate-names.ts",
     "migrate:translate-reasons": "tsx src/scripts/translate-override-reasons.ts",
+    "migrate:openness-tristate": "tsx src/scripts/migrate-openness-tristate.ts",
+    "match:scan": "tsx src/scripts/run-match-scan.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",

@@ -22,7 +22,10 @@ describe('CreateInternalCandidateSchema', () => {
     // personalStatus + numberOfChildren + openness defaults
     expect(parsed.personalStatus).toBe(PersonalStatus.SINGLE);
     expect(parsed.numberOfChildren).toBe(0);
-    expect(parsed.openness.openToDivorced).toBe(false);
+    // openToDivorced is tri-state — NOT defaulted, so it stays undefined
+    // ("unknown") unless explicitly provided. Other flags still default false.
+    expect(parsed.openness.openToDivorced).toBeUndefined();
+    expect(parsed.openness.openToOtherSectors).toBe(false);
   });
 
   it('coerces a date string to a Date', () => {

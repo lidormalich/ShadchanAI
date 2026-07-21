@@ -53,14 +53,16 @@ const LocationPreferenceSchema = z.object({
 const OpennessSchema = z.object({
   openToOtherSectors: z.boolean().default(false),
   openToConverts: z.boolean().default(false),
-  openToDivorced: z.boolean().default(false),
+  // Tri-state — kept optional (NOT defaulted) so an explicit "לא" (false) is
+  // distinguishable from "never set" (undefined). Only an explicit false
+  // hard-blocks divorced/separated; undefined → soft penalty for singles.
+  openToDivorced: z.boolean().optional(),
   openToWithChildren: z.boolean().default(false),
   openToAgeDifference: z.boolean().default(false),
   openToLongDistance: z.boolean().default(false),
 }).default({
   openToOtherSectors: false,
   openToConverts: false,
-  openToDivorced: false,
   openToWithChildren: false,
   openToAgeDifference: false,
   openToLongDistance: false,

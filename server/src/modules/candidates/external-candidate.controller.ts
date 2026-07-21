@@ -165,3 +165,30 @@ export async function matchingInternalsHandler(req: Request, res: Response, next
     ok(res, items);
   } catch (e) { next(e); }
 }
+
+export async function learningsHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    ensureUser(req.user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    ok(res, await svc.getExternalCandidateLearnings(id));
+  } catch (e) { next(e); }
+}
+
+export async function addLearningHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id } = getValidatedParams<{ id: string }>(req);
+    const { text } = req.body as { text: string };
+    ok(res, await svc.addExternalLearning(id, text, user.id, user));
+  } catch (e) { next(e); }
+}
+
+export async function removeLearningHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = ensureUser(req.user);
+    canWriteCandidates(user);
+    const { id, learningId } = getValidatedParams<{ id: string; learningId: string }>(req);
+    ok(res, await svc.removeExternalLearning(id, learningId, user.id, user));
+  } catch (e) { next(e); }
+}

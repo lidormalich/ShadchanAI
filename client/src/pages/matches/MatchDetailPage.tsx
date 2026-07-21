@@ -10,7 +10,7 @@ import { toast } from '@/components/ui/Toast';
 import type { MatchSuggestion } from '@/types/domain';
 import { Avatar, Badge, Button, Card, CardBody, CardHeader, Divider, Select, Textarea } from '@/components/ui/primitives';
 import { ErrorState, LoadingSkeleton, NotFoundState } from '@/components/states/states';
-import { BlockedBanner } from '@/components/domain/banners';
+import { BlockedBanner, MatchClosedBanner } from '@/components/domain/banners';
 import { ConfirmActionModal, Dialog } from '@/components/ui/Dialog';
 import { AskAIPanel } from '@/features/ai/AskAIPanel';
 import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
@@ -382,7 +382,23 @@ export function MatchDetailPage() {
         </CardBody>
       </Card>
 
-      {preview && !preview.canSend && <BlockedBanner blockers={preview.blockers} />}
+      {/* Terminal matches get a plain "why it ended" banner instead of the raw
+          red send-blocker text; only live matches show the send-blocker banner. */}
+      {terminal ? (
+        <MatchClosedBanner status={m.status as 'closed' | 'expired'} reason={m.closeReason} closedAt={m.closedAt} />
+      ) : (
+        preview && !preview.canSend && <BlockedBanner blockers={preview.blockers} />
+      )}
+
+      {/* Closed match: the "why not" split by side, exactly as captured in the
+          close dialog — internal reason, external reason, and my general note. */}
+      {terminal && (
+        <CloseReasonCard
+          match={m}
+          internalName={i ? `${i.firstName} ${i.lastName}`.trim() : undefined}
+          externalName={e ? `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || undefined : undefined}
+        />
+      )}
 
       {/* Two-column summaries + central analysis */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -491,6 +507,11 @@ export function MatchDetailPage() {
           </Card>
         )}
       </div>
+
+      {/* Closed / expired: a read-only record of what was actually sent to each
+          side and how they responded — the draft card below is hidden once
+          terminal, so this is the only place the sent text survives. */}
+      {terminal && <SentContentCard match={m} />}
 
       {/* Persisted proposal drafts — AI fills this, operator edits, send modal prefills from it */}
       {!terminal && (
@@ -783,6 +804,94 @@ function ExplainAIModal({
         )}
       </div>
     </Dialog>
+  );
+}
+
+// Hebrew for each side's response status. Kept local — there's no shared
+// label group for response statuses, and these four values are stable.
+const RESPONSE_STATUS_HE: Record<string, string> = {
+  accepted: 'התקבלה',
+  declined: 'נדחתה',
+  considering: 'שוקל/ת',
+  pending: 'ממתינה',
+};
+
+// The "why it was closed" breakdown for a terminal match — the same three
+// fields captured in the close dialog, split into internal / external / my
+// note. Styled like the "נקודות חוזק ונקודות לב" card. Skips itself entirely
+// when nothing was recorded (e.g. an expired match with no reason).
+function CloseReasonCard({ match, internalName, externalName }: {
+  match: MatchSuggestion;
+  internalName?: string;
+  externalName?: string;
+}) {
+  const internalReason = match.sideAResponse?.declineReason?.trim();
+  const externalReason = match.sideBResponse?.declineReason?.trim();
+  const note = match.closeReason?.trim();
+  if (!internalReason && !externalReason && !note) return null;
+  return (
+    <Card>
+      <CardHeader><h3 className="text-sm font-semibold">סיבת סגירה</h3></CardHeader>
+      <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <CloseReasonColumn title={internalName ? `מועמד פנימי — ${internalName}` : 'מועמד פנימי'} text={internalReason} />
+        <CloseReasonColumn title={externalName ? `מועמד חיצוני — ${externalName}` : 'מועמד חיצוני'} text={externalReason} />
+        <CloseReasonColumn title="הערות שנתתי בסגירה" text={note} />
+      </CardBody>
+    </Card>
+  );
+}
+
+function CloseReasonColumn({ title, text }: { title: string; text?: string }) {
+  return (
+    <div className="rounded-md border border-border bg-bg-subtle p-3">
+      <div className="text-xs font-medium text-ink-muted uppercase tracking-wide mb-1.5">{title}</div>
+      {text
+        ? <p className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{text}</p>
+        : <div className="text-xs text-ink-faint">—</div>}
+    </div>
+  );
+}
+
+// Read-only "what was sent" panel for a terminal match: per side, when it was
+// sent (if at all), the side's response status, and the message text.
+function SentContentCard({ match }: { match: MatchSuggestion }) {
+  const sides = [
+    { key: 'a', label: 'צד א (מועמד פנימי)', body: match.drafts?.sideA?.body, sentAt: match.sentSideAAt, resp: match.sideAResponse },
+    { key: 'b', label: 'צד ב (מועמד חיצוני)', body: match.drafts?.sideB?.body, sentAt: match.sentSideBAt, resp: match.sideBResponse },
+  ] as const;
+  const anything = sides.some((s) => s.body || s.sentAt || s.resp?.status);
+  return (
+    <Card>
+      <CardHeader><h3 className="text-sm font-semibold">מה נשלח בהצעה</h3></CardHeader>
+      <CardBody className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {!anything && (
+          <div className="text-xs text-ink-muted md:col-span-2">
+            לא נשלחה הודעה ולא נשמרה טיוטה להצעה זו — נסגרה לפני שנשלח דבר.
+          </div>
+        )}
+        {sides.map((s) => (
+          <div key={s.key} className="rounded-md border border-border p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold">{s.label}</div>
+              <div className="text-[11px] text-ink-faint">
+                {s.sentAt ? `נשלח ${formatDateTime(s.sentAt)}` : 'לא נשלח'}
+              </div>
+            </div>
+            {s.resp?.status && s.resp.status !== 'pending' && (
+              <div className="text-xs">
+                <span className="text-ink-muted">תגובה: </span>
+                <span className="font-medium">{RESPONSE_STATUS_HE[s.resp.status] ?? s.resp.status}</span>
+              </div>
+            )}
+            {s.body ? (
+              <div className="text-xs text-ink whitespace-pre-wrap rounded bg-bg-subtle p-2 border border-border">{s.body}</div>
+            ) : (
+              <div className="text-xs text-ink-faint">אין טקסט שמור לצד זה.</div>
+            )}
+          </div>
+        ))}
+      </CardBody>
+    </Card>
   );
 }
 

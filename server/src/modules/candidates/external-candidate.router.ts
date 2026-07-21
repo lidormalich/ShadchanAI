@@ -13,6 +13,8 @@ import {
   DetailsCompletedSchema,
   FindMatchingInternalsQuerySchema,
   IdParamSchema,
+  AddLearningSchema,
+  LearningParamSchema,
 } from './external-candidate.validator.js';
 import { validate } from '../../middleware/validate.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
@@ -98,4 +100,22 @@ externalCandidateRouter.get(
   '/:id/matching-internals',
   validate({ params: IdParamSchema, query: FindMatchingInternalsQuerySchema }),
   ctrl.matchingInternalsHandler,
+);
+
+externalCandidateRouter.get(
+  '/:id/learnings',
+  validate({ params: IdParamSchema }),
+  ctrl.learningsHandler,
+);
+
+externalCandidateRouter.post(
+  '/:id/learnings',
+  validate({ params: IdParamSchema, body: AddLearningSchema }),
+  ctrl.addLearningHandler,
+);
+
+externalCandidateRouter.delete(
+  '/:id/learnings/:learningId',
+  validate({ params: LearningParamSchema }),
+  ctrl.removeLearningHandler,
 );

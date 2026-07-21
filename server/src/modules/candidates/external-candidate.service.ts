@@ -613,10 +613,10 @@ function toMatchableInternal(doc: Record<string, unknown>): MatchableInternal {
     softPreferences: (doc['softPreferences'] as MatchableInternal['softPreferences']) ?? [],
     agePreferences: doc['agePreferences'] as MatchableInternal['agePreferences'],
     locationPreferences: doc['locationPreferences'] as MatchableInternal['locationPreferences'],
+    // openToDivorced omitted (tri-state): missing openness = unknown, not "not open".
     openness: (doc['openness'] as MatchableInternal['openness']) ?? {
       openToOtherSectors: false,
       openToConverts: false,
-      openToDivorced: false,
       openToWithChildren: false,
       openToAgeDifference: false,
       openToLongDistance: false,
@@ -635,6 +635,147 @@ function toMatchableInternal(doc: Record<string, unknown>): MatchableInternal {
       : undefined,
     deferredSuggestionsCount: (doc['deferredSuggestionsCount'] as number) ?? 0,
   };
+}
+
+// ── Learnings ("מה למדנו") ────────────────────────────────
+//
+// Unlike internal candidates (which get an AI-summarised CandidateInsight),
+// there is no per-external learning agent. Instead we surface what was actually
+// recorded about this external across their closed suggestions: the per-side
+// "why not" reasons and the operator's closing note. Deterministic — no AI, no
+// score. Empty list ⇒ the tab shows "nothing learned yet".
+
+export interface ExternalLearningItem {
+  matchSuggestionId: string;
+  partnerId: string;
+  partnerName: string;
+  status: string;
+  closedAt?: string;
+  aboutExternal?: string; // sideBResponse.declineReason — about THIS candidate
+  aboutPartner?: string;  // sideAResponse.declineReason — about the internal side
+  note?: string;          // closeReason — the operator's general closing note
+}
+
+export interface ManualLearningItem {
+  id: string;
+  text: string;
+  createdAt: string;
+  createdBy?: string;
+}
+
+export async function getExternalCandidateLearnings(id: string): Promise<{
+  externalCandidateId: string;
+  total: number;
+  items: ExternalLearningItem[];
+  manual: ManualLearningItem[];
+}> {
+  const candidate = await getExternalCandidateById(id); // 404 if the candidate doesn't exist
+
+  const matches = await MatchSuggestion.find({
+    externalCandidateId: new Types.ObjectId(id),
+    // Only suggestions that actually carry a learned reason — a plain
+    // status change with no "why" teaches us nothing.
+    $or: [
+      { 'sideAResponse.declineReason': { $nin: [null, ''] } },
+      { 'sideBResponse.declineReason': { $nin: [null, ''] } },
+      { closeReason: { $nin: [null, ''] } },
+    ],
+  })
+    .select('internalCandidateId status closedAt closeReason sideAResponse.declineReason sideBResponse.declineReason updatedAt')
+    .sort({ closedAt: -1, updatedAt: -1 })
+    .lean()
+    .exec();
+
+  const internalIds = [...new Set(matches.map((m) => String(m.internalCandidateId)))];
+  const internals = await InternalCandidate.find({ _id: { $in: internalIds } })
+    .select('firstName lastName').lean().exec();
+  const nameOf = (c: { firstName?: string; lastName?: string }) =>
+    `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם';
+  const nameMap = new Map(internals.map((c) => [String(c._id), nameOf(c)]));
+
+  const items: ExternalLearningItem[] = matches.map((m) => ({
+    matchSuggestionId: String(m._id),
+    partnerId: String(m.internalCandidateId),
+    partnerName: nameMap.get(String(m.internalCandidateId)) ?? 'ללא שם',
+    status: m.status,
+    ...(m.closedAt ? { closedAt: new Date(m.closedAt).toISOString() } : {}),
+    ...(m.sideBResponse?.declineReason ? { aboutExternal: m.sideBResponse.declineReason } : {}),
+    ...(m.sideAResponse?.declineReason ? { aboutPartner: m.sideAResponse.declineReason } : {}),
+    ...(m.closeReason ? { note: m.closeReason } : {}),
+  }));
+
+  const manual: ManualLearningItem[] = (candidate.manualLearnings ?? [])
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .map((l) => ({
+      id: String(l._id),
+      text: l.text,
+      createdAt: new Date(l.createdAt).toISOString(),
+      ...(l.createdBy ? { createdBy: String(l.createdBy) } : {}),
+    }));
+
+  return { externalCandidateId: id, total: items.length, items, manual };
+}
+
+// Add a hand-written learning to an external candidate. These live alongside
+// the auto-collected close reasons in the "מה למדנו" tab.
+export async function addExternalLearning(
+  id: string,
+  text: string,
+  performedBy: string,
+  actor?: AuthUser,
+): Promise<IExternalCandidate> {
+  const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
+  const clean = text.trim();
+  if (!clean) throw new BusinessRuleError('Learning text is required');
+  const before = doc.toObject();
+
+  const entry = { text: clean, createdBy: new Types.ObjectId(performedBy), createdAt: new Date() };
+  doc.manualLearnings = [...(doc.manualLearnings ?? []), entry] as unknown as IExternalCandidate['manualLearnings'];
+  await doc.save();
+
+  await audit({
+    entityType: AuditEntityType.EXTERNAL_CANDIDATE,
+    entityId: id,
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    before,
+    after: doc.toObject(),
+    metadata: { scope: 'manual-learning', op: 'add' },
+  });
+
+  return doc;
+}
+
+export async function removeExternalLearning(
+  id: string,
+  learningId: string,
+  performedBy: string,
+  actor?: AuthUser,
+): Promise<IExternalCandidate> {
+  const doc = await getExternalCandidateById(id);
+  if (actor) assertOwnership(doc.ownerUserId, actor, { entity: 'external candidate' });
+  const before = doc.toObject();
+
+  const arr = doc.manualLearnings ?? [];
+  if (!arr.some((l) => String(l._id) === learningId)) {
+    throw new NotFoundError('ManualLearning', learningId);
+  }
+  doc.manualLearnings = arr.filter((l) => String(l._id) !== learningId) as unknown as IExternalCandidate['manualLearnings'];
+  await doc.save();
+
+  await audit({
+    entityType: AuditEntityType.EXTERNAL_CANDIDATE,
+    entityId: id,
+    actionType: AuditActionType.UPDATE,
+    performedBy,
+    before,
+    after: doc.toObject(),
+    metadata: { scope: 'manual-learning', op: 'remove', learningId },
+  });
+
+  return doc;
 }
 
 function toMatchableExternal(doc: Record<string, unknown>): MatchableExternal {

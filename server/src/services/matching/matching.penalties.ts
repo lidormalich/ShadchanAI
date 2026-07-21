@@ -25,16 +25,63 @@ export function computePenalties(
   const historyPenalty = computeHistoryPenalty(external, context);
   const timingPenalty = computeTimingPenalty(internal, context);
   const loadPenalty = computeLoadPenalty(context);
+  const statusPenalty = computeStatusPenalty(internal, external);
 
-  const totalPenalty = Math.min(40, stalePenalty + historyPenalty + timingPenalty + loadPenalty);
+  const totalPenalty = Math.min(
+    40,
+    stalePenalty + historyPenalty + timingPenalty + loadPenalty + statusPenalty,
+  );
 
   return {
     stalePenalty,
     historyPenalty,
     timingPenalty,
     loadPenalty,
+    statusPenalty,
     totalPenalty,
   };
+}
+
+// ── Personal-status penalty ───────────────────────────────
+//
+// A soft priority adjustment, NOT a compatibility block. When exactly ONE
+// side is "second chapter" (divorced / separated / widowed) and the other is
+// single, the pair stays eligible but its score drops so it sinks toward the
+// bottom of the list — a single candidate is shown singles first, with
+// second-chapter matches ranked low. Symmetric across gender and direction.
+//
+// No penalty when:
+//   - both sides are single, or
+//   - both sides are second-chapter (a divorcee matched with a divorcee), or
+//   - the single side is EXPLICITLY open to divorced (openToDivorced === true).
+//
+// Note: openToDivorced defaults to false in the DB, so this rule keys off
+// personalStatus (reliable) and treats only an explicit `true` as "open" —
+// a false/undefined flag never turns a single↔second-chapter pair into a
+// full-score match, but it never hides it either.
+
+const SECOND_CHAPTER_STATUSES = ['divorced', 'separated', 'widowed'];
+
+function computeStatusPenalty(
+  internal: MatchableInternal,
+  external: MatchableExternal,
+): number {
+  if (!external.personalStatus) return 0;
+
+  const internalSecond = SECOND_CHAPTER_STATUSES.includes(internal.personalStatus);
+  const externalSecond = SECOND_CHAPTER_STATUSES.includes(external.personalStatus);
+
+  // Aligned chapters (single↔single or second↔second) → no penalty.
+  if (internalSecond === externalSecond) return 0;
+
+  // Exactly one side is second-chapter → the OTHER side is single. Waive the
+  // penalty only when that single side explicitly opted in to divorced.
+  const singleSideExplicitlyOpen = internalSecond
+    ? external.openness?.openToDivorced === true
+    : internal.openness.openToDivorced === true;
+  if (singleSideExplicitlyOpen) return 0;
+
+  return PENALTY.STATUS_MISMATCH;
 }
 
 // ── Stale penalty ─────────────────────────────────────────

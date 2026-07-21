@@ -87,6 +87,28 @@ export function ClosedBanner({ reason, closedAt }: { reason?: string; closedAt?:
   );
 }
 
+// Terminal match (closed / expired) — states plainly WHY it ended so the
+// operator never has to guess. Neutral tone: a normal closure isn't an error.
+export function MatchClosedBanner({ status, reason, closedAt }: {
+  status: 'closed' | 'expired';
+  reason?: string;
+  closedAt?: string;
+}) {
+  const title = status === 'expired' ? 'ההצעה פגה' : 'ההצעה נסגרה';
+  const parts = [
+    reason?.trim() || 'לא נרשמה סיבת סגירה',
+    closedAt && `מתאריך ${new Date(closedAt).toLocaleDateString('he-IL')}`,
+  ].filter(Boolean);
+  return (
+    <Banner
+      tone="zinc"
+      icon={<Archive className="h-5 w-5" />}
+      title={title}
+      description={parts.join(' — ')}
+    />
+  );
+}
+
 export function StaleBanner({ daysSinceUpdate }: { daysSinceUpdate?: number }) {
   return (
     <Banner

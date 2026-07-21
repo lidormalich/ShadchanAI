@@ -311,8 +311,18 @@ export interface IExternalCandidate extends Document {
   // the pre-save hook; a partial unique index on it makes the concurrent-
   // repost race unable to mint a second identical candidate.
   identityKey?: string;
+  // Operator-authored learnings ("מה למדנו" — manual). Free-text notes the
+  // shadchan adds by hand, shown alongside the auto-collected close reasons.
+  manualLearnings?: Types.DocumentArray<IManualLearning>;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IManualLearning {
+  _id?: Types.ObjectId;
+  text: string;
+  createdBy?: Types.ObjectId;
+  createdAt: Date;
 }
 
 // ── Schema ────────────────────────────────────────────────
@@ -513,6 +523,16 @@ const externalCandidateSchema = new Schema<IExternalCandidate>(
 
     // ── Duplicate-guard identity key (name+age, hook-maintained) ──
     identityKey: { type: String },
+
+    // ── Operator-authored learnings ("מה למדנו" — manual) ──
+    manualLearnings: {
+      type: [new Schema<IManualLearning>({
+        text: { type: String, required: true, trim: true, maxlength: 2000 },
+        createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+        createdAt: { type: Date, default: Date.now },
+      }, { _id: true })],
+      default: undefined,
+    },
   },
   {
     timestamps: true,

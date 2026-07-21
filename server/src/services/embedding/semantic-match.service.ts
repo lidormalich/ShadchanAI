@@ -132,6 +132,8 @@ export interface SemanticMatchRow {
   /** Deterministic engine score from the PairScore cache, if scanned. */
   matchScore?: number;
   engineEligible?: boolean;
+  /** Hard-blocker codes from the cache — populated only when engineEligible is false. */
+  blockerCodes?: string[];
 }
 
 export interface SemanticMatchesResult {
@@ -253,7 +255,7 @@ export async function getSemanticMatchesForInternal(
     internalCandidateId: new Types.ObjectId(internalId),
     externalCandidateId: { $in: ranked.map((r) => new Types.ObjectId(String(r.ext._id))) },
   })
-    .select('externalCandidateId matchScore eligible')
+    .select('externalCandidateId matchScore eligible blockerCodes')
     .lean()
     .exec();
   const scoreByExternal = new Map(
@@ -287,6 +289,7 @@ export async function getSemanticMatchesForInternal(
       highlights: buildHighlights(internalProfile, extProfile, chunkSims),
       matchScore: cached?.matchScore,
       engineEligible: cached?.eligible,
+      blockerCodes: cached && !cached.eligible ? (cached.blockerCodes ?? []) : undefined,
     };
   });
 
