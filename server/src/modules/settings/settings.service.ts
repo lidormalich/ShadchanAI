@@ -48,6 +48,7 @@ export type SettingKey =
   // Extraction pipeline thresholds (services/extraction/orchestrator.ts).
   | 'extraction.auto_create_confidence'
   | 'extraction.regex_skip_ai_confidence'
+  | 'extraction.ai_corroboration_confidence'
   // Candidate learning agent (services/ai/candidate-learning.service.ts).
   | 'learning.refresh_enabled'
   | 'learning.refresh_limit'
@@ -153,6 +154,11 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
     key: 'extraction.regex_skip_ai_confidence',
     type: 'number', min: 0, max: 1, default: 0.8,
     description: 'סף ביטחון של חילוץ ה-regex שמעליו מדלגים על קריאת AI (כרטיס מלא ומובנה)',
+  },
+  'extraction.ai_corroboration_confidence': {
+    key: 'extraction.ai_corroboration_confidence',
+    type: 'number', min: 0, max: 1, default: 0.85,
+    description: 'סף ביטחון ליצירה אוטומטית מכרטיס ללא תוויות (פורמט אימוג\'י/פוזיציוני) כשה-AI חילץ שם+גיל+עיר/גובה עקביים — אישוש חלופי ל-regex',
   },
   'learning.refresh_enabled': {
     key: 'learning.refresh_enabled',

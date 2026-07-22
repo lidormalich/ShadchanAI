@@ -25,6 +25,9 @@ const ExternalCandidateDetailPage = lazy(() =>
 const MatchesPipelinePage = lazy(() =>
   import('./pages/matches/MatchesPipelinePage').then((m) => ({ default: m.MatchesPipelinePage })),
 );
+const SuggestionsByCandidatePage = lazy(() =>
+  import('./pages/matches/SuggestionsByCandidatePage').then((m) => ({ default: m.SuggestionsByCandidatePage })),
+);
 const ProposalInboxPage = lazy(() =>
   import('./pages/inbox/ProposalInboxPage').then((m) => ({ default: m.ProposalInboxPage })),
 );
@@ -109,6 +112,7 @@ const appChildren = [
   { path: 'candidates/failed', element: lazyPage(<FailedCandidatesPage />) },
   { path: 'inbox', element: lazyPage(<ProposalInboxPage />) },
   { path: 'matches', element: lazyPage(<MatchesPipelinePage />) },
+  { path: 'matches/by-candidate', element: lazyPage(<SuggestionsByCandidatePage />) },
   { path: 'matches/:id', element: lazyPage(<MatchDetailPage />) },
   { path: 'smart-matches', element: lazyPage(<SmartMatchesPage />) },
   { path: 'check-candidates', element: lazyPage(<CandidateCheckPage />) },

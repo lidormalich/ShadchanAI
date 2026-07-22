@@ -58,16 +58,29 @@ const preview = (s: string): string => s.replace(/\s+/g, ' ').slice(0, 60);
 // these constants are only the fallbacks when settings reads fail.
 const REGEX_CONFIDENCE_SKIP_AI_DEFAULT = 0.8; // regex this good → trust, don't call AI
 const AI_CONFIDENCE_AUTO_CREATE_DEFAULT = 0.7; // AI confidence below this → needs_review
+// Stricter bar for the label-less "structured AI agreement" corroboration path:
+// higher than auto_create because here the AI's read is the ONLY signal (no
+// regex structure), so we demand more confidence before trusting it to create.
+const AI_CORROBORATION_CONFIDENCE_DEFAULT = 0.85;
 
-async function resolveThresholds(): Promise<{ regexSkipAi: number; autoCreate: number }> {
+async function resolveThresholds(): Promise<{ regexSkipAi: number; autoCreate: number; aiCorroborate: number }> {
   try {
-    const [regexSkipAi, autoCreate] = await Promise.all([
+    const [regexSkipAi, autoCreate, aiCorroborate] = await Promise.all([
       getSettingCached('extraction.regex_skip_ai_confidence'),
       getSettingCached('extraction.auto_create_confidence'),
+      getSettingCached('extraction.ai_corroboration_confidence'),
     ]);
-    return { regexSkipAi: regexSkipAi as number, autoCreate: autoCreate as number };
+    return {
+      regexSkipAi: regexSkipAi as number,
+      autoCreate: autoCreate as number,
+      aiCorroborate: aiCorroborate as number,
+    };
   } catch {
-    return { regexSkipAi: REGEX_CONFIDENCE_SKIP_AI_DEFAULT, autoCreate: AI_CONFIDENCE_AUTO_CREATE_DEFAULT };
+    return {
+      regexSkipAi: REGEX_CONFIDENCE_SKIP_AI_DEFAULT,
+      autoCreate: AI_CONFIDENCE_AUTO_CREATE_DEFAULT,
+      aiCorroborate: AI_CORROBORATION_CONFIDENCE_DEFAULT,
+    };
   }
 }
 
@@ -350,7 +363,24 @@ export async function processMessageExtraction(messageId: string): Promise<Extra
   // LLM into {"isProfile":true,"confidence":1} has no labeled card
   // structure, so it lands in needs_review for a human gate instead of
   // minting an ACTIVE candidate straight into the matching engine.
-  const deterministicSignal = regex.isLikelyProfile || regex.matchedFields.length >= 2;
+  //
+  // Second corroboration path — STRUCTURED AI AGREEMENT. Many real cards use a
+  // label-less positional format (e.g. "💫מאיר שמואל 💫26 💫נתניה 💫1.70"): the
+  // regex parser keys on "label: value" and extracts NOTHING, so these perfect,
+  // high-confidence AI reads used to pile up forever in needs_review with no way
+  // out (the label-learner can't learn a format that has no labels). We accept
+  // the AI's read as corroboration ONLY when it independently produced a
+  // consistent CORE identity — name + age + (city or height) — at high
+  // confidence. An injected free-text string won't coincidentally yield all of
+  // those, so the injection guard's intent is preserved while our own formats
+  // stop getting stuck. Tunable via 'extraction.ai_corroboration_confidence'.
+  const aiCorroborated =
+    method === ExtractionMethod.AI &&
+    combinedConfidence >= thresholds.aiCorroborate &&
+    !!profile.firstName &&
+    !!profile.age &&
+    (!!profile.city || !!profile.height);
+  const deterministicSignal = regex.isLikelyProfile || regex.matchedFields.length >= 2 || aiCorroborated;
   const autoCreate = combinedConfidence >= thresholds.autoCreate && deterministicSignal;
   if (!autoCreate) {
     flow.info(

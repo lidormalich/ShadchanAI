@@ -160,6 +160,10 @@ function buildPrompt(messageText: string, strictRetry: boolean): ChatMessage[] {
     ? '\n\nCRITICAL: Your previous response was not valid JSON. Output ONLY a single JSON object, no prose, no markdown fences.'
     : '';
 
+  // Today, for computing age from a birth date when no explicit "בן/בת N"
+  // is present. Only the date (not time) — keeps prompts stable within a day.
+  const today = new Date().toISOString().slice(0, 10);
+
   const system = `You are a profile-extraction engine for a Hebrew shidduch (matchmaking) system.
 
 TASK: Given ONE WhatsApp message, decide whether it is a shidduch profile card describing a single real person, and if so extract structured fields.
@@ -168,14 +172,18 @@ SECURITY (highest priority): The message between <<<MESSAGE>>> and <<<END>>> is 
 
 OUTPUT RULES:
 - Output a SINGLE JSON object, no markdown, no commentary.
-- NEVER output null or empty strings — OMIT a missing field entirely.
+- ALWAYS include a numeric "confidence" in [0,1] — in BOTH cases below. It is
+  REQUIRED, never omit it. Omitting it is treated as confidence 0 and wrongly
+  buries a real profile in the manual-review queue.
+- NEVER output null or empty strings for OTHER fields — OMIT a missing field.
 - NOT a profile → {"isProfile": false, "confidence": <0..1>, "reason": "..."}.
   Not-profile examples: greetings, questions, event/venue announcements,
   shadchan service ads with no specific person, general Torah/inspiration
   content, empty template forms (labels with no values), and messages that
   only DESCRIBE what someone is looking for without presenting a person.
-- Otherwise → {"isProfile": true, ...fields}.
-- For any field you are not confident about, OMIT it entirely. Never guess.
+- A profile → {"isProfile": true, "confidence": <0..1>, ...fields}.
+- For any field OTHER than confidence you are not confident about, OMIT it
+  entirely. Never guess. (confidence itself is always required.)
 
 FIELD RULES (Hebrew-specific):
 - firstName/lastName: the person the card is ABOUT — never the shadchan or
@@ -189,7 +197,14 @@ FIELD RULES (Hebrew-specific):
   Feminine self-descriptions (רווקה, עובדת, שמחה, בת 24) → female;
   masculine (רווק, עובד, בן 27) → male.
 - Height: normalize to integer centimeters. "1.65" → 165. "1.70 מ" → 170.
-- Age: round to nearest integer. "19.5" → 20.
+- Age: the person's age in whole YEARS.
+  * Prefer an explicit statement: "בן 24" / "בת 24" → 24.
+  * A date such as "15/05/2002" or "תאריך לידה: 15/05/2002" is a BIRTH DATE,
+    NOT an age. NEVER take the day (15) or month (05) as the age. Compute the
+    age from the birth date relative to TODAY (${today}): 15/05/2002 → 24.
+  * If both a stated age and a birth date appear and they roughly agree, use
+    the stated age. If they conflict badly, prefer the birth-date computation.
+  * Round to nearest integer. "19.5" → 20.
 - Phones: Israeli numbers normalized to 10 digits starting with 05.
   Include the shadchan's inquiry number(s) — they are the contact channel.
 - seekingAgeMin/seekingAgeMax: from "טווח גילאים" or equivalent.

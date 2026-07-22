@@ -9,6 +9,7 @@ import {
   Hourglass,
   Inbox,
   LayoutDashboard,
+  ListChecks,
   MailOpen,
   MessageCircle,
   MessageSquare,
@@ -46,7 +47,8 @@ const NAV: NavGroup[] = [
     title: 'שידוך',
     items: [
       { to: '/inbox', label: 'תיבת ההצעות', icon: <MailOpen className="h-4 w-4" />, badge: 'inbox' },
-      { to: '/matches', label: 'הצעות שידוך', icon: <Heart className="h-4 w-4" /> },
+      { to: '/matches', label: 'הצעות שידוך', icon: <Heart className="h-4 w-4" />, end: true },
+      { to: '/matches/by-candidate', label: 'הצעות לפי מועמד', icon: <ListChecks className="h-4 w-4" /> },
       { to: '/smart-matches', label: 'הצעה חכמה', icon: <Sparkles className="h-4 w-4" /> },
       { to: '/check-candidates', label: 'בדוק מועמדים', icon: <ClipboardCheck className="h-4 w-4" /> },
       { to: '/chats', label: 'שיחות', icon: <MessageSquare className="h-4 w-4" /> },

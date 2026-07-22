@@ -258,6 +258,25 @@ export function normalizeLabel(s: string): string {
 // ── Value parsers ────────────────────────────────────────
 
 export function parseAge(raw: string): { age?: number; ageText?: string } {
+  // A full birth DATE ("15/05/2002", "15.5.2002", "15-05-2002") → compute the
+  // age from it. Must run BEFORE the 1-2 digit grab below, otherwise the
+  // day-of-month ("15") is misread as the age — the exact bug that sent
+  // "תאריך לידה: 15/05/2002" (a 24-year-old) to the failed queue as age 15.
+  // Israeli order is dd/mm/yyyy; the 4-digit year is the reliable anchor.
+  const dob = raw.match(/\b(\d{1,2})[./-](\d{1,2})[./-](19\d{2}|20[0-2]\d)\b/);
+  if (dob) {
+    const day = Number(dob[1]);
+    const month = Number(dob[2]);
+    const year = Number(dob[3]);
+    const now = new Date();
+    let age = now.getFullYear() - year;
+    // Subtract one if this year's birthday hasn't occurred yet.
+    const m = month >= 1 && month <= 12 ? month : 1;
+    const d = day >= 1 && day <= 31 ? day : 1;
+    if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age -= 1;
+    if (age >= 15 && age <= 99) return { age, ageText: raw };
+  }
+
   // Prefer an explicit 1-2 digit age. Remove any 4-digit years first so
   // "1981" doesn't get read as "19"; and so "30 (ילידת 1994)" still yields 30.
   const withoutYear = raw.replace(/\b(?:19\d{2}|20[0-2]\d)\b/g, ' ');
