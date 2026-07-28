@@ -54,7 +54,7 @@ function codeFromText(category: string, normalized: string): string {
 export interface IngestReasonInput {
   category: string;
   text: string;
-  source: 'deterministic' | 'ai' | 'operator';
+  source: 'deterministic' | 'ai' | 'operator' | 'candidate';
   performedBy?: string;
   /**
    * Stable code for deterministic reasons (e.g. a blocker code). When

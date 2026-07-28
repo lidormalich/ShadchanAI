@@ -46,7 +46,8 @@ import { useSetPageTitle } from '@/layouts/PageTitleContext';
 import { isNotFoundError } from '@/utils/apiError';
 import { label } from '@/utils/labels';
 import { formatDate, formatDateTime } from '@/utils/format';
-import type { MatchSuggestion } from '@/types/domain';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
+import type { CandidateVerdict, MatchSuggestion } from '@/types/domain';
 
 export function ExternalCandidateDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -307,6 +308,7 @@ type MatchingRow = {
   matchScore?: number;
   confidenceScore?: number;
   matchType?: string;
+  candidateVerdict?: CandidateVerdict;
 };
 
 function MatchingInternals({
@@ -360,10 +362,11 @@ function MatchingInternalRow({ row, externalCandidateId }: { row: MatchingRow; e
     <li className="rounded-md border border-border bg-white p-3 flex items-center gap-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate">{internalName}</div>
-        <div className="text-xs text-ink-muted">
+        <div className="text-xs text-ink-muted flex items-center gap-1.5 flex-wrap">
           <Badge tone={row.matchType === 'safe' ? 'success' : row.matchType === 'balanced' ? 'brand' : 'warning'}>
             {label('matchType', row.matchType)}
           </Badge>
+          <CandidateVerdictBadge verdict={row.candidateVerdict} />
         </div>
       </div>
       <div className="text-end shrink-0 w-14">
@@ -465,6 +468,7 @@ function SuggestionRow({ m, externalName }: { m: MatchSuggestionRow; externalNam
             {label('matchType', m.matchType)}
           </Badge>
           <Badge tone={m.isDeferred ? 'warning' : 'neutral'}>{label('matchStatus', m.status)}</Badge>
+          <CandidateVerdictBadge verdict={m.candidateVerdict} />
         </div>
       </div>
       <div className="flex items-center justify-between gap-3 flex-wrap sm:justify-end">

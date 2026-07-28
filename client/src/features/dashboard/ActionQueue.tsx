@@ -24,6 +24,7 @@ import { EmptyState, LoadingSkeleton } from '@/components/states/states';
 import { OwnerChip } from '@/features/users/OwnerChip';
 import { tasksApi } from '@/services/api/tasks';
 import { toast } from '@/components/ui/Toast';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 import type {
   DashboardRow,
   DashboardRowType,
@@ -98,6 +99,14 @@ const Row = React.memo(function Row({ row }: { row: DashboardRow }) {
           <Badge tone={c.tone}>{c.label}</Badge>
           <div className="text-sm font-medium truncate">{row.title}</div>
         </div>
+        {row.pair && (
+          <div className="mt-0.5 flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-ink truncate">
+              {row.pair.internalName} <span className="text-ink-faint">·</span> {row.pair.externalName}
+            </span>
+            <CandidateVerdictBadge verdict={row.pair.candidateVerdict} />
+          </div>
+        )}
         <div className="mt-1 flex items-center gap-3 flex-wrap text-xs text-ink-muted">
           {row.context && <span className="truncate max-w-[32ch]">{row.context}</span>}
           <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{age}</span>

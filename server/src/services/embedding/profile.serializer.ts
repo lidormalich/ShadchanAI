@@ -42,7 +42,7 @@ import type { ChunkTexts } from './embedding.types.js';
 // Translating to Hebrew significantly improves retrieval quality
 // for the religious-identity chunk in particular.
 
-const SECTOR_GROUP_HE: Record<SectorGroup, string> = {
+export const SECTOR_GROUP_HE: Record<SectorGroup, string> = {
   dati_leumi: 'דתי לאומי',
   haredi:     'חרדי',
   dati:       'דתי',
@@ -52,7 +52,7 @@ const SECTOR_GROUP_HE: Record<SectorGroup, string> = {
   other:      'אחר',
 };
 
-const SUB_SECTOR_HE: Record<SubSector, string> = {
+export const SUB_SECTOR_HE: Record<SubSector, string> = {
   dati_leumi_open:    'דתי לאומי פתוח',
   dati_leumi_classic: 'דתי לאומי קלאסי',
   dati_leumi_torani:  'דתי לאומי תורני',
@@ -67,7 +67,7 @@ const SUB_SECTOR_HE: Record<SubSector, string> = {
   other:              'אחר',
 };
 
-const LIFESTYLE_TONE_HE: Record<LifestyleTone, string> = {
+export const LIFESTYLE_TONE_HE: Record<LifestyleTone, string> = {
   very_strict: 'מחמיר מאוד',
   strict:      'מחמיר',
   moderate:    'ממוצע',
@@ -75,7 +75,7 @@ const LIFESTYLE_TONE_HE: Record<LifestyleTone, string> = {
   flexible:    'גמיש',
 };
 
-const RELIGIOUS_STYLE_HE: Record<ReligiousStyle, string> = {
+export const RELIGIOUS_STYLE_HE: Record<ReligiousStyle, string> = {
   halachic_strict:       'הלכתי מחמיר',
   halachic_mainstream:   'הלכתי מרכזי',
   traditional_observant: 'מסורתי שומר',
@@ -83,7 +83,7 @@ const RELIGIOUS_STYLE_HE: Record<ReligiousStyle, string> = {
   cultural:              'תרבותי-דתי',
 };
 
-const PERSONAL_STATUS_HE: Record<PersonalStatus, string> = {
+export const PERSONAL_STATUS_HE: Record<PersonalStatus, string> = {
   single:    'רווק/ה',
   divorced:  'גרוש/ה',
   widowed:   'אלמן/ה',
@@ -102,7 +102,7 @@ const LIFE_STAGE_HE: Record<LifeStage, string> = {
   mature:            'בשל/ה',
 };
 
-const STUDY_WORK_HE: Record<StudyWorkDirection, string> = {
+export const STUDY_WORK_HE: Record<StudyWorkDirection, string> = {
   full_time_torah:     'לומד/ת תורה במשרה מלאה',
   torah_with_work:     'תורה ועבודה',
   academic_studies:    'לימודים אקדמיים',
@@ -149,7 +149,7 @@ const AGE_FLEXIBILITY_HE: Record<string, string> = {
   very_flexible:     'גמיש/ה מאוד',
 };
 
-const IMPORTANCE_HE: Record<string, string> = {
+export const IMPORTANCE_HE: Record<string, string> = {
   must_have:   'חובה',
   important:   'חשוב',
   nice_to_have:'רצוי',
@@ -159,7 +159,7 @@ const IMPORTANCE_HE: Record<string, string> = {
 // Human-readable Hebrew labels for known preference field names.
 // Unknown fields fall back to the raw field name — still useful for
 // the model even without a perfect translation.
-const PREF_FIELD_LABEL_HE: Record<string, string> = {
+export const PREF_FIELD_LABEL_HE: Record<string, string> = {
   city:               'עיר',
   sectorGroup:        'מגזר',
   subSector:          'תת-מגזר',

@@ -27,6 +27,16 @@ export interface DashboardRowBase {
   urgencyTier: number;      // 1 = most urgent, 9 = least (used for sort)
   primaryAction: string;    // verb shown on the primary button
   route: string;            // where the client should navigate on click
+  // Resolved pair identity for match-suggestion rows (batch-decorated
+  // in buildDashboardQueue) — lets the queue show WHO the row is about
+  // plus the candidate's own swipe verdict ("היכרות חכמה").
+  pair?: {
+    internalCandidateId: string;
+    externalCandidateId: string;
+    internalName: string;
+    externalName: string;
+    candidateVerdict?: { verdict: 'like' | 'reject' | 'skip'; reasons: string[]; at?: string };
+  };
 }
 
 export interface NeedsReviewRow extends DashboardRowBase {

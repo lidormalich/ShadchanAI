@@ -44,3 +44,11 @@ export const aiRateLimiter = rateLimit(baseConfig(env.RATE_LIMIT_AI_PER_MIN));
 
 export const defaultRateLimiter = rateLimit(baseConfig(env.RATE_LIMIT_DEFAULT_PER_MIN));
 
+// Public discovery ("היכרות חכמה") swipe endpoints: no auth exists there,
+// so always key by IP. 60/min is generous for one human swiping and tight
+// enough to make scraping the card feed unattractive.
+export const publicDiscoveryRateLimiter = rateLimit({
+  ...baseConfig(60),
+  keyGenerator: (req) => req.ip ?? 'unknown',
+});
+

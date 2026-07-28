@@ -3,7 +3,8 @@ import { AlertTriangle, ArrowUpRight, Lightbulb, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { aiApi } from '@/services/api/ai';
-import type { AskAIResult } from '@/types/domain';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
+import type { AskAIResult, CandidateVerdict } from '@/types/domain';
 import { Drawer } from '@/components/ui/Drawer';
 import { Badge, Button, Card, CardBody, Spinner, Table, TBody, Td, Textarea, Th, THead, Tabs, Tr } from '@/components/ui/primitives';
 import { EmptyState } from '@/components/states/states';
@@ -217,6 +218,7 @@ interface MatchRowLike {
   matchType?: string;
   riskLevel?: string;
   eligible?: boolean;
+  candidateVerdict?: CandidateVerdict;
 }
 
 function isMatchRow(r: unknown): r is MatchRowLike {
@@ -280,6 +282,7 @@ function MatchRowsTable({ items }: { items: MatchRowLike[] }) {
               {r.age != null && <span className="num">גיל {r.age}</span>}
               {r.city && <span>{r.city}</span>}
               {r.matchType && <Badge tone={matchTypeTone(r.matchType)}>{label('matchType', r.matchType)}</Badge>}
+              <CandidateVerdictBadge verdict={r.candidateVerdict} />
             </div>
             <div className="flex items-center gap-3 text-sm">
               <span className="num font-semibold">ציון {r.matchScore}</span>
@@ -313,9 +316,12 @@ function MatchRowsTable({ items }: { items: MatchRowLike[] }) {
               <Td className="num">{r.age ?? '—'}</Td>
               <Td>{r.city ?? '—'}</Td>
               <Td>
-                {r.matchType
-                  ? <Badge tone={matchTypeTone(r.matchType)}>{label('matchType', r.matchType)}</Badge>
-                  : '—'}
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  {r.matchType
+                    ? <Badge tone={matchTypeTone(r.matchType)}>{label('matchType', r.matchType)}</Badge>
+                    : '—'}
+                  <CandidateVerdictBadge verdict={r.candidateVerdict} />
+                </span>
               </Td>
               <Td className="num font-semibold">{r.matchScore}</Td>
               <Td className="num">{r.confidenceScore ?? '—'}</Td>

@@ -1,5 +1,9 @@
 import { api } from './client';
-import type { BlockerReason } from '@/types/domain';
+import type { BlockerReason, CandidateVerdict } from '@/types/domain';
+
+// Canonical definition lives in types/domain — re-exported here because
+// every pair-surface DTO in this file references it.
+export type { CandidateVerdict } from '@/types/domain';
 
 // ── Types (mirror server/src/modules/pair-reviews) ───────────
 
@@ -122,6 +126,9 @@ export interface CompatibilityRow {
   reviewedBy?: string;
   reviewHistoryCount?: number;
   pairReviewId?: string;
+  // The candidate's own verdict on this pair from a public "היכרות
+  // חכמה" swipe session (first-person evidence, advisory only).
+  candidateVerdict?: CandidateVerdict;
   aiExplanation?: PairReviewAIExplanation;
 }
 
@@ -170,6 +177,7 @@ export interface PairCheckResult {
   forceability: 'none' | 'with_reason' | 'not_blocked';
   bucket: CompatibilityBucket;
   explanation: DeterministicExplanation;
+  candidateVerdict?: CandidateVerdict;
   existingSuggestion?: {
     matchSuggestionId: string;
     status: string;
@@ -250,6 +258,8 @@ export interface SemanticMatchRow {
   engineEligible?: boolean;
   /** Hard-blocker codes — present only when engineEligible is false. */
   blockerCodes?: string[];
+  /** The candidate's own verdict from a "היכרות חכמה" swipe session. */
+  candidateVerdict?: CandidateVerdict;
 }
 
 export interface SemanticMatchesResult {

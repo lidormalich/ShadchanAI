@@ -19,7 +19,9 @@
 
 import mongoose, { Schema, type Document, Types } from 'mongoose';
 
-export type RejectionReasonSource = 'deterministic' | 'ai' | 'operator';
+// 'candidate' — reasons stated by the candidate THEMSELVES in a public
+// discovery ("היכרות חכמה") swipe session, not by an operator or the AI.
+export type RejectionReasonSource = 'deterministic' | 'ai' | 'operator' | 'candidate';
 
 export interface IRejectionReason extends Document {
   // Stable slug. Deterministic reasons reuse a fixed code (e.g.
@@ -50,7 +52,7 @@ const rejectionReasonSchema = new Schema<IRejectionReason>(
     normalizedText: { type: String, required: true },
     source: {
       type: String,
-      enum: ['deterministic', 'ai', 'operator'],
+      enum: ['deterministic', 'ai', 'operator', 'candidate'],
       required: true,
     },
     usageCount: { type: Number, default: 1, min: 0 },

@@ -272,6 +272,14 @@ export interface ScoreDimensionView {
   detail?: string;
 }
 
+// The internal candidate's OWN swipe verdict on a pair, from a public
+// "היכרות חכמה" session. Decorates every operator pair surface.
+export interface CandidateVerdict {
+  verdict: 'like' | 'reject' | 'skip';
+  reasons: string[];
+  at?: string;
+}
+
 export interface MatchSuggestion {
   _id: string;
   internalCandidateId: string;
@@ -280,6 +288,8 @@ export interface MatchSuggestion {
   // that don't enrich.
   internalName?: string;
   externalName?: string;
+  // Candidate's own swipe verdict (added by listMatches / match detail).
+  candidateVerdict?: CandidateVerdict;
   eligible: boolean;
   status: MatchSuggestionStatus;
   matchScore: number;
@@ -353,6 +363,7 @@ export interface BlockedMatchItem {
   sectorGroup?: SectorGroup;
   blockers: BlockerReason[];
   aggregateOverridable: 'none' | 'with_reason';
+  candidateVerdict?: CandidateVerdict;
 }
 
 // ── Conversation / Message ───────────────────────────────

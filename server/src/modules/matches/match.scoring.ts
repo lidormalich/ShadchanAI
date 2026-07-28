@@ -21,6 +21,10 @@ import {
 import { computeReadiness } from '../candidates/internal-candidate.service.js';
 import type { MatchResult } from '../../services/matching/matching.types.js';
 import { buildSemanticSimilarityMap } from '../../services/embedding/semantic-similarity.service.js';
+import {
+  loadCandidateVerdictMap,
+  type CandidateVerdictInfo,
+} from '../discovery/discovery-verdicts.js';
 import { getMatchById } from './match.query.js';
 
 // Re-export the context builder so existing callers that imported it
@@ -125,6 +129,9 @@ export interface FindMatchItem {
   strengths: string[];
   attentionPoints: string[];
   recommendedAction: MatchResult['recommendedAction'];
+  /** The candidate's OWN verdict on this pair from a "היכרות חכמה"
+   *  swipe session — first-person evidence, advisory only. */
+  candidateVerdict?: CandidateVerdictInfo | undefined;
 }
 
 // Upper bound on how many externals we pull into memory and score in a
@@ -160,6 +167,8 @@ export async function findMatchesForInternal(
   );
   if (semantic) ctx.semanticSimilarities = semantic;
   const matchable = toMatchableInternal(internal);
+  // Candidate's own swipe verdicts ("היכרות חכמה") — advisory decoration.
+  const candidateVerdicts = await loadCandidateVerdictMap(internalId);
 
   const results: FindMatchItem[] = [];
   for (const ext of externals) {
@@ -179,6 +188,7 @@ export async function findMatchesForInternal(
       strengths: r.strengths,
       attentionPoints: r.attentionPoints,
       recommendedAction: r.recommendedAction,
+      candidateVerdict: candidateVerdicts.get(String(ext._id)),
     });
   }
 
@@ -211,6 +221,8 @@ export interface BlockedMatchItem {
   //   'none'        → at least one blocker is non-overridable (force rejected)
   //   'with_reason' → every blocker is overridable with justification
   aggregateOverridable: 'none' | 'with_reason';
+  /** The candidate's own swipe verdict on this pair ("היכרות חכמה"). */
+  candidateVerdict?: CandidateVerdictInfo | undefined;
 }
 
 export async function findBlockedForInternal(
@@ -239,6 +251,7 @@ export async function findBlockedForInternal(
 
   const ctx = await buildEngineContext(internalId, mode);
   const matchable = toMatchableInternal(internal);
+  const candidateVerdicts = await loadCandidateVerdictMap(internalId);
 
   const results: BlockedMatchItem[] = [];
   for (const ext of externals) {
@@ -254,6 +267,7 @@ export async function findBlockedForInternal(
       sectorGroup: ext['sectorGroup'] as string | undefined,
       blockers: r.blockers,
       aggregateOverridable: anyNonOverridable ? 'none' : 'with_reason',
+      candidateVerdict: candidateVerdicts.get(String(ext._id)),
     });
     if (results.length >= limit) break;
   }

@@ -57,6 +57,10 @@ import { loadChunksForQuery } from '../embedding/embedding.service.js';
 import type { CandidateChunks } from '../embedding/embedding.types.js';
 import type { MatchableInternal, MatchableExternal, MatchingContext } from './matching.types.js';
 import type { PairScoreBucket, ScoreDirection, ScanMode, ScanStatus } from '../../modules/matches/pair-score.model.js';
+import {
+  loadCandidateVerdictMaps,
+  type CandidateVerdictInfo,
+} from '../../modules/discovery/discovery-verdicts.js';
 
 const log = createLogger('match-scan');
 
@@ -712,6 +716,9 @@ export interface ScanResultItem {
   // the UI can show why it ended and link into the closed suggestion.
   closeStatus?: 'closed' | 'expired';
   closeReason?: string;
+  // The internal candidate's OWN verdict on this pair from a "היכרות
+  // חכמה" swipe session — first-person evidence, advisory only.
+  candidateVerdict?: CandidateVerdictInfo;
 }
 
 export interface ScanResultsQuery {
@@ -827,9 +834,10 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
 
   const internalIds = [...new Set(visible.map((r) => String(r.internalCandidateId)))];
   const externalIds = [...new Set(visible.map((r) => String(r.externalCandidateId)))];
-  const [internals, externals] = await Promise.all([
+  const [internals, externals, verdictMaps] = await Promise.all([
     InternalCandidate.find({ _id: { $in: internalIds } }).select('firstName lastName').lean().exec(),
     ExternalCandidate.find({ _id: { $in: externalIds } }).select('firstName lastName').lean().exec(),
+    loadCandidateVerdictMaps(internalIds),
   ]);
   const nameOf = (c: { firstName?: string; lastName?: string }) =>
     `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם';
@@ -862,6 +870,10 @@ export async function listScanResults(query: ScanResultsQuery): Promise<ScanResu
       ageOutOfRange: r.ageOutOfRange ?? false,
       ...(reviewReasons.get(keyOf(r)) ? { reviewReason: reviewReasons.get(keyOf(r)) } : {}),
       ...(closed ? { closeStatus: closed.status, closeReason: closed.reason } : {}),
+      ...(() => {
+        const v = verdictMaps.get(String(r.internalCandidateId))?.get(String(r.externalCandidateId));
+        return v ? { candidateVerdict: v } : {};
+      })(),
     };
   });
 }

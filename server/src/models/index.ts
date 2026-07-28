@@ -71,3 +71,15 @@ export type { ICandidateInsight } from '../modules/candidates/candidate-insight.
 
 export { CoverageReport } from '../modules/channels/coverage-report.model.js';
 export type { ICoverageReport, ICoverageChatEntry } from '../modules/channels/coverage-report.model.js';
+
+export { DiscoverySession } from '../modules/discovery/discovery-session.model.js';
+export type {
+  IDiscoverySession,
+  IDiscoveryCard,
+  IDiscoveryAISummary,
+  IDiscoveryWizard,
+  IDiscoveryWizardQuestion,
+  IDiscoveryTraitPicks,
+  DiscoverySessionStatus,
+  DiscoveryVerdict,
+} from '../modules/discovery/discovery-session.model.js';

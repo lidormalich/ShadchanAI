@@ -16,10 +16,12 @@ import { OwnerChip } from '@/features/users/OwnerChip';
 import { BlockedCandidatesList } from '@/features/matching/BlockedCandidatesList';
 import { isTerminalMatchStatus } from '@/utils/matchStatus';
 import { CompatibilityWorkspace } from '@/features/compatibility/CompatibilityWorkspace';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 import { SourceCardTab } from '@/features/candidates/SourceCardTab';
 import { CandidatePhoto } from '@/features/candidates/CandidatePhoto';
 import { PhotoTab } from '@/features/candidates/PhotoTab';
 import { CandidateInsightTab } from '@/features/candidates/CandidateInsightTab';
+import { DiscoverySessionsPanel } from '@/features/discovery/DiscoverySessionsPanel';
 import { InsightFitBadge, useInsightFits } from '@/features/matches/InsightFitBadge';
 import { ReadinessIndicator } from '@/components/domain/ReadinessIndicator';
 import { ClosedBanner, DatingStatusBanner, DeferredSuggestionsBanner } from '@/components/domain/banners';
@@ -216,6 +218,11 @@ export function InternalCandidateDetailPage() {
                 content: <CandidateInsightTab candidateId={c._id} />,
               },
               {
+                id: 'discovery',
+                label: 'היכרות חכמה',
+                content: <DiscoverySessionsPanel internalCandidateId={c._id} />,
+              },
+              {
                 id: 'source',
                 label: 'כרטיס מקורי',
                 content: <SourceCardTab kind="internal" candidateId={c._id} />,
@@ -407,6 +414,7 @@ function FindMatchesDialog({
                       </Badge>
                       {m.sectorGroup && <Badge tone="neutral">{label('sectorGroup', m.sectorGroup)}</Badge>}
                       <InsightFitBadge fit={fitFor(internalCandidateId, m.externalCandidateId)} />
+                      <CandidateVerdictBadge verdict={m.candidateVerdict} />
                     </div>
                     <div className="text-xs text-ink-muted mt-1 flex items-center gap-2 flex-wrap">
                       {m.city && <span>{m.city}</span>}
@@ -527,7 +535,12 @@ function SuggestionsTable({ items, loading }: { items: SuggestionTableRow[]; loa
                   {m.externalName ?? m.externalCandidateId.slice(-8)}
                 </Link>
               </Td>
-              <Td><Badge tone={m.matchType === 'safe' ? 'success' : m.matchType === 'balanced' ? 'brand' : 'warning'}>{label('matchType', m.matchType)}</Badge></Td>
+              <Td>
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  <Badge tone={m.matchType === 'safe' ? 'success' : m.matchType === 'balanced' ? 'brand' : 'warning'}>{label('matchType', m.matchType)}</Badge>
+                  <CandidateVerdictBadge verdict={m.candidateVerdict} />
+                </span>
+              </Td>
               <Td className="num font-semibold">{m.matchScore}</Td>
               <Td className="num">{m.confidenceScore}</Td>
               <Td><Badge tone={m.isDeferred ? 'warning' : 'neutral'}>{label('matchStatus', m.status)}</Badge></Td>

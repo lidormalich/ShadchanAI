@@ -24,7 +24,8 @@ import { internalToOption, externalToOption } from '@/features/candidates/candid
 import { internalCandidatesApi, externalCandidatesApi } from '@/services/api/candidates';
 import { matchesApi } from '@/services/api/matches';
 import { pairReviewsApi } from '@/services/api/pair-reviews';
-import type { InternalCandidate, ExternalCandidate } from '@/types/domain';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
+import type { CandidateVerdict, InternalCandidate, ExternalCandidate } from '@/types/domain';
 
 interface EvalResult {
   eligible: boolean;
@@ -33,6 +34,7 @@ interface EvalResult {
   matchType: 'safe' | 'balanced' | 'creative' | 'risky';
   hardBlockers: string[];
   blockers?: Array<{ code: string; message: string; overridable: string }>;
+  candidateVerdict?: CandidateVerdict;
 }
 
 const MIN_JUSTIFICATION = 10;
@@ -193,6 +195,7 @@ export function CreateSuggestionDialog({
                   {result.eligible
                     ? <Badge tone="success">כשיר ליצירה</Badge>
                     : <Badge tone="danger">לא כשיר</Badge>}
+                  <CandidateVerdictBadge verdict={result.candidateVerdict} />
                 </div>
                 {!result.eligible && (result.blockers?.length || result.hardBlockers?.length) ? (
                   <div>

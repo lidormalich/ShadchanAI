@@ -12,11 +12,19 @@ import {
 import { NotFoundError } from '../../utils/errors.js';
 import { toSkipLimit, buildSort, makeMeta } from '../../utils/pagination.js';
 import { applyOwnershipFilter } from '../../utils/ownership.js';
+import {
+  loadCandidateVerdictMaps,
+  type CandidateVerdictInfo,
+} from '../discovery/discovery-verdicts.js';
 import type { ListMatchesQuery } from './match.validator.js';
 
 // Match list rows carry resolved candidate names so cards render people,
-// not raw ids. Lightweight projection — names only.
-export type MatchListItem = IMatchSuggestion & { internalName: string; externalName: string };
+// not raw ids, plus the candidate's own swipe verdict where one exists.
+export type MatchListItem = IMatchSuggestion & {
+  internalName: string;
+  externalName: string;
+  candidateVerdict?: CandidateVerdictInfo;
+};
 
 export async function listMatches(
   query: ListMatchesQuery,
@@ -51,9 +59,10 @@ export async function listMatches(
 export async function attachCandidateNames(items: IMatchSuggestion[]): Promise<MatchListItem[]> {
   const internalIds = [...new Set(items.map((m) => String(m.internalCandidateId)))];
   const externalIds = [...new Set(items.map((m) => String(m.externalCandidateId)))];
-  const [internals, externals] = await Promise.all([
+  const [internals, externals, verdictMaps] = await Promise.all([
     InternalCandidate.find({ _id: { $in: internalIds } }).select('firstName lastName').lean().exec(),
     ExternalCandidate.find({ _id: { $in: externalIds } }).select('firstName lastName').lean().exec(),
+    loadCandidateVerdictMaps(internalIds),
   ]);
   const nameOf = (c: { firstName?: string; lastName?: string }) =>
     `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם';
@@ -63,6 +72,7 @@ export async function attachCandidateNames(items: IMatchSuggestion[]): Promise<M
     ...m,
     internalName: internalNames.get(String(m.internalCandidateId)) ?? 'ללא שם',
     externalName: externalNames.get(String(m.externalCandidateId)) ?? 'ללא שם',
+    candidateVerdict: verdictMaps.get(String(m.internalCandidateId))?.get(String(m.externalCandidateId)),
   })) as unknown as MatchListItem[];
 }
 

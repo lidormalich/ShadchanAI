@@ -31,7 +31,7 @@ const log = createLogger('semantic.similarity');
 
 // ── Pure math ─────────────────────────────────────────────
 
-function cosine(a: number[], b: number[]): number | undefined {
+export function cosine(a: number[], b: number[]): number | undefined {
   if (a.length === 0 || a.length !== b.length) return undefined;
   let dot = 0;
   let normA = 0;

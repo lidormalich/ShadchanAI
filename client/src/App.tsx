@@ -61,6 +61,7 @@ const MonitoringPage = lazy(() =>
 );
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
+const MeetPage = lazy(() => import('./pages/public/MeetPage').then((m) => ({ default: m.MeetPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -131,6 +132,9 @@ const appChildren = [
 
 const router = createBrowserRouter([
   { path: '/login', element: <LoginPage />, errorElement: <RouteError /> },
+  // Public "היכרות חכמה" swipe link — no auth, no AppShell. The session
+  // token in the URL is the credential (validated server-side).
+  { path: '/meet/:token', element: lazyPage(<MeetPage />), errorElement: <RouteError /> },
   {
     path: '/',
     element: <RequireAuth><AppShell /></RequireAuth>,

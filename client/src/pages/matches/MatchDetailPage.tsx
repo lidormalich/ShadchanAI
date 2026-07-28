@@ -16,6 +16,7 @@ import { AskAIPanel } from '@/features/ai/AskAIPanel';
 import { StatusReasonDialog } from '@/features/matches/StatusReasonDialog';
 import { MatchOutcomeDialog, type OutcomePayload } from '@/features/matches/MatchOutcomeDialog';
 import { InsightFitBadge, useInsightFits } from '@/features/matches/InsightFitBadge';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
@@ -301,6 +302,7 @@ export function MatchDetailPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <MatchTypeBadge type={m.matchType} />
             {internalId && externalId && <InsightFitBadge fit={fitFor(internalId, externalId)} />}
+            <CandidateVerdictBadge verdict={m.candidateVerdict} />
             {m.status === 'dating' && <Badge tone="success">יוצאים 💚</Badge>}
             {terminal && <Badge tone="neutral">{label('matchStatus', m.status)}</Badge>}
             {m.isDeferred && <Badge tone="warning">מושהה</Badge>}

@@ -9,6 +9,7 @@ import { OwnershipFilter } from '@/features/ownership/OwnershipFilter';
 import { matchesApi } from '@/services/api/matches';
 import { isTerminalMatchStatus } from '@/utils/matchStatus';
 import { label, matchTypeTone } from '@/utils/labels';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 import type { MatchSuggestion } from '@/types/domain';
 
 // One internal candidate + their suggestions, split into live (open) and
@@ -203,7 +204,10 @@ function SuggestionGroup({
                     </Link>
                   </Td>
                   <Td>
-                    <Badge tone={matchTypeTone(m.matchType)}>{label('matchType', m.matchType)}</Badge>
+                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                      <Badge tone={matchTypeTone(m.matchType)}>{label('matchType', m.matchType)}</Badge>
+                      <CandidateVerdictBadge verdict={m.candidateVerdict} />
+                    </span>
                   </Td>
                   <Td className="num font-semibold">{m.matchScore}</Td>
                   <Td className="num">{m.confidenceScore}</Td>

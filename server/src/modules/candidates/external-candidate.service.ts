@@ -39,6 +39,7 @@ import type {
   ListExternalCandidatesQuery,
 } from './external-candidate.validator.js';
 import { findMatches } from '../../services/matching/matching.engine.js';
+import { loadVerdictsForExternal } from '../discovery/discovery-verdicts.js';
 import type { MatchableInternal, MatchableExternal, MatchingContext } from '../../services/matching/matching.types.js';
 
 export async function listExternalCandidates(
@@ -538,6 +539,10 @@ export async function findMatchingInternals(
   }).select('internalCandidateId').lean().exec();
   const endedInternalIds = new Set(endedPairs.map((s) => String(s.internalCandidateId)));
 
+  // Swipe verdicts on THIS external across all internals ("היכרות חכמה") —
+  // shows the operator which internal already liked/rejected this person.
+  const candidateVerdicts = await loadVerdictsForExternal(externalId);
+
   // Group results per internal candidate, keyed by String(internalCandidateId).
   const activeByInternal = new Map<string, typeof activeSuggestions>();
   for (const s of activeSuggestions) {
@@ -582,7 +587,13 @@ export async function findMatchingInternals(
       [toMatchableExternal(external.toObject())],
       ctx,
     );
-    if (r) results.push({ ...r, internalCandidate: { id: String(internal._id), firstName: internal.firstName, lastName: internal.lastName } });
+    if (r) {
+      results.push({
+        ...r,
+        internalCandidate: { id: internalKey, firstName: internal.firstName, lastName: internal.lastName },
+        candidateVerdict: candidateVerdicts.get(internalKey),
+      });
+    }
   }
 
   results.sort((a, b) => ((b as { matchScore: number }).matchScore ?? 0) - ((a as { matchScore: number }).matchScore ?? 0));

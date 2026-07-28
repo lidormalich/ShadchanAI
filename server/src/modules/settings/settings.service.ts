@@ -57,7 +57,16 @@ export type SettingKey =
   // one of the shadchan's internal candidates. Consumed by
   // services/notifications/new-match-alert.service.ts.
   | 'notifications.new_match_alert_enabled'
-  | 'notifications.new_match_alert_phone';
+  | 'notifications.new_match_alert_phone'
+  // "היכרות חכמה" — public preference-discovery swipe links
+  // (modules/discovery). Master switch + cost/size guards.
+  | 'discovery.enabled'
+  | 'discovery.session_ttl_days'
+  | 'discovery.cards_per_batch'
+  | 'discovery.max_cards_per_session'
+  | 'discovery.ai_refine_enabled'
+  | 'discovery.ai_wizard_enabled'
+  | 'discovery.max_ai_calls_per_session';
 
 export interface SettingDef {
   key: SettingKey;
@@ -184,6 +193,44 @@ export const SETTING_DEFS: Record<SettingKey, SettingDef> = {
     type: 'string',
     default: '',
     description: 'מספר הוואטסאפ של המנהל לקבלת התראות התאמה (לדוגמה: 0501234567). ריק = כבוי.',
+  },
+  'discovery.enabled': {
+    key: 'discovery.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'היכרות חכמה: מתג ראשי לקישורים ציבוריים של גילוי העדפות. כיבוי חוסם יצירת קישורים חדשים וגישה לקישורים קיימים.',
+  },
+  'discovery.session_ttl_days': {
+    key: 'discovery.session_ttl_days',
+    type: 'number', min: 1, max: 30, default: 7,
+    description: 'היכרות חכמה: תוקף קישור בימים. יצירה מחדש (regenerate) מאריכה את התוקף.',
+  },
+  'discovery.cards_per_batch': {
+    key: 'discovery.cards_per_batch',
+    type: 'number', min: 3, max: 20, default: 5,
+    description: 'היכרות חכמה: כמה כרטיסים בכל סבב החלקה. בין סבבים המערכת לומדת ומדייקת.',
+  },
+  'discovery.max_cards_per_session': {
+    key: 'discovery.max_cards_per_session',
+    type: 'number', min: 5, max: 60, default: 20,
+    description: 'היכרות חכמה: תקרת כרטיסים כוללת לקישור אחד.',
+  },
+  'discovery.ai_refine_enabled': {
+    key: 'discovery.ai_refine_enabled',
+    type: 'boolean',
+    default: true,
+    description: 'היכרות חכמה: סיכום AI בין סבבים שמדייק את הסבב הבא. כבוי = דירוג דטרמיניסטי + למידת דמיון בלבד.',
+  },
+  'discovery.ai_wizard_enabled': {
+    key: 'discovery.ai_wizard_enabled',
+    type: 'boolean',
+    default: true,
+    description: 'היכרות חכמה: שאלון פתיחה שה-AI מנסח מותאם אישית לפרופיל המועמד. כבוי/נכשל = שאלון קבוע.',
+  },
+  'discovery.max_ai_calls_per_session': {
+    key: 'discovery.max_ai_calls_per_session',
+    type: 'number', min: 0, max: 10, default: 5,
+    description: 'היכרות חכמה: תקרת קריאות AI לסשן אחד (הגנת עלות). 0 = בלי AI בסשן.',
   },
 };
 

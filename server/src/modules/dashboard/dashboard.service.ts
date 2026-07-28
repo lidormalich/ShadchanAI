@@ -19,7 +19,10 @@ import {
   Message,
   Conversation,
   Task,
+  InternalCandidate,
+  ExternalCandidate,
 } from '../../models/index.js';
+import { loadCandidateVerdictMaps } from '../discovery/discovery-verdicts.js';
 import {
   DASHBOARD_THRESHOLDS,
   type DashboardRow,
@@ -103,7 +106,53 @@ export async function buildDashboardQueue(input: BuildQueueInput): Promise<Dashb
     return new Date(a.at).getTime() - new Date(b.at).getTime();
   });
 
-  return merged.slice(0, limit);
+  const visible = merged.slice(0, limit);
+  await attachPairInfo(visible);
+  return visible;
+}
+
+// ── Pair decoration ─────────────────────────────────────────
+//
+// Match-suggestion rows only carried raw ids (or just a matchId), so
+// the queue rendered anonymous "הצעה" lines. Resolve WHO each row is
+// about — names + the candidate's own swipe verdict — in three batch
+// queries, after the final slice so we only decorate what's shown.
+async function attachPairInfo(rows: DashboardRow[]): Promise<void> {
+  const matchRows = rows.filter(
+    (r): r is DashboardRow & { matchId: string } => 'matchId' in r && typeof r.matchId === 'string',
+  );
+  if (matchRows.length === 0) return;
+
+  const suggestions = await MatchSuggestion.find({
+    _id: { $in: [...new Set(matchRows.map((r) => r.matchId))].map((id) => new Types.ObjectId(id)) },
+  }).select('internalCandidateId externalCandidateId').lean().exec();
+  const pairByMatch = new Map(suggestions.map((s) => [String(s._id), {
+    internalCandidateId: String(s.internalCandidateId),
+    externalCandidateId: String(s.externalCandidateId),
+  }]));
+
+  const internalIds = [...new Set([...pairByMatch.values()].map((p) => p.internalCandidateId))];
+  const externalIds = [...new Set([...pairByMatch.values()].map((p) => p.externalCandidateId))];
+  const [internals, externals, verdictMaps] = await Promise.all([
+    InternalCandidate.find({ _id: { $in: internalIds } }).select('firstName lastName').lean().exec(),
+    ExternalCandidate.find({ _id: { $in: externalIds } }).select('firstName lastName').lean().exec(),
+    loadCandidateVerdictMaps(internalIds),
+  ]);
+  const nameOf = (c: { firstName?: string; lastName?: string }) =>
+    `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim() || 'ללא שם';
+  const internalNames = new Map(internals.map((c) => [String(c._id), nameOf(c)]));
+  const externalNames = new Map(externals.map((c) => [String(c._id), nameOf(c)]));
+
+  for (const row of matchRows) {
+    const pair = pairByMatch.get(row.matchId);
+    if (!pair) continue;
+    row.pair = {
+      ...pair,
+      internalName: internalNames.get(pair.internalCandidateId) ?? 'ללא שם',
+      externalName: externalNames.get(pair.externalCandidateId) ?? 'ללא שם',
+      candidateVerdict: verdictMaps.get(pair.internalCandidateId)?.get(pair.externalCandidateId),
+    };
+  }
 }
 
 // Dashboard rows only need scalar fields + the response sub-objects. Exclude

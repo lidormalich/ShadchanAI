@@ -27,6 +27,7 @@ import { matchesApi, type ScanResultItem, type InsightFitResult } from '@/servic
 import { pairReviewsApi } from '@/services/api/pair-reviews';
 import { MatchScanBar } from '@/features/matching/MatchScanBar';
 import { InsightFitBadge, useInsightFits } from '@/features/matches/InsightFitBadge';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 
 type TabId = 'inbox' | 'review_later' | 'rejected' | 'closed';
 
@@ -232,6 +233,7 @@ function ProposalRow({ row, tab, fit }: { row: ScanResultItem; tab: TabId; fit?:
         <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap mt-0.5">
           <Badge tone={matchTypeTone(row.matchType)}>{label('matchType', row.matchType)}</Badge>
           <InsightFitBadge fit={fit} />
+          <CandidateVerdictBadge verdict={row.candidateVerdict} />
           <DeltaBadge row={row} />
           {row.ageOutOfRange && (
             <Badge tone="warning" icon={<AlertTriangle className="h-3 w-3" />}

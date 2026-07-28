@@ -1,5 +1,6 @@
 import { api } from './client';
 import type { MatchSuggestion, SendPreview, BlockedMatchItem } from '@/types/domain';
+import type { CandidateVerdict } from './pair-reviews';
 
 export interface FindMatchItem {
   externalCandidateId: string;
@@ -15,6 +16,8 @@ export interface FindMatchItem {
   strengths: string[];
   attentionPoints: string[];
   recommendedAction: string;
+  /** The candidate's own verdict from a "היכרות חכמה" swipe session. */
+  candidateVerdict?: CandidateVerdict;
 }
 
 export type ScanStatus = 'idle' | 'running' | 'done' | 'error';
@@ -68,6 +71,8 @@ export interface ScanResultItem {
   // why it ended. matchSuggestionId links into the closed suggestion.
   closeStatus?: 'closed' | 'expired';
   closeReason?: string;
+  // The candidate's own swipe verdict from a "היכרות חכמה" session.
+  candidateVerdict?: CandidateVerdict;
 }
 
 export interface MatchExplanationDTO {

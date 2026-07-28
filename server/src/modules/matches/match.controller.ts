@@ -12,6 +12,7 @@ import {
   getSemanticBackfillState,
 } from '../../services/embedding/semantic-backfill.service.js';
 import { insightFitForPairs, type PairInput } from '../../services/ai/insight-fit.service.js';
+import { getCandidateVerdictForPair } from '../discovery/discovery-verdicts.js';
 import { getValidatedQuery, getValidatedParams } from '../../middleware/validate.middleware.js';
 import { ok, created } from '../../utils/response.js';
 import { ensureUser, canApproveMatches } from '../../middleware/permissions.js';
@@ -32,7 +33,14 @@ export async function getHandler(req: Request, res: Response, next: NextFunction
   try {
     ensureUser(req.user);
     const { id } = getValidatedParams<{ id: string }>(req);
-    ok(res, await svc.getMatchById(id));
+    const doc = await svc.getMatchById(id);
+    // Decorate with the candidate's own swipe verdict ("היכרות חכמה")
+    // so the detail page shows first-person evidence next to the engine's.
+    const candidateVerdict = await getCandidateVerdictForPair(
+      String(doc.internalCandidateId),
+      String(doc.externalCandidateId),
+    );
+    ok(res, { ...doc.toObject(), candidateVerdict });
   } catch (e) { next(e); }
 }
 
@@ -45,7 +53,10 @@ export async function evaluateHandler(req: Request, res: Response, next: NextFun
       mode: SourceMode;
     };
     const result = await svc.evaluatePair(internalCandidateId, externalCandidateId, mode);
-    ok(res, result);
+    // MatchResult is the pure engine type — the verdict decoration is
+    // attached at the API boundary, never inside the engine.
+    const candidateVerdict = await getCandidateVerdictForPair(internalCandidateId, externalCandidateId);
+    ok(res, { ...result, candidateVerdict });
   } catch (e) { next(e); }
 }
 

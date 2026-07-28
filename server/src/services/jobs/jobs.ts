@@ -171,6 +171,23 @@ registerJob({
   },
 });
 
+// ── Discovery session expiry ─────────────────────────────
+// Flips overdue "היכרות חכמה" links to expired and folds abandoned
+// sessions with enough verdicts into the learning loop. Expiry is
+// SOFT by design (no TTL index) — the swipe data is a learning
+// corpus and must outlive the link.
+registerJob({
+  name: 'discovery-session-expiry',
+  intervalMs: 60 * 60 * 1000, // hourly
+  async run() {
+    const { sweepExpiredSessions } = await import('../../modules/discovery/discovery-learning.service.js');
+    const { expired, folded } = await sweepExpiredSessions();
+    if (expired > 0 || folded > 0) {
+      log.info({ job: 'discovery-session-expiry', expired, folded }, 'discovery sweep complete');
+    }
+  },
+});
+
 // ── Media-download reconciler ────────────────────────────
 // Retries image downloads that failed at ingest (transient network /
 // socket teardown). Only young messages are retried — WhatsApp media

@@ -1,4 +1,5 @@
 import { api } from './client';
+import type { CandidateVerdict } from '@/types/domain';
 
 export type DashboardRowType =
   | 'needs_review'
@@ -19,6 +20,15 @@ interface Base {
   urgencyTier: number;
   primaryAction: string;
   route: string;
+  // Resolved pair identity for match-suggestion rows: who the row is
+  // about + the candidate's own swipe verdict ("היכרות חכמה").
+  pair?: {
+    internalCandidateId: string;
+    externalCandidateId: string;
+    internalName: string;
+    externalName: string;
+    candidateVerdict?: CandidateVerdict;
+  };
 }
 
 export interface NeedsReviewRow extends Base {

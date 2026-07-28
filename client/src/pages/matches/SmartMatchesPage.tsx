@@ -1,21 +1,26 @@
 // ═══════════════════════════════════════════════════════════
-// SmartMatchesPage — "הצעה חכמה" from the main navigation.
-//
-// Pick an internal candidate → see the vector-similarity ranking
-// (the same SemanticMatchesSection the compatibility board hosts,
-// including the "סרוק עכשיו" embeddings backfill button).
+// SmartMatchesPage — "הצעה חכמה" from the main navigation: the
+// smart inbox for one internal candidate, three intelligence layers
+// side by side —
+//   1. הצעה חכמה   — vector similarity (what the TEXTS say)
+//   2. לפי ההיכרות — revealed-preference ranking (what the CANDIDATE
+//                    chose in their swipe sessions + AI summary)
+//   3. מה למדנו    — the CandidateInsight the AI distilled from ALL
+//                    feedback (suggestions + swipes)
 // The selected candidate is kept in the URL (?candidate=<id>) so the
 // view is deep-linkable and survives refresh.
 // ═══════════════════════════════════════════════════════════
 
 import { useQuery } from '@tanstack/react-query';
-import { Sparkles } from 'lucide-react';
+import { Brain, Heart, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Avatar, Card, CardBody } from '@/components/ui/primitives';
+import { Avatar, Card, CardBody, Tabs } from '@/components/ui/primitives';
 import { CandidatePicker } from '@/components/ui/CandidatePicker';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@/components/states/states';
 import { internalCandidatesApi } from '@/services/api/candidates';
 import { SemanticMatchesSection } from '@/features/compatibility/CompatibilityWorkspace';
+import { DiscoveryRankingSection } from '@/features/discovery/DiscoveryRankingSection';
+import { CandidateInsightTab } from '@/features/candidates/CandidateInsightTab';
 import { internalToOption } from '@/features/candidates/candidateOptions';
 
 export function SmartMatchesPage() {
@@ -43,7 +48,7 @@ export function SmartMatchesPage() {
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-semibold">הצעה חכמה</h2>
             <div className="text-xs text-ink-muted">
-              דירוג מועמדים לפי דמיון וקטורי בטקסטים החופשיים — בחר מועמד/ת פנימי/ת כדי להתחיל
+              שלוש שכבות חוכמה למועמד/ת אחד/ת: דמיון טקסטים, מה שנחשף בהיכרות החכמה, ומה שה-AI למד — בחר מועמד/ת כדי להתחיל
             </div>
           </div>
           <CandidatePicker
@@ -90,7 +95,40 @@ export function SmartMatchesPage() {
               </div>
             </CardBody>
           </Card>
-          <SemanticMatchesSection internalCandidateId={selectedId} />
+          <Tabs
+            tabs={[
+              {
+                id: 'semantic',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4" />
+                    הצעה חכמה
+                  </span>
+                ),
+                content: <SemanticMatchesSection internalCandidateId={selectedId} />,
+              },
+              {
+                id: 'discovery',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Heart className="h-4 w-4" />
+                    לפי ההיכרות
+                  </span>
+                ),
+                content: <DiscoveryRankingSection internalCandidateId={selectedId} />,
+              },
+              {
+                id: 'insight',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Brain className="h-4 w-4" />
+                    מה למדנו
+                  </span>
+                ),
+                content: <CandidateInsightTab candidateId={selectedId} />,
+              },
+            ]}
+          />
         </>
       )}
     </div>

@@ -3,6 +3,7 @@ import { AlertTriangle, Shield, Sparkles, Star } from 'lucide-react';
 import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Card } from '../ui/primitives';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 import type { MatchSuggestion } from '@/types/domain';
 
 const matchTypeMeta: Record<string, { icon: React.ReactNode; tone: 'success' | 'brand' | 'warning' | 'danger'; label: string }> = {
@@ -32,6 +33,7 @@ export const MatchCard = React.memo(function MatchCard({ match, compact }: { mat
               {match.isDeferred && <Badge tone="warning">מושהה</Badge>}
               {match.riskLevel === 'high' && <Badge tone="danger">סיכון גבוה</Badge>}
               {match.flexibilityOverrideApplied && <Badge tone="purple">גמישות</Badge>}
+              <CandidateVerdictBadge verdict={match.candidateVerdict} />
             </div>
             <div className="mt-2 text-sm">
               <div className="font-medium text-ink truncate">{match.internalName ?? `פנימי ${match.internalCandidateId.slice(-6)}`}</div>
@@ -62,5 +64,6 @@ export const MatchCard = React.memo(function MatchCard({ match, compact }: { mat
   prev.match.flexibilityOverrideApplied === next.match.flexibilityOverrideApplied &&
   prev.match.internalCandidateId === next.match.internalCandidateId &&
   prev.match.externalCandidateId === next.match.externalCandidateId &&
-  prev.match.strengths === next.match.strengths,
+  prev.match.strengths === next.match.strengths &&
+  prev.match.candidateVerdict?.verdict === next.match.candidateVerdict?.verdict,
 );

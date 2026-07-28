@@ -26,6 +26,10 @@ import {
 } from './semantic-similarity.service.js';
 import type { ChunkType } from './embedding.types.js';
 import { inferGender } from '../extraction/templates.js';
+import {
+  loadCandidateVerdictMap,
+  type CandidateVerdictInfo,
+} from '../../modules/discovery/discovery-verdicts.js';
 import { createLogger } from '../../utils/logger.js';
 
 const log = createLogger('semantic.match');
@@ -134,6 +138,9 @@ export interface SemanticMatchRow {
   engineEligible?: boolean;
   /** Hard-blocker codes from the cache — populated only when engineEligible is false. */
   blockerCodes?: string[];
+  /** The candidate's OWN verdict on this pair from a "היכרות חכמה"
+   *  swipe session — first-person evidence, advisory only. */
+  candidateVerdict?: CandidateVerdictInfo;
 }
 
 export interface SemanticMatchesResult {
@@ -250,14 +257,18 @@ export async function getSemanticMatchesForInternal(
     .sort((a, b) => b.sim - a.sim)
     .slice(0, limit);
 
-  // Attach cached engine scores for context (single batched read).
-  const pairScores = await PairScore.find({
-    internalCandidateId: new Types.ObjectId(internalId),
-    externalCandidateId: { $in: ranked.map((r) => new Types.ObjectId(String(r.ext._id))) },
-  })
-    .select('externalCandidateId matchScore eligible blockerCodes')
-    .lean()
-    .exec();
+  // Attach cached engine scores for context (single batched read),
+  // plus the candidate's own swipe verdicts ("היכרות חכמה").
+  const [pairScores, candidateVerdicts] = await Promise.all([
+    PairScore.find({
+      internalCandidateId: new Types.ObjectId(internalId),
+      externalCandidateId: { $in: ranked.map((r) => new Types.ObjectId(String(r.ext._id))) },
+    })
+      .select('externalCandidateId matchScore eligible blockerCodes')
+      .lean()
+      .exec(),
+    loadCandidateVerdictMap(internalId),
+  ]);
   const scoreByExternal = new Map(
     pairScores.map((p) => [String(p.externalCandidateId), p]),
   );
@@ -290,6 +301,7 @@ export async function getSemanticMatchesForInternal(
       matchScore: cached?.matchScore,
       engineEligible: cached?.eligible,
       blockerCodes: cached && !cached.eligible ? (cached.blockerCodes ?? []) : undefined,
+      candidateVerdict: candidateVerdicts.get(extId),
     };
   });
 

@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Clock,
   Filter,
+  Heart,
   History,
   Lock,
   RefreshCw,
@@ -59,6 +60,8 @@ import {
 } from '@/services/api/pair-reviews';
 import { matchesApi } from '@/services/api/matches';
 import { externalCandidatesApi } from '@/services/api/candidates';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
+import { DiscoveryRankingSection } from '@/features/discovery/DiscoveryRankingSection';
 import type { ExternalCandidate } from '@/types/domain';
 
 const BUCKET_LABEL: Record<CompatibilityBucket, string> = {
@@ -178,6 +181,16 @@ export function CompatibilityWorkspace({ internalCandidateId }: { internalCandid
               ? <Badge tone="purple">{semantic.data.data.rows.length}</Badge>
               : undefined,
             content: <SemanticMatchesSection internalCandidateId={internalCandidateId} />,
+          },
+          {
+            id: 'discovery-ranking',
+            label: (
+              <span className="inline-flex items-center gap-1.5">
+                <Heart className="h-4 w-4" />
+                לפי ההיכרות
+              </span>
+            ),
+            content: <DiscoveryRankingSection internalCandidateId={internalCandidateId} />,
           },
         ]}
       />
@@ -778,6 +791,7 @@ const SemanticRowItem = memo(function SemanticRowItem({
                 מנוע: {row.matchScore}
               </Badge>
             )}
+            <CandidateVerdictBadge verdict={row.candidateVerdict} />
           </div>
           <div className="text-xs text-ink-muted flex items-center gap-3 flex-wrap">
             {typeof row.age === 'number' && <span className="num">גיל {row.age}</span>}
@@ -899,6 +913,7 @@ const CompatibilityRowItem = memo(function CompatibilityRowItem({
             {row.bucket === 'blocked' && row.forceability === 'none' && (
               <Badge tone="danger"><Lock className="h-3 w-3" /> חסימה קשיחה</Badge>
             )}
+            <CandidateVerdictBadge verdict={row.candidateVerdict} />
           </div>
 
           <div className="text-xs text-ink-muted flex items-center gap-3 flex-wrap">
@@ -1253,6 +1268,11 @@ function PairDrilldownContent({
           <Filter className="h-3 w-3" /> תוצאת מנוע (דטרמיניסטית)
         </div>
         <div className="font-medium">{data.explanation.primary}</div>
+        {data.candidateVerdict && (
+          <div className="mt-1.5">
+            <CandidateVerdictBadge verdict={data.candidateVerdict} />
+          </div>
+        )}
       </div>
 
       {data.engine && (
@@ -1455,8 +1475,9 @@ function PairCheckResultPanel({
     <div className="space-y-3 text-sm">
       <div className="font-medium">{data.explanation.primary}</div>
       {data.engine && (
-        <div className="text-xs text-ink-muted">
-          ציון {data.engine.matchScore} · ביטחון {data.engine.confidenceScore} · סוג: {label('matchType', data.engine.matchType)}
+        <div className="text-xs text-ink-muted flex items-center gap-2 flex-wrap">
+          <span>ציון {data.engine.matchScore} · ביטחון {data.engine.confidenceScore} · סוג: {label('matchType', data.engine.matchType)}</span>
+          <CandidateVerdictBadge verdict={data.candidateVerdict} />
         </div>
       )}
       {data.engine && data.engine.blockers.length > 0 && (

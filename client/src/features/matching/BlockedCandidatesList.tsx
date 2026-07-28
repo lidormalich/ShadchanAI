@@ -14,6 +14,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { matchesApi } from '@/services/api/matches';
 import { label } from '@/utils/labels';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
 import type { BlockedMatchItem, BlockerReason } from '@/types/domain';
 
 const SEVERITY_TONE: Record<BlockerReason['severity'], 'danger' | 'warning' | 'neutral'> = {
@@ -112,6 +113,7 @@ const BlockedRow = memo(function BlockedRow({
               ? <Badge tone="warning"><ShieldAlert className="h-3 w-3 ms-1 inline" /> ניתן לעקוף</Badge>
               : <Badge tone="danger"><Lock className="h-3 w-3 ms-1 inline" /> חסימה קשה</Badge>}
             {row.sectorGroup && <Badge tone="neutral">{label('sectorGroup', row.sectorGroup)}</Badge>}
+            <CandidateVerdictBadge verdict={row.candidateVerdict} />
           </div>
           <div className="text-xs text-ink-muted mt-0.5">
             {row.city}{row.age ? ` · גיל ${row.age}` : ''}

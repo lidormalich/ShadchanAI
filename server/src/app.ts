@@ -28,7 +28,7 @@ import {
   requestIdMiddleware,
 } from './middleware/security.middleware.js';
 import { requestLogger } from './middleware/requestLogger.middleware.js';
-import { aiRateLimiter, defaultRateLimiter } from './middleware/rateLimiter.middleware.js';
+import { aiRateLimiter, defaultRateLimiter, publicDiscoveryRateLimiter } from './middleware/rateLimiter.middleware.js';
 
 import { env } from './config/env.js';
 
@@ -57,6 +57,8 @@ import { monitoringRouter } from './modules/monitoring/monitoring.router.js';
 import { safeModeRouter } from './modules/safe-mode/safe-mode.router.js';
 import { mediaRouter } from './modules/media/media.router.js';
 import { publicPhotoRouter } from './modules/media/public-photo.router.js';
+import { discoveryRouter } from './modules/discovery/discovery.router.js';
+import { discoveryPublicRouter } from './modules/discovery/discovery-public.router.js';
 import { ensureNotificationsStarted } from './services/notifications/notifications.service.js';
 
 export function buildApp(): Express {
@@ -97,6 +99,12 @@ export function buildApp(): Express {
   // before the auth-gated routers; the token is the only credential.
   app.use('/api/public', publicPhotoRouter);
 
+  // ── 8a″. Public discovery ("היכרות חכמה") — token-authorized, no
+  // login. Unlike the photo router above it DOES get a rate limiter
+  // (its own, IP-keyed) because it exposes interactive endpoints, not
+  // a single cacheable asset. The session token is the credential.
+  app.use('/api/public/discovery', publicDiscoveryRateLimiter, discoveryPublicRouter);
+
   // ── 8b. Default rate limiter for all /api routes (exceptions
   //       below override with stricter limits) ─────────────
   app.use('/api', defaultRateLimiter);
@@ -128,6 +136,7 @@ export function buildApp(): Express {
   app.use('/api/monitoring', monitoringRouter);
   app.use('/api/safe-mode', safeModeRouter);
   app.use('/api/media', mediaRouter);
+  app.use('/api/discovery', discoveryRouter);
 
   // Start the notifications feed subscription as part of app bootstrap
   // so events are captured even before the first /api/notifications GET.

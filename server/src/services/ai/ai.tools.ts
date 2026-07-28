@@ -26,6 +26,7 @@ import type {
   MatchingContext,
 } from '../matching/matching.types.js';
 import { findMatches } from '../matching/matching.engine.js';
+import { loadCandidateVerdictMap } from '../../modules/discovery/discovery-verdicts.js';
 import { PAGINATION } from '../../config/constants.js';
 
 // ── Tool result shapes (AI-safe, compact) ────────────────
@@ -114,6 +115,9 @@ export interface MatchingCandidateRow {
   riskLevel: string;
   strengths: string[];
   attentionPoints: string[];
+  // The candidate's own swipe verdict ("היכרות חכמה") — surfaces in
+  // the Ask-AI table AND informs the AI summary (first-person signal).
+  candidateVerdict?: { verdict: 'like' | 'reject' | 'skip'; reasons: string[] };
 }
 
 export async function getMatchingCandidatesTool(
@@ -182,8 +186,10 @@ export async function getMatchingCandidatesTool(
   // Attach the external identity so rows render as people, not ids.
   // `externals` is already in memory — index it instead of re-querying.
   const externalById = new Map(externals.map((e) => [String(e._id), e]));
+  const candidateVerdicts = await loadCandidateVerdictMap(args.internalCandidateId);
   const rows: MatchingCandidateRow[] = top.map((r) => {
     const ext = externalById.get(String(r.externalCandidateId));
+    const verdict = candidateVerdicts.get(String(r.externalCandidateId));
     return {
       externalCandidateId: String(r.externalCandidateId),
       firstName: ext?.firstName,
@@ -199,6 +205,7 @@ export async function getMatchingCandidatesTool(
       riskLevel: r.riskLevel,
       strengths: r.strengths.slice(0, 4),
       attentionPoints: r.attentionPoints.slice(0, 4),
+      ...(verdict ? { candidateVerdict: { verdict: verdict.verdict, reasons: verdict.reasons } } : {}),
     };
   });
 

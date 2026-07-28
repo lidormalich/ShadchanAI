@@ -10,6 +10,8 @@ import { CreateSuggestionDialog } from '@/features/matching/CreateSuggestionDial
 import { StaleBanner } from '@/components/domain/banners';
 import { label } from '@/utils/labels';
 import { formatDateTime } from '@/utils/format';
+import { CandidateVerdictBadge } from '@/features/discovery/CandidateVerdictBadge';
+import type { CandidateVerdict } from '@/types/domain';
 import { NotesRail } from '@/features/notes/NotesRail';
 import { TasksRail } from '@/features/tasks/TasksRail';
 import { EntityTimeline } from '@/features/history/EntityTimeline';
@@ -170,14 +172,17 @@ function MatchingInternals({ items, loading }: { items: unknown[]; loading: bool
   return (
     <ul className="space-y-2">
       {items.map((raw, i) => {
-        const r = raw as { internalCandidate?: { id?: string; firstName?: string; lastName?: string }; matchScore?: number; confidenceScore?: number; matchType?: string };
+        const r = raw as { internalCandidate?: { id?: string; firstName?: string; lastName?: string }; matchScore?: number; confidenceScore?: number; matchType?: string; candidateVerdict?: CandidateVerdict };
         return (
           <li key={i} className="rounded-md border border-border bg-white p-3 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">
                 {r.internalCandidate?.firstName ?? 'פנימי'} {r.internalCandidate?.lastName ?? ''}
               </div>
-              <div className="text-xs text-ink-muted">{label('matchType', r.matchType)}</div>
+              <div className="text-xs text-ink-muted flex items-center gap-1.5 flex-wrap">
+                {label('matchType', r.matchType)}
+                <CandidateVerdictBadge verdict={r.candidateVerdict} />
+              </div>
             </div>
             <div className="text-end">
               <div className="text-lg font-semibold num text-brand-700">{r.matchScore}</div>

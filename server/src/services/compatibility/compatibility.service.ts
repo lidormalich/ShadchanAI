@@ -33,6 +33,7 @@ import {
   type IMatchSuggestion,
   type IPairReview,
 } from '../../models/index.js';
+import { loadCandidateVerdictMap } from '../../modules/discovery/discovery-verdicts.js';
 import { NotFoundError } from '../../utils/errors.js';
 import { evaluatePair as engineEvaluatePair } from '../matching/matching.engine.js';
 import {
@@ -110,6 +111,15 @@ export interface CompatibilityRow {
   reviewHistoryCount?: number;
   pairReviewId?: string;
 
+  // The candidate's OWN verdict on this exact pair from a public
+  // "היכרות חכמה" swipe session — first-person evidence the operator
+  // should see while weighing the pair. Advisory only, never scores.
+  candidateVerdict?: {
+    verdict: 'like' | 'reject' | 'skip';
+    reasons: string[];
+    at?: string;
+  };
+
   // Cached AI commentary (never auto-fetched here)
   aiExplanation?: {
     text?: string;
@@ -180,6 +190,9 @@ export async function buildBoardForInternal(
   for (const r of reviews) {
     reviewByExternal.set(String(r.externalCandidateId), r);
   }
+
+  // Candidate's own swipe verdicts ("היכרות חכמה") — newest per pair.
+  const candidateVerdictByExternal = await loadCandidateVerdictMap(internalId);
 
   // Pull supplementary externals referenced by suggestions/reviews
   // that aren't in the active pool.
@@ -264,6 +277,7 @@ export async function buildBoardForInternal(
       reviewedBy: review?.reviewedBy ? String(review.reviewedBy) : undefined,
       reviewHistoryCount: review?.history?.length ?? 0,
       pairReviewId: review ? String(review._id) : undefined,
+      candidateVerdict: candidateVerdictByExternal.get(externalId),
       aiExplanation: review?.aiExplanation
         ? {
           text: review.aiExplanation.text,
@@ -385,6 +399,8 @@ export interface PairCheckResult {
   forceability: 'none' | 'with_reason' | 'not_blocked';
   bucket: CompatibilityBucket;
   explanation: DeterministicExplanation;
+  /** The candidate's own swipe verdict on this pair ("היכרות חכמה"). */
+  candidateVerdict?: CompatibilityRow['candidateVerdict'];
   existingSuggestion?: {
     matchSuggestionId: string;
     status: string;
@@ -489,6 +505,7 @@ export async function checkPair(
     forceability,
     bucket,
     explanation,
+    candidateVerdict: (await loadCandidateVerdictMap(internalId)).get(externalId),
     existingSuggestion: suggestion
       ? {
         matchSuggestionId: String(suggestion._id),
