@@ -288,7 +288,7 @@ export function MeetPage() {
         )}
         <p className="text-sm text-ink-muted leading-relaxed">
           הבחירות שלך הועברו לשדכן/ית ויעזרו למצוא הצעות מדויקות יותר.
-          נחזור אליך כשיש משהו מתאים 💜
+          נחזור אליך כשיש משהו מתאים.
         </p>
       </CenterCard>
     </Shell>

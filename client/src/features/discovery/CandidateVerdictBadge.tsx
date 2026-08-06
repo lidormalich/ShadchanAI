@@ -14,7 +14,7 @@ export function CandidateVerdictBadge({ verdict }: { verdict?: CandidateVerdict 
   const tone = verdict.verdict === 'like' ? 'success'
     : verdict.verdict === 'reject' ? 'danger' : 'neutral';
   const text = verdict.verdict === 'like'
-    ? 'המועמד/ת סימנ/ה: מתאים 💚'
+    ? 'המועמד/ת סימנ/ה: מתאים'
     : verdict.verdict === 'reject'
       ? `המועמד/ת דחה/תה${verdict.reasons.length ? `: ${verdict.reasons[0]}` : ''}`
       : 'המועמד/ת דילג/ה';

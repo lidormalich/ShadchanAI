@@ -59,6 +59,10 @@ import { mediaRouter } from './modules/media/media.router.js';
 import { publicPhotoRouter } from './modules/media/public-photo.router.js';
 import { discoveryRouter } from './modules/discovery/discovery.router.js';
 import { discoveryPublicRouter } from './modules/discovery/discovery-public.router.js';
+import {
+  discoveryShareRouter,
+  buildMeetPageHandler,
+} from './modules/discovery/discovery-share.router.js';
 import { ensureNotificationsStarted } from './services/notifications/notifications.service.js';
 
 export function buildApp(): Express {
@@ -103,6 +107,7 @@ export function buildApp(): Express {
   // login. Unlike the photo router above it DOES get a rate limiter
   // (its own, IP-keyed) because it exposes interactive endpoints, not
   // a single cacheable asset. The session token is the credential.
+  app.use('/api/public/discovery', publicDiscoveryRateLimiter, discoveryShareRouter);
   app.use('/api/public/discovery', publicDiscoveryRateLimiter, discoveryPublicRouter);
 
   // ── 8b. Default rate limiter for all /api routes (exceptions
@@ -163,6 +168,14 @@ export function buildApp(): Express {
 
   if (existsSync(clientIndexHtml)) {
     app.use(express.static(clientDir, { index: false }));
+
+    // Discovery links get per-session Open Graph tags. Must sit BEFORE
+    // the SPA fallback: WhatsApp/Telegram crawlers don't run JS, so a
+    // plain index.html would preview every personal invitation as the
+    // generic app card. Same HTML body → the candidate's browser boots
+    // the identical SPA.
+    app.get('/meet/:token', buildMeetPageHandler(clientIndexHtml));
+
     // SPA fallback: any non-API GET returns index.html so client-side
     // routing works on deep links / refresh. API 404s are handled below.
     // The lookahead excludes both "/api/..." and a bare "/api" so a
