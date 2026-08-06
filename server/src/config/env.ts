@@ -259,7 +259,10 @@ const envSchema = z.object({
     if (cfg.JWT_SECRET.length < 32) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'JWT_SECRET must be at least 32 characters in production',
+        // Report the length (never the value) — an operator who has just
+        // pasted a 64-char secret needs to know whether the process is
+        // even seeing it, or whether it is still reading an older one.
+        message: `JWT_SECRET must be at least 32 characters in production (got ${cfg.JWT_SECRET.length})`,
         path: ['JWT_SECRET'],
       });
     }
