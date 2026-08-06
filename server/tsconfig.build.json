@@ -1,0 +1,7 @@
+// Production build config: same as tsconfig.json but without tests.
+// Tests need vitest types (a devDependency) and have no business in dist/.
+// `npm run lint` still uses tsconfig.json, so tests stay type-checked in CI/IDE.
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["**/*.test.ts", "**/__tests__/**", "dist"]
+}

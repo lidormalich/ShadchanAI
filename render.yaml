@@ -46,6 +46,14 @@ services:
         value: production
       - key: NODE_VERSION
         value: "22"
+      # Belt-and-braces with `--include=dev` in buildCommand: NODE_ENV=production
+      # otherwise makes npm skip devDependencies (typescript, vite, @types/*),
+      # which breaks the build. This env var forces them in even if the build
+      # command is overridden in the Render dashboard.
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      - key: NPM_CONFIG_INCLUDE
+        value: dev
       # PORT is injected by Render automatically; the app reads env.PORT.
 
       # ── Auth ────────────────────────────────────────────
